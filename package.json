@@ -1,0 +1,36 @@
+{
+  "name": "clinai-platform",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "services/*"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "npm --workspace @clinai/api run start",
+    "dev:web": "next dev apps/web",
+    "build": "npm run build:api && npm run build:web",
+    "build:api": "npm --workspace @clinai/api run build",
+    "build:web": "next build apps/web",
+    "test": "vitest run",
+    "smoke": "node scripts/smoke.mjs",
+    "test:smoke": "node scripts/smoke.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "concurrently": "latest",
+    "tsx": "latest",
+    "typescript": "latest",
+    "vitest": "latest"
+  },
+  "dependencies": {
+    "express": "latest",
+    "cors": "latest",
+    "zod": "latest",
+    "pg": "latest",
+    "next": "latest",
+    "react": "latest",
+    "react-dom": "latest"
+  }
+}

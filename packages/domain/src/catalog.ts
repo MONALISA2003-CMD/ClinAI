@@ -1,0 +1,45 @@
+export type Module={name:string;platform:string;roles:string[];features:string[];integrations:string[]};
+export const MODULES:Module[]=[
+{name:'Patients',platform:'Care',roles:['receptionist','nurse','doctor','admin'],features:['registration','patient 360','duplicate detection','identity verification','timeline','allergies','emergency contacts','documents'] ,integrations:['FHIR']},
+{name:'Appointments',platform:'Care',roles:['receptionist','doctor','patient'],features:['scheduling','confirmation','reschedule','cancellation','waitlist','recurring','no-show','resource availability'],integrations:['notifications']},
+{name:'Queue',platform:'Care',roles:['receptionist','nurse','doctor'],features:['check-in','priority','calling','routing','patient-flow states','wait timers'],integrations:['command-center']},
+{name:'Triage',platform:'Care',roles:['nurse','doctor'],features:['chief complaint','vitals','pain','risk flags','nursing assessment','escalation'],integrations:['AI']},
+{name:'Encounters',platform:'Care',roles:['doctor','nurse'],features:['SOAP','progress notes','diagnoses','observations','orders','care plans','follow-up','referrals'],integrations:['FHIR','AI']},
+{name:'Laboratory',platform:'Clinical Services',roles:['lab_tech','doctor','nurse'],features:['orders','accessioning','barcode','collection','processing','verification','critical results','turnaround time'],integrations:['HL7v2','FHIR']},
+{name:'Pharmacy',platform:'Clinical Services',roles:['pharmacist','doctor','nurse'],features:['prescriptions','verification','interaction checks','stock checks','dispensing','refills','batch and expiry'],integrations:['inventory']},
+{name:'Imaging',platform:'Clinical Services',roles:['radiographer','radiologist','doctor'],features:['orders','scheduling','DICOM','PACS','reports','critical findings'],integrations:['DICOM','FHIR']},
+{name:'Procedures',platform:'Clinical Services',roles:['doctor','nurse'],features:['indication','consent','preparation','procedure note','findings','aftercare'],integrations:['billing']},
+{name:'Nursing',platform:'Hospital',roles:['nurse'],features:['assignments','tasks','care plans','rounds','fluid balance','risk assessments','escalations'],integrations:['inpatient']},
+{name:'Emergency',platform:'Hospital',roles:['nurse','doctor','admin'],features:['rapid registration','acuity','resuscitation','observation','disposition','transfer'],integrations:['queue','billing']},
+{name:'Inpatient',platform:'Hospital',roles:['doctor','nurse'],features:['admission','bed board','transfers','rounds','MAR','discharge planning','medication reconciliation'],integrations:['pharmacy','billing']},
+{name:'Surgery',platform:'Hospital',roles:['surgeon','nurse','anaesthetist'],features:['scheduling','consent','pre-op','procedure','PACU','post-op'],integrations:['inventory','billing']},
+{name:'Maternity',platform:'Hospital',roles:['midwife','doctor','nurse'],features:['antenatal','labour','delivery','postnatal','newborn','follow-up'],integrations:['lab','pharmacy']},
+{name:'Pediatrics',platform:'Hospital',roles:['doctor','nurse'],features:['growth','vaccination','development','pediatric encounters'],integrations:['immunization']},
+{name:'Immunization',platform:'Clinical Services',roles:['nurse','doctor'],features:['vaccine','dose','route','site','batch','next due','reminders'],integrations:['patient']},
+{name:'Chronic Care',platform:'Clinical Services',roles:['doctor','nurse'],features:['hypertension','diabetes','asthma','care gaps','targets','follow-up'],integrations:['population-health']},
+{name:'Billing',platform:'Finance',roles:['cashier','admin'],features:['charge capture','invoices','payments','refunds','receipts','balances'],integrations:['mobile-money','insurance']},
+{name:'Insurance',platform:'Finance',roles:['billing','admin'],features:['eligibility','coverage','preauthorization','claims','reconciliation'],integrations:['payer']},
+{name:'Inventory',platform:'Supply',roles:['pharmacist','storekeeper','admin'],features:['items','batches','expiry','stock movements','reorder levels','transfers','adjustments'],integrations:['pharmacy','procurement']},
+{name:'Procurement',platform:'Supply',roles:['procurement','admin'],features:['suppliers','purchase requests','approvals','PO','receiving','invoice matching'],integrations:['inventory']},
+{name:'Patient Portal',platform:'Patient',roles:['patient'],features:['appointments','results','prescriptions','documents','payments','messages','care plans'],integrations:['notifications']},
+{name:'Patient Mobile',platform:'Patient',roles:['patient','health_worker'],features:['appointments','tasks','vitals','offline','notifications','secure messaging'],integrations:['FCM']},
+{name:'Communications',platform:'Patient',roles:['receptionist','admin'],features:['SMS','WhatsApp','email','push','templates','consent','delivery tracking'],integrations:['providers']},
+{name:'Telemedicine',platform:'Patient',roles:['doctor','patient'],features:['video visit','identity','encounter','prescription','payment','follow-up'],integrations:['FHIR']},
+{name:'Remote Monitoring',platform:'Patient',roles:['patient','nurse','doctor'],features:['BP','glucose','weight','symptoms','trends','alerts'],integrations:['devices']},
+{name:'AI Assistant',platform:'AI',roles:['doctor','nurse','admin'],features:['summaries','documentation','clinical context','RAG','care gaps','operational insights','patient education'],integrations:['Gemini','Python']},
+{name:'Population Health',platform:'Data & Intelligence',roles:['doctor','public_health','admin'],features:['cohorts','risk stratification','outreach','care gaps','quality measures'],integrations:['DHIS2','BigQuery']},
+{name:'Analytics',platform:'Data & Intelligence',roles:['admin','executive'],features:['patient flow','clinical quality','finance','inventory','provider utilization','facility KPIs'],integrations:['BigQuery']},
+{name:'Interoperability',platform:'Interoperability',roles:['integration_admin'],features:['FHIR','HL7v2','DICOM','DHIS2','external labs','imports','exports'],integrations:['Google Healthcare API']},
+{name:'Trust & Governance',platform:'Trust',roles:['admin','privacy_officer'],features:['RBAC','MFA','consent','audit','privacy','retention','backup','AI governance'],integrations:['Firebase Auth','Secret Manager']},
+{name:'Command Center',platform:'Operations',roles:['admin','executive','supervisor'],features:['real-time facility status','queues','critical alerts','bed board','lab turnaround','pharmacy workload','operational AI'],integrations:['all modules']}
+];
+export const STATUS_CATALOG={patient:['active','inactive','deceased'],appointment:['requested','scheduled','confirmed','arrived','checked-in','completed','cancelled','no-show'],queue:['waiting','called','in-service','completed','skipped'],encounter:['planned','in-progress','completed','cancelled'],order:['ordered','accepted','in-progress','completed','cancelled','rejected'],lab:['ordered','collected','received','processing','completed','verified','released','rejected'],payment:['pending','processing','paid','failed','refunded'],claim:['draft','submitted','pending','approved','rejected','paid'],task:['open','in-progress','blocked','completed','overdue']};
+export const WORKFLOWS=[
+{name:'Patient Journey',steps:['booking','arrival','registration','check-in','queue','triage','consultation','orders','results','treatment','pharmacy','billing','discharge','follow-up']},
+{name:'Laboratory Order',steps:['order','verification','sample-required','collection','barcode','accession','processing','result','technical-verification','clinical-release','critical-notification','acknowledgement']},
+{name:'Pharmacy Dispensing',steps:['prescription','pharmacist-verification','interaction-check','stock-check','insurance-check','dispensing','inventory-deduction','instructions','patient-notification']},
+{name:'Emergency',steps:['arrival','rapid-registration','acuity','resuscitation-or-treatment','orders','observation','disposition']},
+{name:'Inpatient',steps:['admission','bed-allocation','nursing','rounds','orders','MAR','results','discharge-planning','medication-reconciliation','discharge']},
+{name:'Critical Result',steps:['result-released','rule-check','notify-responsible-clinician','acknowledgement','clinical-action','document-action','close-alert']},
+{name:'Care Gap',steps:['eligible-patient','gap-detected','task-created','outreach','appointment','care-delivered','outcome-recorded']}
+];
