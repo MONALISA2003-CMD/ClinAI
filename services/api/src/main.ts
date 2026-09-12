@@ -40,10 +40,21 @@ const order=z.object({patientId:z.string(),encounterId:z.string().optional(),cat
 const triage=z.object({patientId:z.string(),encounterId:z.string().optional(),chiefComplaint:z.string().optional(),temperature:z.number().optional(),heartRate:z.number().optional(),respiratoryRate:z.number().optional(),systolic:z.number().optional(),diastolic:z.number().optional(),spo2:z.number().optional(),pain:z.number().min(0).max(10).optional(),acuity:z.enum(['routine','urgent','emergency']).default('routine')});
 const generic=z.record(z.any());
 
+app.get('/',async()=>({ok:true,service:'clinai-api',status:'live',health:'/health'}));
 app.get('/health',async()=>({ok:true,service:'clinai-api',time:now(),persistence:true}));
 app.get('/api/modules',async()=>modules);
 app.post('/api/auth/demo',async()=>({token:await app.jwt.sign({sub:'demo-user',role:'admin',organizationId:'demo-org'},{expiresIn:'8h'})}));
-app.addHook('preHandler',async(req)=>{if(req.url==='/health'||req.url==='/api/auth/demo')return;try{await req.jwtVerify(); if((req.method==='POST'||req.method==='PATCH'||req.method==='DELETE') && !canWrite(req)) throw Object.assign(new Error('Insufficient role permissions'),{statusCode:403});}catch(e:any){if(e.statusCode) throw e; throw Object.assign(new Error('Unauthorized'), { statusCode: 401 })}});
+app.addHook('preHandler',async(req)=>{
+  const publicPath=(req.raw.url||'/').split('?')[0];
+  if(publicPath==='/'||publicPath==='/health'||publicPath==='/api/auth/demo') return;
+  try{
+    await req.jwtVerify();
+    if((req.method==='POST'||req.method==='PATCH'||req.method==='DELETE') && !canWrite(req)) throw Object.assign(new Error('Insufficient role permissions'),{statusCode:403});
+  }catch(e:any){
+    if(e.statusCode) throw e;
+    throw Object.assign(new Error('Unauthorized'), { statusCode: 401 });
+  }
+});
 
 app.get('/api/dashboard',async()=>{const count=(m:Mod)=>store[m].length; return {patients:count('patients'),appointments:count('appointments'),waiting:store.queue.filter(x=>['waiting','waiting-triage','waiting-doctor'].includes(x.status)).length,criticalLabs:store.laboratory.filter(x=>x.critical).length,openTasks:store.tasks.filter(x=>x.status==='open').length,unpaid:store.billing.filter(x=>x.status!=='paid').length};});
 app.get('/api/audit',async()=>audit.slice(-500).reverse()); app.get('/api/events',async()=>events.slice(-500).reverse());
