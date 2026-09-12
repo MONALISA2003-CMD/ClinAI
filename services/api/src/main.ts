@@ -12,7 +12,7 @@ const pool = process.env.DATABASE_URL ? new Pool({ connectionString: process.env
 await app.register(cors, { origin: true });
 await app.register(jwt, { secret: process.env.JWT_SECRET || 'clinai-local-development-secret' });
 
-const modules = ['command-center','patients','appointments','registration','queue','triage','encounters','clinical-notes','diagnoses','orders','laboratory','imaging','pharmacy','nursing','emergency','inpatient','surgery','maternity','pediatrics','immunization','care-plans','referrals','follow-up','billing','payments','insurance','claims','inventory','procurement','suppliers','procedures','patient-portal','notifications','telemedicine','remote-monitoring','analytics','population-health','ai','interoperability','trust','staff','facilities','tasks','workflows'] as const;
+const modules = ['command-center','patients','patient-contacts','emergency-contacts','allergies','appointments','registration','queue','triage','encounters','clinical-notes','diagnoses','orders','laboratory','imaging','pharmacy','nursing','emergency','inpatient','surgery','maternity','pediatrics','immunization','care-plans','referrals','follow-up','billing','payments','insurance','claims','inventory','procurement','suppliers','procedures','patient-portal','notifications','telemedicine','remote-monitoring','analytics','population-health','ai','interoperability','trust','staff','facilities','tasks','workflows'] as const;
 type Mod = typeof modules[number];
 type Row = Record<string, any>;
 const file = process.env.CLINAI_STORE || '.clinai-data/store.json';
