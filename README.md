@@ -113,3 +113,10 @@ ClinAI does not claim live connection to Uganda national HIE, facility registry,
 Clinical content is configuration-driven. Uganda-approved protocols and WHO SMART content should be loaded, versioned, reviewed and tested through the governance layer rather than hard-coded into application logic.
 
 See `docs/V6-UGANDA-CLINICAL-INTEROPERABILITY-RESEARCH.md`.
+
+
+## V7 — Uganda clinical pathway + reporting + offline execution
+
+V7 deepens the Uganda-first architecture with patient pathway enrollment/execution, versioned rule evaluation, reporting submission staging, and device synchronization. Neon PostgreSQL remains the clinical source of truth. The current production boundary remains integration-ready: national HIE/HMIS/registry connections are not claimed until approved endpoints, credentials and conformance testing are available.
+
+Research basis: Uganda MoH Strategic Plan II 2025/26–2029/30; Uganda MoH Guidelines for Introduction of Digital Health Solutions and Innovations; WHO SMART Guidelines current catalogue and SMART Base FHIR R4; WHO 2026 infectious-disease surveillance DAK; WHO offline FHIR/Android guidance.
