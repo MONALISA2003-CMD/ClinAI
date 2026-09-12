@@ -7,13 +7,21 @@ services:
       POSTGRES_PASSWORD: clinai
     ports: ['5432:5432']
     volumes: [clinai_pg:/var/lib/postgresql/data, ./database/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro]
+  intelligence:
+    build: ./services/intelligence
+    environment:
+      PORT: 8000
+    ports: ['8001:8000']
+
   api:
     build: ./services/api
     environment:
       DATABASE_URL: postgresql://clinai:clinai@postgres:5432/clinai
       JWT_SECRET: change-me
       PORT: 4000
-    depends_on: [postgres]
+      INTELLIGENCE_SERVICE_URL: http://intelligence:8000
+      GEMINI_ENABLE_CODE_EXECUTION: 'false'
+    depends_on: [postgres, intelligence]
     ports: ['4000:4000']
   web:
     build: ./apps/web

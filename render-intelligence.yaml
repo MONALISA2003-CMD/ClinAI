@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: clinai-intelligence-engine
+    runtime: docker
+    rootDir: services/intelligence
+    dockerfilePath: services/intelligence/Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 8000

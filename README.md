@@ -134,3 +134,19 @@ The V16 build adds a server-side Gemini Interactions API v1 gateway, patient and
 V17 refines the Clinical Intelligence Engine for real phone use without changing the clinical safety boundary. The web app now declares a device-width viewport, guards against horizontal overflow and unwanted text scaling, improves touch-first spacing, and gives AI responses a clean human-readable presentation. Gemini model and API version details are no longer displayed to normal users. The AI gateway also explicitly requests plain text without Markdown decoration, while the frontend renderer safely normalizes legacy Markdown-style output if a provider returns it.
 
 The AI status card now shows only whether ClinAI intelligence is available. Loading feedback uses human language, and the role selector uses readable role names. The clinical intelligence response area supports headings, paragraphs and lists without exposing implementation formatting.
+
+## ClinAI Intelligence
+
+The AI layer is a tool-using intelligence system, not a standalone chatbot. It can retrieve tenant-scoped patient and facility context, detect proactive attention signals, call deterministic computation, delegate multi-value analysis to the Python Intelligence Engine, use approved evidence, and optionally perform explicit research with Google Search and URL Context.
+
+The user-facing answer is structured into direct answer, recorded facts, calculations, reasoning summary, suggested review, uncertainty, evidence and confidence. Private model chain-of-thought is not exposed.
+
+### Intelligence services
+
+- `services/api/src/ai/ai-orchestrator.ts` — Gemini orchestration, tool registry, safety, evidence, proactive attention and AI routes.
+- `services/intelligence/main.py` — deterministic computation and analytics engine.
+- `services/intelligence/Dockerfile` — deployable Python intelligence service.
+- `database/migrations/017-ai-intelligence-core.sql` — AI work-run persistence.
+- `docs/AI-INTELLIGENCE-ARCHITECTURE.md` — implementation architecture and operating model.
+
+Set `INTELLIGENCE_SERVICE_URL` on the API service to the deployed Python service URL. For local Docker Compose it is already wired to `http://intelligence:8000`.
