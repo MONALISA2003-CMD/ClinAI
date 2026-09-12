@@ -12,7 +12,7 @@
     "dev:web": "next dev apps/web",
     "build": "npm run build:api && npm run build:web",
     "build:api": "npm --workspace @clinai/api run build",
-    "build:web": "next build apps/web",
+    "build:web": "npm --workspace @clinai/web run build",
     "test": "vitest run",
     "smoke": "node scripts/smoke.mjs",
     "test:smoke": "node scripts/smoke.mjs"
@@ -28,9 +28,6 @@
     "express": "latest",
     "cors": "latest",
     "zod": "latest",
-    "pg": "latest",
-    "next": "latest",
-    "react": "latest",
-    "react-dom": "latest"
+    "pg": "latest"
   }
 }
