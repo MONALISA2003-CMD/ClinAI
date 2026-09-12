@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { AI_MODELS, availableModels, configuredProviders, selectModel, callOpenAICompatible, stableRequestKey } from './ai-providers.js';
 
 type Row = Record<string, any>;
 type Deps = {
@@ -19,7 +20,39 @@ const GEMINI_API_VERSION = 'v1';
 const AI_PROMPT_VERSION = 'clinai-intelligence-core-1';
 const INTELLIGENCE_SERVICE_URL = (process.env.INTELLIGENCE_SERVICE_URL || '').replace(/\/$/, '');
 const ENABLE_GEMINI_CODE_EXECUTION = process.env.GEMINI_ENABLE_CODE_EXECUTION === 'true';
-const GEMINI_MAX_TOOL_ROUNDS = Math.min(4, Math.max(0, Number(process.env.GEMINI_MAX_TOOL_ROUNDS || 2)));
+const FREE_TIER_MODE = process.env.GEMINI_FREE_TIER_MODE !== 'false';
+const GEMINI_MAX_TOOL_ROUNDS = FREE_TIER_MODE ? 0 : Math.min(4, Math.max(0, Number(process.env.GEMINI_MAX_TOOL_ROUNDS || 2)));
+const GEMINI_FREE_DAILY_LIMIT = Math.max(1, Number(process.env.GEMINI_FREE_DAILY_LIMIT || 4));
+const GEMINI_FREE_MIN_INTERVAL_MS = Math.max(0, Number(process.env.GEMINI_FREE_MIN_INTERVAL_MS || 15000));
+const GEMINI_FREE_MAX_INPUT_CHARS = Math.max(4000, Number(process.env.GEMINI_FREE_MAX_INPUT_CHARS || 18000));
+let freeTierLastRequestAt = 0;
+let freeTierRequestsToday = 0;
+let freeTierDay = new Date().toISOString().slice(0, 10);
+let freeTierLock: Promise<void> = Promise.resolve();
+const freeTierCache = new Map<string, { expiresAt: number; result: any }>();
+const GEMINI_FREE_CACHE_MS = Math.max(30000, Number(process.env.GEMINI_FREE_CACHE_MS || 300000));
+const ALLOW_PUBLIC_AI_WITH_PATIENT_DATA = process.env.CLINAI_ALLOW_PUBLIC_AI_WITH_PATIENT_DATA === 'true';
+const MULTI_MODEL_MODE = process.env.CLINAI_MULTI_MODEL_MODE !== 'false';
+const AI_FALLBACK_ATTEMPTS = Math.max(1, Math.min(5, Number(process.env.CLINAI_AI_FALLBACK_ATTEMPTS || 3)));
+const multiModelCache = new Map<string, { expiresAt: number; result: any }>();
+const MULTI_MODEL_CACHE_MS = Math.max(30000, Number(process.env.CLINAI_MULTI_MODEL_CACHE_MS || 300000));
+
+async function acquireFreeTierSlot() {
+  if (!FREE_TIER_MODE) return;
+  const current = freeTierLock.then(async () => {
+    const day = new Date().toISOString().slice(0, 10);
+    if (day !== freeTierDay) { freeTierDay = day; freeTierRequestsToday = 0; }
+    if (freeTierRequestsToday >= GEMINI_FREE_DAILY_LIMIT) {
+      throw Object.assign(new Error('ClinAI free AI usage limit has been reached for today. Please try again after the daily quota resets.'), { statusCode: 429, code: 'LOCAL_FREE_TIER_LIMIT' });
+    }
+    const wait = Math.max(0, GEMINI_FREE_MIN_INTERVAL_MS - (Date.now() - freeTierLastRequestAt));
+    if (wait) await new Promise(resolve => setTimeout(resolve, wait));
+    freeTierLastRequestAt = Date.now();
+    freeTierRequestsToday += 1;
+  });
+  freeTierLock = current.catch(() => undefined);
+  return current;
+}
 
 const aiSafety = [
   'Clinical decision support only. A qualified healthcare professional remains responsible for diagnosis and treatment.',
@@ -264,23 +297,135 @@ async function recordWork(pool: Pool | null, req: any, organizationId: string | 
 
 function depsUser(req: any) { return req.user?.sub && req.user.sub !== 'system' ? req.user.sub : null; }
 
-async function runAgent(deps: Deps, req: any, input: string, options: { purpose: string; role?: string; patientId?: string | null; mode?: string; allowResearch?: boolean; allowCodeExecution?: boolean }) {
-  if (!GEMINI_API_KEY) throw Object.assign(new Error('Gemini is not configured. Add GEMINI_AUTHORIZATION_KEY to the API environment.'), { statusCode: 503 });
-  const runId = randomUUID();
+function openAIToolDeclarations() {
+  return toolDeclarations.map((t:any) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.parameters } }));
+}
+
+async function runOpenAICompatibleAgent(deps: Deps, req: any, model: any, input: string, prompt: string, options: any, allowTools: boolean) {
   const started = Date.now();
-  const tools: any[] = [...toolDeclarations];
-  if (options.allowResearch) tools.push({ type: 'google_search' }, { type: 'url_context' });
-  if (options.allowCodeExecution && ENABLE_GEMINI_CODE_EXECUTION) tools.push({ type: 'code_execution' });
+  const messages:any[] = [{ role: 'system', content: baseSystem }, { role: 'user', content: prompt }];
+  const toolsUsed:any[] = [];
+  const calculations:any[] = [];
+  const maxRounds = allowTools ? Math.max(0, Math.min(3, Number(process.env.CLINAI_OPENAI_TOOL_ROUNDS || 2))) : 0;
+  let usage:any = {};
+  let finalText = '';
+  for (let round = 0; round <= maxRounds; round += 1) {
+    const response:any = await callOpenAICompatible(model, prompt, baseSystem, responseSchema, {
+      reasoning: options.mode !== 'quick',
+      tools: allowTools ? openAIToolDeclarations() : undefined,
+      messages,
+    });
+    usage = response.usage || usage;
+    const message = response.message || {};
+    if (message.tool_calls?.length && round < maxRounds) {
+      messages.push({ role: 'assistant', content: message.content || null, tool_calls: message.tool_calls });
+      for (const tc of message.tool_calls) {
+        const name = tc?.function?.name;
+        let args:any = {};
+        try { args = JSON.parse(tc?.function?.arguments || '{}'); } catch {}
+        let result:any;
+        try { result = await executeTool(name, args, deps, req); } catch (e:any) { result = { error: e?.message || `Tool ${name} failed.` }; }
+        toolsUsed.push({ name, arguments: args, callId: tc.id });
+        if (name === 'calculate' || name === 'analyze_dataset') calculations.push({ tool: name, operation: args.operation, result });
+        messages.push({ role: 'tool', tool_call_id: tc.id, content: aiText(result, 12000) });
+      }
+      continue;
+    }
+    finalText = response.text || message.content || '';
+    break;
+  }
+  const structured = parseStructured(finalText) || normalizeLooseAnswer(finalText);
+  return buildAgentResult(randomUUID(), structured, model.id, model.provider, options.mode || 'intelligence', started, toolsUsed, calculations, usage);
+}
+
+async function recordProviderUsage(pool: Pool | null, req: any, model: any, result: any, status: string, errorCode?: string) {
+  if (!pool) return;
+  try {
+    await pool.query(`INSERT INTO ai_provider_usage(organization_id,provider_key,model_key,status,http_status,latency_ms,input_tokens,output_tokens,error_code) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [req.user?.organizationId || null, model.provider, model.id, status, null, result?.latencyMs || null, result?.usage?.inputTokens || null, result?.usage?.outputTokens || null, errorCode || null]);
+  } catch {}
+}
+
+async function runAgent(deps: Deps, req: any, input: string, options: { purpose: string; role?: string; patientId?: string | null; mode?: string; allowResearch?: boolean; allowCodeExecution?: boolean; preferredModel?: string }) {
+  const patientData = Boolean(options.patientId);
+  const cacheKey = stableRequestKey({ mode: options.mode || 'intelligence', role: options.role || '', patientId: options.patientId || '', input, preferredModel: options.preferredModel || '' });
+  const cached = multiModelCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return { ...cached.result, cached: true };
+  if (cached) multiModelCache.delete(cacheKey);
 
   const context = options.patientId ? await patientContext(deps.pool, deps.dbOrganizationId(req), options.patientId) : await orgContext(deps.pool, deps.dbOrganizationId(req));
   const evidence = await approvedKnowledge(deps.pool, deps.dbOrganizationId(req));
-  const prompt = `User role: ${options.role || 'healthcare professional'}\nRequested mode: ${options.mode || 'intelligence'}\nPatient context is ${options.patientId ? 'patient-specific' : 'facility/organization-level'}.\n\nInitial available context:\n${aiText(context, 22000)}\n\nApproved evidence registry:\n${aiText(evidence, 10000)}\n\nUser request:\n${input}`;
-  const model = options.mode === 'quick' ? GEMINI_FAST_MODEL : GEMINI_REASONING_MODEL;
+  const safeContext = patientData && !ALLOW_PUBLIC_AI_WITH_PATIENT_DATA ? redactForPublicModel(context) : context;
+  const prompt = `User role: ${options.role || 'healthcare professional'}\nRequested mode: ${options.mode || 'intelligence'}\nPatient-specific request: ${patientData ? 'yes' : 'no'}\n\nClinAI context:\n${aiText(safeContext, patientData && !ALLOW_PUBLIC_AI_WITH_PATIENT_DATA ? 14000 : 22000)}\n\nApproved evidence registry:\n${aiText(evidence, 9000)}\n\nUser request:\n${input}`;
 
-  // Stateless Interactions mode is used deliberately. Google documents that store=false
-  // cannot be combined with previous_interaction_id. We therefore preserve the exact
-  // user_input + model-generated steps + function_result steps ourselves.
-  const history: any[] = [{ type: 'user_input', content: [{ type: 'text', text: prompt }] }];
+  if (!MULTI_MODEL_MODE) return runGeminiAgent(deps, req, input, options, prompt, context, evidence, cacheKey);
+
+  const candidates: any[] = [];
+  const configured = configuredProviders();
+  const first = selectModel({ mode: options.mode, patientData, preferredModel: options.preferredModel, allowPublic: ALLOW_PUBLIC_AI_WITH_PATIENT_DATA });
+  if (first) candidates.push(first);
+  for (const m of AI_MODELS.filter(x => x.enabled && configured[x.provider] && (!patientData || !x.publicEndpoint || ALLOW_PUBLIC_AI_WITH_PATIENT_DATA)).sort((a,b)=>a.priority-b.priority)) {
+    if (!candidates.some(x => x.id === m.id)) candidates.push(m);
+  }
+
+  // Gemini is kept as a provider, but its Interactions API remains the native path because it supports ClinAI's existing tool protocol.
+  let lastError: any = null;
+  for (const model of candidates.slice(0, AI_FALLBACK_ATTEMPTS)) {
+    const started = Date.now();
+    try {
+      let result: any;
+      if (model.provider === 'gemini') {
+        result = await runGeminiAgent(deps, req, input, options, prompt, context, evidence, cacheKey, model.id);
+      } else {
+        const allowTools = model.toolCalling && (!patientData || ALLOW_PUBLIC_AI_WITH_PATIENT_DATA);
+        result = await runOpenAICompatibleAgent(deps, req, model, input, prompt, options, allowTools);
+        await recordProviderUsage(deps.pool, req, model, result, 'completed');
+        await recordWork(deps.pool, req, deps.dbOrganizationId(req), options.patientId || null, { ...result, purpose: options.purpose, status: 'completed', question: input, evidenceCount: (result.structured.evidence || []).length, confidence: result.structured.confidence, resultSummary: { directAnswer: result.structured.directAnswer } });
+      }
+      result.provider = model.provider;
+      result.fallbackChain = candidates.slice(0, AI_FALLBACK_ATTEMPTS).map(x => x.label);
+      result.patientDataPolicy = patientData && !ALLOW_PUBLIC_AI_WITH_PATIENT_DATA ? 'public-models-receive-redacted context' : 'configured';
+      multiModelCache.set(cacheKey, { expiresAt: Date.now() + MULTI_MODEL_CACHE_MS, result });
+      return result;
+    } catch (e:any) {
+      lastError = e;
+      try { await recordProviderUsage(deps.pool, req, model, { latencyMs: Date.now() - started }, 'failed', e?.code || String(e?.statusCode || 'PROVIDER_ERROR')); } catch {}
+      continue;
+    }
+  }
+  throw Object.assign(new Error(lastError?.message || 'No configured AI provider was able to complete this request.'), { statusCode: lastError?.statusCode || 503, code: 'AI_PROVIDER_EXHAUSTED', providerMessage: lastError?.providerMessage });
+}
+
+function redactForPublicModel(value: any): any {
+  if (Array.isArray(value)) return value.map(redactForPublicModel);
+  if (!value || typeof value !== 'object') return value;
+  const sensitive = new Set(['firstName','middleName','lastName','phone','address','patientNumber','dateOfBirth','id','patientId','userId','organizationId','facilityId']);
+  const out:any = {};
+  for (const [k,v] of Object.entries(value)) out[k] = sensitive.has(k) ? '[redacted]' : redactForPublicModel(v);
+  return out;
+}
+
+function runUuid() { return randomUUID(); }
+
+function normalizeLooseAnswer(text: string): Row {
+  return { directAnswer: text || 'No answer was returned.', recordedFacts: [], calculations: [], reasoningSummary: 'The provider returned an unstructured response; ClinAI preserved the response without exposing hidden reasoning.', suggestedReview: [], uncertainty: ['The response was not returned in ClinAI structured format.'], evidence: [], confidence: 'low' };
+}
+
+function buildAgentResult(runId: string, structured: Row, model: string, provider: string, mode: string, started: number, toolsUsed: any[], calculations: any[], usage?: any) {
+  return { runId, answer: responseToPlain(structured, structured.directAnswer || 'ClinAI could not produce a complete answer.'), structured, model, provider, mode, toolsUsed, calculations, latencyMs: Date.now() - started, usage: { inputTokens: usage?.prompt_tokens, outputTokens: usage?.completion_tokens }, safety: aiSafety };
+}
+
+async function runGeminiAgent(deps: Deps, req: any, input: string, options: any, prompt: string, context: any, evidence: any, cacheKey: string, selectedModel?: string) {
+  const hasGemini = Boolean(GEMINI_API_KEY);
+  if (!hasGemini) throw Object.assign(new Error('Gemini is not configured.'), { statusCode: 503 });
+  const runId = randomUUID();
+  const started = Date.now();
+  const freeGemini = FREE_TIER_MODE;
+  const tools: any[] = freeGemini ? [] : [...toolDeclarations];
+  if (!freeGemini && options.allowResearch) tools.push({ type: 'google_search' }, { type: 'url_context' });
+  if (!freeGemini && options.allowCodeExecution && ENABLE_GEMINI_CODE_EXECUTION) tools.push({ type: 'code_execution' });
+  await acquireFreeTierSlot();
+  const model = selectedModel || (options.mode === 'quick' ? GEMINI_FAST_MODEL : GEMINI_REASONING_MODEL);
+  const history: any[] = [{ type: 'user_input', content: [{ type: 'text', text: aiText(prompt, GEMINI_FREE_MAX_INPUT_CHARS) }] }];
   let interaction: any = await geminiRequest({ model, input: history, system_instruction: baseSystem, tools, store: false, response_format: { type: 'text', mime_type: 'application/json', schema: responseSchema } });
   const toolsUsed: Row[] = [];
   const calculations: Row[] = [];
@@ -288,46 +433,23 @@ async function runAgent(deps: Deps, req: any, input: string, options: { purpose:
   while (loop < GEMINI_MAX_TOOL_ROUNDS) {
     const calls = extractFunctionCalls(interaction.data);
     if (!calls.length) break;
-
-    // Preserve every model-generated step exactly as returned, including thought,
-    // function_call and tool metadata/signatures. This is required for stateless
-    // function calling and prevents "function response must immediately follow"
-    // protocol errors.
     for (const step of interaction.data?.steps || []) history.push(step);
-
-    const results = [] as any[];
+    const results:any[] = [];
     for (const call of calls) {
-      let args: any;
-      try { args = typeof call.arguments === 'string' ? JSON.parse(call.arguments) : (call.arguments || {}); }
-      catch { args = {}; }
-      let result: any;
-      try { result = await executeTool(call.name, args, deps, req); }
-      catch (error: any) { result = { error: error?.message || `Tool ${call.name} failed.` }; }
+      let args:any; try { args = typeof call.arguments === 'string' ? JSON.parse(call.arguments) : (call.arguments || {}); } catch { args = {}; }
+      let result:any; try { result = await executeTool(call.name, args, deps, req); } catch (error:any) { result = { error: error?.message || `Tool ${call.name} failed.` }; }
       toolsUsed.push({ name: call.name, arguments: args, callId: call.id });
       if (call.name === 'calculate' || call.name === 'analyze_dataset') calculations.push({ tool: call.name, operation: args.operation, result });
       results.push({ type: 'function_result', name: call.name, call_id: call.id, result: [{ type: 'text', text: aiText(result, 12000) }] });
     }
-
     history.push(...results);
     interaction = await geminiRequest({ model, input: history, system_instruction: baseSystem, tools, store: false, response_format: { type: 'text', mime_type: 'application/json', schema: responseSchema } });
     loop += 1;
   }
   const raw = extractText(interaction.data);
-  const structured = parseStructured(raw);
-  const fallback = raw || 'ClinAI could not produce a complete answer from the available information.';
-  const latencyMs = Date.now() - started;
-  const result = {
-    runId,
-    answer: responseToPlain(structured, fallback),
-    structured: structured || { directAnswer: fallback, recordedFacts: [], calculations: [], reasoningSummary: '', suggestedReview: [], uncertainty: ['The response was not returned in the expected structured format.'], evidence: [], confidence: 'low' },
-    model: options.mode === 'quick' ? GEMINI_FAST_MODEL : GEMINI_REASONING_MODEL,
-    mode: options.mode || 'intelligence',
-    toolsUsed,
-    calculations,
-    latencyMs,
-    safety: aiSafety,
-  };
-  await recordWork(deps.pool, req, deps.dbOrganizationId(req), options.patientId || null, { ...result, purpose: options.purpose, status: 'completed', question: input, evidenceCount: (result.structured.evidence || []).length, confidence: result.structured.confidence, resultSummary: { directAnswer: result.structured.directAnswer } });
+  const structured = parseStructured(raw) || normalizeLooseAnswer(raw);
+  const result = buildAgentResult(runId, structured, model, 'gemini', options.mode || 'intelligence', started, toolsUsed, calculations);
+  await recordWork(deps.pool, req, deps.dbOrganizationId(req), options.patientId || null, { ...result, purpose: options.purpose, status: 'completed', question: input, evidenceCount: (structured.evidence || []).length, confidence: structured.confidence, resultSummary: { directAnswer: structured.directAnswer } });
   return result;
 }
 
@@ -338,7 +460,7 @@ async function geminiRequest(body: any) {
   if (!response.ok) {
     const rawMessage = data?.error?.message || 'Gemini request failed';
     const message = response.status === 429
-      ? 'ClinAI AI usage limit has been reached for the configured Gemini project. Please wait for the quota window to reset or connect the project to a paid Gemini tier. No clinical answer was generated.'
+      ? 'ClinAI could not reach Gemini because the configured project quota is exhausted. Free-tier mode limits ClinAI to one model request per interaction and spaces requests to reduce quota pressure. Please wait for Google quota to reset. No clinical answer was generated.'
       : rawMessage;
     const error = Object.assign(new Error(message), { statusCode: response.status, code: data?.error?.status, providerMessage: rawMessage });
     throw error;
@@ -355,7 +477,9 @@ async function registerWorkAudit(pool: Pool | null, req: any, patientId: string 
 
 export function registerAI(deps: Deps) {
   const { app, pool } = deps;
-  app.get('/api/ai/status', async () => ({ configured: Boolean(GEMINI_API_KEY), intelligenceEngineConfigured: Boolean(INTELLIGENCE_SERVICE_URL), codeExecutionEnabled: ENABLE_GEMINI_CODE_EXECUTION, model: GEMINI_MODEL, apiVersion: GEMINI_API_VERSION, promptVersion: AI_PROMPT_VERSION, mode: 'tool-using human-reviewed intelligence' }));
+  app.get('/api/ai/status', async () => ({ configured: Boolean(GEMINI_API_KEY), intelligenceEngineConfigured: Boolean(INTELLIGENCE_SERVICE_URL), codeExecutionEnabled: ENABLE_GEMINI_CODE_EXECUTION, model: GEMINI_MODEL, apiVersion: GEMINI_API_VERSION, promptVersion: AI_PROMPT_VERSION, mode: FREE_TIER_MODE ? 'free-tier single-call human-reviewed intelligence' : 'tool-using human-reviewed intelligence' }));
+  app.get('/api/ai/providers', async () => ({ data: { multiModelEnabled: MULTI_MODEL_MODE, publicPatientDataAllowed: ALLOW_PUBLIC_AI_WITH_PATIENT_DATA, providers: configuredProviders(), models: availableModels() } }));
+  app.post('/api/ai/router', async (req:any, reply:any) => { const body=z.object({ mode:z.string().optional(), patientData:z.boolean().default(false), preferredModel:z.string().optional() }).parse(req.body||{}); const model=selectModel(body); return model ? { data:model } : reply.code(503).send({error:'No configured AI provider is available for this request.'}); });
 
   app.get('/api/ai/usage', async (req: any) => {
     const organizationId = deps.dbOrganizationId(req);

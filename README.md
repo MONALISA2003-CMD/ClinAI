@@ -150,3 +150,7 @@ The user-facing answer is structured into direct answer, recorded facts, calcula
 - `docs/AI-INTELLIGENCE-ARCHITECTURE.md` — implementation architecture and operating model.
 
 Set `INTELLIGENCE_SERVICE_URL` on the API service to the deployed Python service URL. For local Docker Compose it is already wired to `http://intelligence:8000`.
+
+## Multi-model AI
+
+ClinAI includes a provider-independent AI router with Gemini plus multiple OpenRouter free models, Groq and Cerebras adapters. It supports model selection, fallback, provider audit logging, deterministic Python calculations, and a shared ClinAI tool gateway. Public/free AI endpoints are prevented from receiving patient-identifying context by default. Configure `CLINAI_ALLOW_PUBLIC_AI_WITH_PATIENT_DATA=true` only after the deployment owner has completed the required privacy, security and governance review.

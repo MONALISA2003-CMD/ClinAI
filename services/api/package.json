@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "start": "node dist/main.js"
+    "start": "node dist/main.js",
+    "test:ai-multi": "node ../../tests/multi-model-ai-audit.mjs"
   },
   "dependencies": {
     "fastify": "^5.3.0",

@@ -42,6 +42,28 @@ The current Gemini API Additional Terms state that the Gemini API may not be use
 
 ClinAI uses the Gemini Interactions API in **stateless mode** (`store=false`) for the current integration. Each tool continuation resends the exact interaction history, including the original user input, every model-generated step, and the matching function results. This is intentional: Google documents that `store=false` cannot be combined with `previous_interaction_id`, and stateless function calling requires the full history to be preserved.
 
-The API also limits tool continuation rounds with `GEMINI_MAX_TOOL_ROUNDS` (default `2`). This prevents one complex question from consuming an excessive number of Gemini requests on a free-tier project.
+### Free-tier mode
 
-A single AI question can still make more than one Gemini request when tools are needed. Google rate limits are applied per project and can be enforced by requests per minute, tokens per minute, or requests per day. If the project reaches a quota, ClinAI now returns a clear usage-limit message instead of exposing the raw provider error.
+For a Free Tier project, keep:
+
+`GEMINI_FREE_TIER_MODE=true`
+
+This changes the AI gateway to a quota-safe single-call strategy:
+
+- one Gemini request maximum per user interaction
+- no Gemini function-calling continuation loops
+- no Gemini Search/URL Context/code-execution tools
+- patient and facility context is assembled by ClinAI before the model call
+- deterministic calculations can still run through the separate Python Intelligence Engine
+- identical recent requests are served from a short-lived server cache
+- requests are spaced to reduce burst traffic
+- a local daily safety budget defaults to 4 requests, leaving a margin below the 5-request quota shown by the current free-tier error
+- a clear 429 message is returned when Google's project quota is actually exhausted
+
+`GEMINI_FREE_DAILY_LIMIT=4`
+`GEMINI_FREE_MIN_INTERVAL_MS=15000`
+`GEMINI_FREE_CACHE_MS=300000`
+
+The local budget is deliberately conservative. It does not increase Google's quota; it prevents ClinAI from intentionally spending the entire visible quota and reduces accidental repeated requests. Google controls the actual project quota and reset window. Current Google pricing documentation confirms that Free Tier has limited model/tool access and that higher production limits are available on Paid Tier.
+
+When you later move to a paid, governed deployment, set `GEMINI_FREE_TIER_MODE=false` to restore tool-using orchestration and use `GEMINI_MAX_TOOL_ROUNDS` as the continuation guard.
