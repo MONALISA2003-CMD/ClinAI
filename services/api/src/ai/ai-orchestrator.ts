@@ -323,17 +323,17 @@ function responseToPlain(answer: Row | null, fallback: string) {
   if (!answer) return sanitizeClinAIResponse(fallback);
   const cleanAnswer = polishClinAIAnswer(answer, fallback);
   const lines: string[] = [];
-  const add = (heading: string, value: any) => {
+  const addParagraph = (heading: string, value: any) => {
     const values = Array.isArray(value) ? value.filter(Boolean) : value ? [value] : [];
     if (!values.length) return;
     lines.push(`**${heading}**`);
-    for (const item of values) lines.push(String(item));
+    for (const item of values) lines.push(Array.isArray(value) ? `• ${String(item)}` : String(item));
   };
-  add('ANSWER', cleanAnswer.directAnswer);
-  add('KEY POINTS', cleanAnswer.recordedFacts);
-  add('WHAT NEEDS ATTENTION', cleanAnswer.suggestedReview);
-  add('IMPORTANT', cleanAnswer.uncertainty);
-  return sanitizeClinAIResponse(lines.join('\n'));
+  addParagraph('ANSWER', cleanAnswer.directAnswer);
+  addParagraph('KEY POINTS', cleanAnswer.recordedFacts);
+  addParagraph('WHAT NEEDS ATTENTION', cleanAnswer.suggestedReview);
+  addParagraph('IMPORTANT', cleanAnswer.uncertainty);
+  return sanitizeClinAIResponse(lines.join('\n\n'));
 }
 
 async function recordWork(pool: Pool | null, req: any, organizationId: string | null, patientId: string | null, run: Row) {
@@ -599,13 +599,13 @@ export function registerAI(deps: Deps) {
     try {
       const result = await runAgent(deps, req, body.question, { purpose: body.purpose, role: body.role, patientId: body.patientId || null, mode: body.mode, allowResearch: body.mode === 'research', allowCodeExecution: body.mode === 'analysis' });
       await registerWorkAudit(pool, req, body.patientId || null, body.purpose, result);
-      return { data: result };
-    } catch (e: any) { return reply.code(e.statusCode || 502).send({ error: e.message }); }
+      return { data: { answer: result.answer, runId: result.runId } };
+    } catch (e: any) { return reply.code(e.statusCode || 502).send({ error: sanitizeClinAIResponse(e.message || 'ClinAI could not complete that request.') }); }
   });
 
   app.post('/api/ai/patient-intelligence', async (req: any, reply: any) => {
     const body = z.object({ patientId: z.string().uuid(), question: z.string().default('What needs my attention about this patient?') }).parse(req.body || {});
-    try { return { data: await runAgent(deps, req, body.question, { purpose: 'patient-intelligence', patientId: body.patientId, mode: 'intelligence' }) }; } catch (e: any) { return reply.code(e.statusCode || 502).send({ error: e.message }); }
+    try { const result=await runAgent(deps, req, body.question, { purpose: 'patient-intelligence', patientId: body.patientId, mode: 'intelligence' }); return { data: { answer: result.answer, runId: result.runId } }; } catch (e: any) { return reply.code(e.statusCode || 502).send({ error: sanitizeClinAIResponse(e.message || 'ClinAI could not complete that request.') }); }
   });
 
   app.post('/api/ai/compute', async (req: any, reply: any) => {
