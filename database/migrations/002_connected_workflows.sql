@@ -8,3 +8,5 @@ CREATE INDEX IF NOT EXISTS idx_clinical_orders_patient_created ON clinical_order
 CREATE INDEX IF NOT EXISTS idx_lab_results_sample_status ON lab_results(sample_id, status);
 CREATE INDEX IF NOT EXISTS idx_medication_orders_patient_status ON medication_orders(patient_id, status);
 CREATE INDEX IF NOT EXISTS idx_invoices_patient_status ON invoices(patient_id, status);
+
+CREATE INDEX IF NOT EXISTS idx_idempotency_expires ON idempotency_keys(organization_id, expires_at);

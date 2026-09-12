@@ -46,6 +46,7 @@ async function ensureRuntimeSchema(){
     CREATE INDEX IF NOT EXISTS idx_module_records_org_module_created ON module_records(organization_id,module,created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_module_records_payload_gin ON module_records USING gin(payload);
     ALTER TABLE notifications ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
+    CREATE INDEX IF NOT EXISTS idx_idempotency_expires ON idempotency_keys(organization_id, expires_at);
   `);
 }
 await ensureRuntimeSchema();
@@ -135,6 +136,18 @@ app.addHook('preHandler',async(req)=>{
     if(e.statusCode) throw e;
     throw Object.assign(new Error('Unauthorized'), { statusCode: 401 });
   }
+});
+app.addHook('preHandler', async(req:any,reply:any)=>{
+  if(!pool || !['POST','PATCH','DELETE'].includes(req.method) || req.raw.url?.startsWith('/api/auth/')) return;
+  const key=String(req.headers['idempotency-key']||'').trim(); if(!key) return;
+  const oid=dbOrganizationId(req); if(!oid) return;
+  const r=await pool.query('SELECT response_code,response_body FROM idempotency_keys WHERE organization_id=$1 AND key=$2 AND (expires_at IS NULL OR expires_at>now())',[oid,key]);
+  if(r.rowCount){ req.idempotencyReplay=true; return reply.code(r.rows[0].response_code).send(r.rows[0].response_body); }
+  req.idempotencyKey=key;
+});
+app.addHook('onSend', async(req:any,reply:any,payload:any)=>{
+  if(!pool || !req.idempotencyKey || req.idempotencyReplay || reply.statusCode>=500) return;
+  try { const body=typeof payload==='string'?JSON.parse(payload):payload; await pool.query(`INSERT INTO idempotency_keys(organization_id,key,response_code,response_body,expires_at) VALUES($1,$2,$3,$4,now()+interval '24 hours') ON CONFLICT (organization_id,key) DO NOTHING`,[dbOrganizationId(req),req.idempotencyKey,reply.statusCode,JSON.stringify(body)]); } catch {}
 });
 
 app.get('/api/dashboard',async(req:any)=>{
@@ -287,7 +300,7 @@ app.get('/api/:module',async(req:any,reply)=>{
   if(m==='procedures'){const r=await pool.query(`SELECT p.id,p.patient_id AS "patientId",p.encounter_id AS "encounterId",p.code,p.display AS description,p.performed_at AS "performedAt" FROM procedures p JOIN patients x ON x.id=p.patient_id WHERE x.organization_id=$1 ORDER BY p.id DESC LIMIT 500`,[dbOrganizationId(req)]);return {data:r.rows,count:r.rowCount};}
   if(m==='care-plans'){const r=await pool.query(`SELECT c.id,c.patient_id AS "patientId",c.encounter_id AS "encounterId",c.title AS problem,c.status,c.goals FROM care_plans c JOIN patients p ON p.id=c.patient_id WHERE p.organization_id=$1 ORDER BY c.id DESC LIMIT 500`,[dbOrganizationId(req)]);return {data:r.rows,count:r.rowCount};}
   if(m==='referrals'){const r=await pool.query(`SELECT r.id,r.patient_id AS "patientId",r.encounter_id AS "encounterId",r.destination,r.reason,r.status,r.created_at AS "createdAt" FROM referrals r JOIN patients p ON p.id=r.patient_id WHERE p.organization_id=$1 ORDER BY r.created_at DESC LIMIT 500`,[dbOrganizationId(req)]);return {data:r.rows,count:r.rowCount};}
-  if(m==='pharmacy'){const r=await pool.query(`SELECT mo.id,mo.patient_id AS "patientId",mo.encounter_id AS "encounterId",mo.dose,mo.frequency,mo.route,mo.duration,mo.quantity,mo.status,m.code AS "medicationCode",m.name AS "medicationName" FROM medication_orders mo JOIN medications m ON m.id=mo.medication_id JOIN patients p ON p.id=mo.patient_id WHERE p.organization_id=$1 ORDER BY mo.id DESC LIMIT 500`,[dbOrganizationId(req)]);return {data:r.rows,count:r.rowCount};}
+  if(m==='pharmacy'){const r=await pool.query(`SELECT mo.id,mo.patient_id AS "patientId",mo.encounter_id AS "encounterId",mo.dose,mo.frequency,mo.route,mo.duration,mo.quantity,mo.status,m.code AS "medicationCode",m.name AS "medicationName",(SELECT ib.id FROM inventory_batches ib JOIN inventory_items ii ON ii.id=ib.item_id WHERE ii.organization_id=$1 AND (ii.sku=m.code OR lower(ii.name)=lower(m.name)) AND ib.quantity>0 ORDER BY ib.expiry_date NULLS LAST,ib.id LIMIT 1) AS "inventoryBatchId" FROM medication_orders mo JOIN medications m ON m.id=mo.medication_id JOIN patients p ON p.id=mo.patient_id WHERE p.organization_id=$1 ORDER BY mo.id DESC LIMIT 500`,[dbOrganizationId(req)]);return {data:r.rows,count:r.rowCount};}
   if(m==='billing'){const r=await pool.query(`SELECT i.id,i.patient_id AS "patientId",i.encounter_id AS "encounterId",i.status,i.currency,i.total,i.created_at AS "createdAt",COALESCE((SELECT sum(amount) FROM payments p WHERE p.invoice_id=i.id AND p.status='completed'),0) AS "paidAmount" FROM invoices i WHERE i.organization_id=$1 ORDER BY i.created_at DESC LIMIT 500`,[dbOrganizationId(req)]);return {data:r.rows,count:r.rowCount};}
   if(m==='payments'){const r=await pool.query(`SELECT p.id,p.invoice_id AS "invoiceId",i.patient_id AS "patientId",p.method,p.provider_reference AS "providerReference",p.amount,p.status,p.paid_at AS "paidAt" FROM payments p JOIN invoices i ON i.id=p.invoice_id WHERE i.organization_id=$1 ORDER BY p.paid_at DESC NULLS LAST LIMIT 500`,[dbOrganizationId(req)]);return {data:r.rows,count:r.rowCount};}
   const params:any[]=[dbOrganizationId(req),m]; let where='organization_id=$1 AND module=$2';
@@ -445,10 +458,18 @@ app.post('/api/actions/:module/:id/:action',async(req:any,reply)=>{
       const r=await client.query(`UPDATE queue_entries qe SET status=$1,called_at=CASE WHEN $1='called' THEN now() ELSE qe.called_at END,completed_at=CASE WHEN $1='completed' THEN now() ELSE qe.completed_at END FROM queues q WHERE qe.id=$2 AND qe.queue_id=q.id AND q.organization_id=$3 RETURNING qe.id,qe.patient_id AS "patientId",qe.appointment_id AS "appointmentId",qe.priority,qe.status,qe.joined_at AS "joinedAt",qe.called_at AS "calledAt",qe.completed_at AS "completedAt"`,[action,id,dbOrganizationId(req)]);
       if(!r.rowCount){await client.query('ROLLBACK');return reply.code(404).send({error:'Queue entry not found'});}
       result=r.rows[0]; await dbAudit(client,req,'QUEUE_TRANSITION','queue_entry',id,{status:action}); await queueEvent(client,req,'queue.transitioned',{queueEntryId:id,status:action});
+    } else if(module==='encounters' && action==='complete') {
+      const r=await client.query(`UPDATE encounters SET status='completed',ended_at=COALESCE(ended_at,now()) WHERE id=$1 AND organization_id=$2 RETURNING id,patient_id AS "patientId",status,started_at AS "startedAt",ended_at AS "endedAt"`,[id,dbOrganizationId(req)]);
+      if(!r.rowCount){await client.query('ROLLBACK');return reply.code(404).send({error:'Encounter not found'});} result=r.rows[0]; await dbAudit(client,req,'COMPLETE','encounter',id,{}); await queueEvent(client,req,'encounter.completed',{encounterId:id});
     } else if(module==='clinical-notes' && action==='sign'){
       const r=await client.query(`UPDATE clinical_notes n SET signed_by=$1,signed_at=now() FROM encounters e WHERE n.id=$2 AND n.encounter_id=e.id AND e.organization_id=$3 AND n.signed_at IS NULL RETURNING n.id,n.encounter_id AS "encounterId",n.signed_at AS "signedAt",n.version`,[dbUserId(req),id,dbOrganizationId(req)]);
       if(!r.rowCount){await client.query('ROLLBACK');return reply.code(404).send({error:'Draft clinical note not found'});}
       result={...r.rows[0],status:'signed'}; await dbAudit(client,req,'SIGN','clinical_note',id,{}); await queueEvent(client,req,'clinical_note.signed',{clinicalNoteId:id});
+    } else if(module==='laboratory' && ['collect','receive'].includes(action)) {
+      const next=action==='collect'?'collected':'received';
+      const stamp=action==='collect'?'collected_at':'received_at';
+      const r=await client.query(`UPDATE lab_samples ls SET status=$1,${stamp}=now() FROM clinical_orders co JOIN patients p ON p.id=co.patient_id WHERE ls.id=$2 AND ls.order_id=co.id AND p.organization_id=$3 AND ls.status IN ('ordered','collected') RETURNING ls.id,ls.order_id AS "orderId",ls.barcode,ls.status,ls.collected_at AS "collectedAt",ls.received_at AS "receivedAt"`,[next,id,dbOrganizationId(req)]);
+      if(!r.rowCount){await client.query('ROLLBACK');return reply.code(409).send({error:'Lab sample is not in a valid state for this action'});} result=r.rows[0]; await dbAudit(client,req,action.toUpperCase(),'lab_sample',id,{}); await queueEvent(client,req,`lab_sample.${action}`,{sampleId:id,status:next});
     } else if(module==='laboratory' && (action==='verify' || action==='release')){
       if(action==='release'){
         const r=await client.query(`UPDATE lab_results lr SET status='final' FROM lab_samples ls JOIN clinical_orders co ON co.id=ls.order_id JOIN patients p ON p.id=co.patient_id WHERE lr.id=$1 AND lr.sample_id=ls.id AND p.organization_id=$2 AND lr.status='verified' RETURNING lr.id,lr.sample_id AS "sampleId",lr.value_numeric AS "valueNumeric",lr.value_text AS "valueText",lr.unit,lr.abnormal_flag AS "abnormalFlag",lr.critical,lr.status,lr.verified_at AS "verifiedAt"`,[id,dbOrganizationId(req)]);
@@ -465,10 +486,14 @@ app.post('/api/actions/:module/:id/:action',async(req:any,reply)=>{
       if(!o.rowCount){await client.query('ROLLBACK');return reply.code(404).send({error:'Medication order not found'});}
       if(!['active','partially-dispensed'].includes(o.rows[0].status)){await client.query('ROLLBACK');return reply.code(409).send({error:`Medication order is ${o.rows[0].status}`});}
       const qty=Number(b.quantity||o.rows[0].quantity||1); if(qty<=0){await client.query('ROLLBACK');return reply.code(400).send({error:'Quantity must be positive'});}
-      const d=await client.query(`INSERT INTO dispensations(medication_order_id,quantity,batch,expiry_date,dispensed_by) VALUES($1,$2,$3,$4,$5) RETURNING id,medication_order_id AS "medicationOrderId",quantity,batch,expiry_date AS "expiryDate",dispensed_at AS "dispensedAt"`,[id,qty,b.batch||null,b.expiryDate||null,dbUserId(req)]);
-      await client.query(`UPDATE medication_orders SET status='dispensed' WHERE id=$1`,[id]);
-      await client.query(`INSERT INTO notifications(organization_id,patient_id,channel,template,status,payload) VALUES($1,$2,'in-app','prescription-ready','queued',$3)`,[dbOrganizationId(req),o.rows[0].patientId,JSON.stringify({medicationOrderId:id})]);
-      result={...o.rows[0],status:'dispensed',dispensation:d.rows[0]}; await dbAudit(client,req,'DISPENSE','medication_order',id,{quantity:qty}); await queueEvent(client,req,'medication.dispensed',{medicationOrderId:id,quantity:qty});
+      let batchId=b.batchId||null;
+      if(!batchId){ const stock=await client.query(`SELECT ib.id,ib.quantity,ib.batch_number AS "batchNumber",ib.expiry_date AS "expiryDate" FROM inventory_batches ib JOIN inventory_items ii ON ii.id=ib.item_id WHERE ii.organization_id=$1 AND (ii.sku=$2 OR lower(ii.name)=lower($3)) AND ib.quantity>0 ORDER BY ib.expiry_date NULLS LAST,ib.id LIMIT 1 FOR UPDATE`,[dbOrganizationId(req),o.rows[0].medicationCode||null,o.rows[0].medicationName]); if(stock.rowCount) batchId=stock.rows[0].id; }
+      let batchMeta:any=null;
+      if(batchId){ const stock=await client.query(`SELECT ib.id,ib.item_id,ib.quantity,ib.batch_number AS "batchNumber",ib.expiry_date AS "expiryDate" FROM inventory_batches ib JOIN inventory_items ii ON ii.id=ib.item_id WHERE ib.id=$1 AND ii.organization_id=$2 FOR UPDATE`,[batchId,dbOrganizationId(req)]); if(!stock.rowCount){await client.query('ROLLBACK');return reply.code(404).send({error:'Inventory batch not found'});} if(Number(stock.rows[0].quantity)<qty){await client.query('ROLLBACK');return reply.code(409).send({error:'Insufficient stock',available:Number(stock.rows[0].quantity)});} await client.query(`UPDATE inventory_batches SET quantity=quantity-$1 WHERE id=$2`,[qty,batchId]); await client.query(`INSERT INTO stock_movements(item_id,batch_id,movement_type,quantity,reference_type,reference_id,created_by) VALUES($1,$2,'dispense',$3,'medication_order',$4,$5)`,[stock.rows[0].item_id,batchId,qty,id,dbUserId(req)]); batchMeta={batchId,batch:stock.rows[0].batchNumber,expiryDate:stock.rows[0].expiryDate}; }
+      const d=await client.query(`INSERT INTO dispensations(medication_order_id,quantity,batch,expiry_date,dispensed_by) VALUES($1,$2,$3,$4,$5) RETURNING id,medication_order_id AS "medicationOrderId",quantity,batch,expiry_date AS "expiryDate",dispensed_at AS "dispensedAt"`,[id,qty,batchMeta?.batch||b.batch||null,batchMeta?.expiryDate||b.expiryDate||null,dbUserId(req)]);
+      const remaining=Number(o.rows[0].quantity||0)-qty; const next=remaining>0?'partially-dispensed':'dispensed'; await client.query(`UPDATE medication_orders SET status=$1 WHERE id=$2`,[next,id]);
+      await client.query(`INSERT INTO notifications(organization_id,patient_id,channel,template,status,payload) VALUES($1,$2,'in-app','prescription-ready','queued',$3)`,[dbOrganizationId(req),o.rows[0].patientId,JSON.stringify({medicationOrderId:id,quantity:qty})]);
+      result={...o.rows[0],status:next,dispensation:d.rows[0],inventory:batchMeta}; await dbAudit(client,req,'DISPENSE','medication_order',id,{quantity:qty,batchId}); await queueEvent(client,req,'medication.dispensed',{medicationOrderId:id,quantity:qty,batchId});
     } else if(module==='billing' && action==='pay'){
       const inv=await client.query(`SELECT id,patient_id AS "patientId",total,status,currency FROM invoices WHERE id=$1 AND organization_id=$2 FOR UPDATE`,[id,dbOrganizationId(req)]);
       if(!inv.rowCount){await client.query('ROLLBACK');return reply.code(404).send({error:'Invoice not found'});}
@@ -490,6 +515,12 @@ app.post('/api/actions/:module/:id/:action',async(req:any,reply)=>{
   }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
 });
 
+app.post('/api/medication-administrations',async(req:any,reply)=>{
+  const b=z.object({medicationOrderId:z.string().uuid(),dose:z.string().optional(),route:z.string().optional(),scheduledAt:z.string().optional(),status:z.enum(['given','held','refused','missed']).default('given'),reason:z.string().optional()}).parse(req.body);
+  if(!pool)return reply.code(201).send(add('nursing',{...b,administeredAt:now()},req));
+  const client=await pool.connect(); try{await client.query('BEGIN'); const mo=await client.query(`SELECT mo.id,mo.patient_id AS "patientId" FROM medication_orders mo JOIN patients p ON p.id=mo.patient_id WHERE mo.id=$1 AND p.organization_id=$2`,[b.medicationOrderId,dbOrganizationId(req)]); if(!mo.rowCount){await client.query('ROLLBACK');return reply.code(404).send({error:'Medication order not found'});} const r=await client.query(`INSERT INTO medication_administrations(medication_order_id,dose,route,scheduled_at,administered_at,status,administered_by,reason) VALUES($1,$2,$3,$4,CASE WHEN $5 IN ('given','held','refused') THEN now() ELSE NULL END,$5,$6,$7) RETURNING id,medication_order_id AS "medicationOrderId",dose,route,scheduled_at AS "scheduledAt",administered_at AS "administeredAt",status,reason`,[b.medicationOrderId,b.dose||null,b.route||null,b.scheduledAt||null,b.status,dbUserId(req),b.reason||null]); await dbAudit(client,req,'ADMINISTER_MEDICATION','medication_order',b.medicationOrderId,{status:b.status}); await queueEvent(client,req,'medication.administration_recorded',{medicationOrderId:b.medicationOrderId,administrationId:r.rows[0].id,status:b.status}); await client.query('COMMIT'); return reply.code(201).send({...r.rows[0],patientId:mo.rows[0].patientId}); }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
+});
+
 // --- Database-backed clinical results, inventory and audit/search ---
 app.get('/api/laboratory/samples',async(req:any)=>{
   if(!pool)return {data:store.laboratory.filter(x=>x.sampleId||x.orderId),count:store.laboratory.length};
@@ -501,6 +532,8 @@ app.get('/api/laboratory/results',async(req:any)=>{
   if(!pool) return {data:store.laboratory.filter(x=>x.organizationId===org(req)),count:store.laboratory.length};
   const r=await pool.query(`SELECT lr.id,co.patient_id AS "patientId",ls.barcode,lt.code,lt.name,lr.value_numeric AS "valueNumeric",lr.value_text AS "valueText",lr.unit,lr.abnormal_flag AS "abnormalFlag",lr.critical,lr.status,lr.verified_at AS "verifiedAt" FROM lab_results lr JOIN lab_samples ls ON ls.id=lr.sample_id JOIN clinical_orders co ON co.id=ls.order_id JOIN lab_tests lt ON lt.id=lr.test_id JOIN patients p ON p.id=co.patient_id WHERE p.organization_id=$1 ORDER BY lr.id DESC LIMIT 500`,[dbOrganizationId(req)]); return {data:r.rows,count:r.rowCount};
 });
+app.get('/api/medication-administrations',async(req:any)=>{ if(!pool)return {data:store.nursing.filter(x=>x.medicationOrderId),count:store.nursing.length}; const r=await pool.query(`SELECT ma.id,ma.medication_order_id AS "medicationOrderId",mo.patient_id AS "patientId",ma.dose,ma.route,ma.scheduled_at AS "scheduledAt",ma.administered_at AS "administeredAt",ma.status,ma.reason,ma.administered_by AS "administeredBy" FROM medication_administrations ma JOIN medication_orders mo ON mo.id=ma.medication_order_id JOIN patients p ON p.id=mo.patient_id WHERE p.organization_id=$1 ORDER BY ma.administered_at DESC NULLS LAST LIMIT 500`,[dbOrganizationId(req)]); return {data:r.rows,count:r.rowCount}; });
+
 app.get('/api/audit',async(req:any)=>{
   if(!pool) return audit.slice(-500).reverse();
   const r=await pool.query(`SELECT id,actor_user_id AS "actorUserId",action,entity_type AS "entityType",entity_id AS "entityId",metadata,created_at AS "createdAt" FROM audit_logs WHERE organization_id=$1 ORDER BY created_at DESC LIMIT 500`,[dbOrganizationId(req)]); return r.rows;

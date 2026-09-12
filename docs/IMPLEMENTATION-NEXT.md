@@ -21,3 +21,17 @@ This build continues from the ClinAI Complete Platform Blueprint and the previou
 ## Important production boundary
 
 This is an implementation build, not a declaration of clinical safety, regulatory compliance or production readiness for real patient data. Real deployment still requires clinical validation, privacy/security review, MFA, least privilege, provider integrations, backups/disaster recovery, interoperability conformance, AI evaluation/governance and local legal/regulatory review.
+
+## Connected Workflows v2
+
+This release deepens the connected clinical journey with:
+
+- Idempotency keys for POST/PATCH/DELETE retries, suitable for offline/mobile retry semantics.
+- Encounter completion action with audit and outbox event.
+- Laboratory sample collection and receipt actions before result verification/release.
+- Medication administration records for given, held, refused and missed doses.
+- Pharmacy dispensing can select a matching inventory batch and atomically deduct stock, while recording a stock movement.
+- Inventory, pharmacy, billing, insurance, claims, notifications and document creation use PostgreSQL when persistence is enabled.
+- Contextual UI actions expose encounter completion and laboratory sample lifecycle actions.
+
+The system remains a development implementation. Real clinical deployment still requires clinical validation, security/privacy review, identity/MFA, real integrations, backup/DR testing, interoperability conformance and jurisdiction-specific compliance work.
