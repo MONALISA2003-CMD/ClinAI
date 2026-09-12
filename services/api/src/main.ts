@@ -146,7 +146,7 @@ async function ensureRuntimeSchema(){
     CREATE TABLE IF NOT EXISTS terminology_concepts (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid REFERENCES organizations(id) ON DELETE CASCADE,
       system_uri text NOT NULL, code text NOT NULL, display text NOT NULL, version text, status text NOT NULL DEFAULT 'active',
-      source text, source_url text, properties jsonb NOT NULL DEFAULT '{}', created_at timestamptz NOT NULL DEFAULT now(),
+      source text, source_url text, properties jsonb NOT NULL DEFAULT '{}', created_at timestamptz NOT NULL DEFAULT now()
     );
     CREATE INDEX IF NOT EXISTS terminology_lookup_idx ON terminology_concepts(system_uri, code);
     CREATE UNIQUE INDEX IF NOT EXISTS terminology_unique_version_idx ON terminology_concepts(organization_id, system_uri, code, COALESCE(version,''));
