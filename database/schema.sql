@@ -92,3 +92,8 @@ CREATE TABLE IF NOT EXISTS consent_versions (
 );
 CREATE INDEX IF NOT EXISTS audit_logs_entity_idx ON audit_logs(entity_type, entity_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS notifications_patient_idx ON notifications(patient_id, created_at DESC);
+
+-- V5 longitudinal identity / interoperability
+CREATE TABLE IF NOT EXISTS patient_identifiers (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE, patient_id uuid NOT NULL REFERENCES patients(id) ON DELETE CASCADE, system text NOT NULL, value text NOT NULL, identifier_type text, use text NOT NULL DEFAULT 'usual', period_start timestamptz, period_end timestamptz, created_at timestamptz NOT NULL DEFAULT now(), UNIQUE(organization_id, system, value));
+CREATE INDEX IF NOT EXISTS patient_identifiers_patient_idx ON patient_identifiers(patient_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS patient_identifiers_lookup_idx ON patient_identifiers(organization_id, system, value);

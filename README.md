@@ -51,3 +51,25 @@ The smoke test exercises patient registration, appointment check-in, queue trans
 ## Safety boundary
 
 This repository is a software development baseline. It does not claim clinical safety, regulatory certification, privacy compliance, medical-device validation, interoperability certification, or readiness for real patient data. Those require institution-specific clinical validation, security and privacy review, legal/regulatory review, real provider/device integrations, operational policies, backup/disaster-recovery testing, and AI governance.
+
+## Next V3: Intelligence, Governance and Care Coordination
+
+The platform now includes governance resources, deterministic clinical decision support, care-gap management, consent-aware communication queuing, clinical alerts, and PostgreSQL-backed operational analytics. See `docs/IMPLEMENTATION-NEXT-V3.md`.
+
+## Advanced Clinical Layer V4
+
+This build adds dedicated PostgreSQL-backed workflows for emergency care, inpatient admissions/discharge, nursing assessments, surgery safety workflow, maternity, pediatrics/IMCI-oriented assessment, immunization, chronic care, telemedicine and remote monitoring.
+
+Research basis is documented in `docs/ADVANCED-CLINICAL-RESEARCH.md`. Clinical content is intentionally configurable and must be localized and clinically governed before production use.
+
+New migration: `database/migrations/004-advanced-clinical-services.sql`.
+
+Important: these workflows are software infrastructure, not medical advice or a substitute for facility protocols, national guidelines, clinician judgment, credentialing, privacy/security review or regulatory approval.
+
+## V5: Uganda-aware Patient 360 + FHIR
+
+V5 deepens the longitudinal clinical record and makes Uganda a first-class localization context. It adds PostgreSQL-backed Patient 360 aggregation, extensible patient identifiers, FHIR R4 resources for Immunization, CarePlan, Procedure, MedicationAdministration and Appointment, ServiceRequest search, and an explicit Uganda configuration boundary.
+
+Research and implementation rationale: `docs/V5-UGANDA-PATIENT360-FHIR-RESEARCH.md`. The implementation follows the direction of Uganda MoH DH-ASK and Health Information Exchange/Interoperability guidance while retaining international FHIR/WHO SMART interoperability.
+
+The `/api/uganda/profile` endpoint intentionally reports national integrations as not connected until approved interfaces and credentials are configured.
