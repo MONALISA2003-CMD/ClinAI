@@ -116,3 +116,10 @@ See `docs/V6-UGANDA-CLINICAL-INTEROPERABILITY-RESEARCH.md`.
 
 ## V8 — Uganda maternal, newborn and postnatal layer
 V8 adds source-linked maternal care, ANC contacts, birth events, newborn records and postnatal contacts. It is based on current Uganda MoH maternal-health publications and the latest WHO SMART/DAK material reviewed on 2026-09-12. National guidance remains authoritative for Uganda-specific content; WHO SMART provides the computable structure. See `docs/V8-UGANDA-MATERNAL-NEWBORN-RESEARCH.md`.
+
+
+## V9
+Uganda child health, growth, IMCI and immunization continuity. See `docs/V9-UGANDA-CHILD-HEALTH-IMMUNIZATION-RESEARCH.md` and `database/migrations-009-uganda-child-health-immunization.sql`.
+
+## V11
+Population health and surveillance intelligence adds surveillance events/cases, population cohorts and members, population indicators, surveillance summary, cohort management and dashboard APIs. It is designed for Uganda-first interoperability while remaining country-adaptable. National surveillance endpoints are not claimed as connected.

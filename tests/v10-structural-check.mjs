@@ -1,0 +1,10 @@
+import fs from 'node:fs';
+import path from 'node:path';
+const root=process.cwd();
+const api=fs.readFileSync(path.join(root,'services/api/src/main.ts'),'utf8');
+const migration=fs.readFileSync(path.join(root,'database/migrations-010-child-intelligence-care-graph.sql'),'utf8');
+const requiredTables=['child_care_gaps','immunization_catchup_plans','care_graph_edges'];
+for(const t of requiredTables) if(!migration.includes(`CREATE TABLE IF NOT EXISTS ${t}`)) throw new Error(`Missing table ${t}`);
+for(const route of ['/api/child-intelligence/:patientId','/api/child-intelligence/care-gaps/detect','/api/immunization/catch-up-plans','/api/immunization/catch-up-plans/:patientId','/api/care-graph/edges','/api/care-graph/:patientId']) if(!api.includes(route)) throw new Error(`Missing route ${route}`);
+for(const token of ['growthTrend','requiresClinicianReview','clinician_review_required','care_graph_edges','WHO-SMART-DAK-IMMZ-1.1.0']) if(!api.includes(token)) throw new Error(`Missing V10 implementation marker ${token}`);
+console.log('ClinAI V10 structural check passed');
