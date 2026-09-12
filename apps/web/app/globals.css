@@ -4,3 +4,189 @@
 @media(max-width:700px){.tablet-rail{display:none}.mobile-brand{display:flex;align-items:center;gap:8px}.mobile-brand .brandlockup{padding:0}.mobile-brand .brandlockup img{width:84px;height:auto;object-fit:contain}.mobile-brand .brandlockup span{display:none}.topbar{height:62px;padding:0 13px;gap:10px}.topbar-search{display:none}.topbar-actions{gap:6px}.topbar-actions .connection{font-size:8px;padding:6px 7px}.topbar-actions .icon-button{display:none}.user-chip b{display:none}.user-chip span{width:28px;height:28px}.content{padding:17px 13px 86px}.page-header{display:block;margin-bottom:14px}.page-header h1{font-size:24px;margin-top:4px}.page-header p{font-size:11px;line-height:1.4;max-width:320px}.page-status{display:none}.mobile-search{display:block;margin-bottom:13px}.searchbox{height:43px;background:#fff;border:1px solid var(--border);border-radius:11px;display:flex;align-items:center;padding-left:11px}.searchbox span{color:#8b96a6}.searchbox input{flex:1;min-width:0;border:0;outline:0;padding:0 8px;font-size:11px}.searchbox button{border:0;background:var(--clinai-blue);color:#fff;border-radius:8px;padding:7px 11px;font-size:10px;font-weight:800;margin-right:4px}.welcome-panel{min-height:150px;padding:19px 18px;border-radius:16px;margin-bottom:12px}.welcome-panel h2{font-size:21px}.welcome-panel p{font-size:11px}.welcome-mark{width:68px;height:68px;border-radius:17px}.welcome-mark img{width:53px;height:53px}.metric-grid{grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px}.metric-card{min-height:94px;padding:12px}.metric-card strong{font-size:23px}.metric-card small{font-size:8px}.command-grid{gap:12px}.panel{padding:14px;border-radius:14px}.panel-title{margin-bottom:11px}.panel-title h2{font-size:16px}.quick-actions{grid-template-columns:1fr 1fr;gap:7px}.quick-actions button{padding:10px;gap:8px}.quick-actions b{width:30px;height:30px}.quick-actions strong{font-size:10px}.quick-actions small{font-size:8px}.journey-steps{grid-template-columns:1fr}.journey-steps button{padding:8px 2px}.journey-steps button:nth-child(n+7){display:none}.journey-steps span{font-size:10px}.create-record{margin-top:3px}.create-record summary{padding:11px}.form-grid{grid-template-columns:1fr;padding:0 11px 11px}.form-grid input,.form-grid select{height:42px}.form-submit{width:100%}.record-row{align-items:flex-start;padding:11px 0;gap:8px}.record-meta{flex-direction:column;align-items:flex-end;gap:6px}.record-main b{max-width:210px;font-size:10px}.record-main span{font-size:8px}.record-avatar{width:31px;height:31px;min-width:31px}.status-pill{font-size:7px}.row-actions{max-width:170px}.row-actions button{font-size:7px;padding:5px 6px}.empty-state{padding:40px 10px}.search-grid{grid-template-columns:1fr}.modalback{padding:8px}.modal{max-height:94vh;border-radius:15px;padding:14px}.modal-head h2{font-size:19px}.patient-summary{grid-template-columns:1fr 1fr;gap:8px}.patient-summary>div{padding:10px}.patienttimeline{grid-template-columns:1fr}.workspace-form{grid-template-columns:1fr}.workspace-form button{grid-column:1}.mobile-bottom-nav{display:grid;grid-template-columns:repeat(5,1fr);position:fixed;bottom:0;left:0;right:0;height:66px;background:rgba(255,255,255,.98);backdrop-filter:blur(14px);border-top:1px solid var(--border);z-index:30;padding-bottom:env(safe-area-inset-bottom)}.mobile-bottom-nav button{border:0;background:transparent;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:#7a8798}.mobile-bottom-nav button span{font-size:9px;font-weight:850}.mobile-bottom-nav button small{font-size:8px}.mobile-bottom-nav button.active{color:var(--clinai-blue)}.nav-overlay{display:block;position:fixed;inset:0;background:rgba(15,23,42,.35);z-index:60}.nav-drawer{width:min(315px,88vw);height:100%;overflow:auto;background:#fff;padding:14px;box-shadow:18px 0 50px rgba(15,23,42,.18)}.drawer-head{display:flex;justify-content:space-between;align-items:flex-start}.nav-drawer .brandlockup img{width:125px}.nav-drawer section{margin:14px 0}.nav-drawer button{padding:9px 8px}.nav-drawer .navglyph{width:27px;height:27px}.topbar-actions .connection.ready{background:var(--success-soft)}.command-center .journey-panel{padding-bottom:12px}.view-all{margin-top:10px}.encounter-modal .tabs{overflow-x:auto}.patient-modal{padding-bottom:16px}}
 @media(min-width:701px){.mobile-search{display:none}}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
+
+
+/* ClinAI responsive experience */
+:root{
+  --clinai-blue:#063b73;
+  --clinai-blue-2:#0b568f;
+  --clinai-blue-soft:#eef6fd;
+  --clinai-red:#df1025;
+  --clinai-red-soft:#fff1f3;
+  --ink:#142238;
+  --muted:#66758a;
+  --surface:#ffffff;
+  --surface-2:#f5f8fc;
+  --border:#e1e8f0;
+  --border-strong:#cfd9e5;
+  --shadow-soft:0 8px 24px rgba(20,34,56,.06);
+}
+html{background:var(--surface-2)}
+body{overflow-x:hidden}
+button,input,select,textarea{touch-action:manipulation}
+button{-webkit-tap-highlight-color:transparent}
+.brandlockup.compact img{width:42px;height:42px;object-fit:contain}
+.brandlockup img{max-height:92px;object-fit:contain;object-position:center}
+.desktop-sidebar .brandlockup{align-items:center;padding:2px 8px 14px}
+.desktop-sidebar .brandlockup img{width:132px}
+.desktop-sidebar .brandlockup span{text-align:center}
+.navglyph{font-variant-numeric:tabular-nums}
+.connection{display:inline-flex;align-items:center;gap:5px}
+.connection i{width:6px;height:6px;border-radius:50%;background:currentColor;display:inline-block}
+.content{max-width:1600px}
+.page-header{align-items:center}
+.page-header h1{font-weight:750}
+.welcome-panel{box-shadow:var(--shadow-soft)}
+.welcome-panel .section-kicker{color:var(--clinai-red)}
+.metric-card{box-shadow:0 1px 0 rgba(20,34,56,.02)}
+.metric-card strong{font-weight:760}
+.mobile-today-strip{display:none}
+.quick-actions button{min-height:70px}
+.journey-steps button{min-height:44px}
+.view-all{min-height:42px}
+.refresh{white-space:nowrap}
+.record-row{min-height:66px}
+.modal{scrollbar-width:thin}
+
+/* Tablet: a compact clinical desk, not a squeezed desktop */
+@media (min-width:701px) and (max-width:1100px){
+  .tablet-rail{width:82px;flex-basis:82px;background:#fff;box-shadow:4px 0 18px rgba(20,34,56,.03)}
+  .tablet-rail .brandlockup{padding:3px 0 14px}
+  .tablet-rail .brandlockup img{width:48px;height:48px}
+  .tablet-rail>button:not(.rail-menu){height:58px;width:66px;border:1px solid transparent}
+  .tablet-rail>button:not(.rail-menu).active{border-color:#dce8f5;box-shadow:0 4px 12px rgba(4,54,107,.05)}
+  .tablet-rail>button:not(.rail-menu) b{font-size:10px;font-weight:850}
+  .tablet-rail>button:not(.rail-menu) span{font-size:8px;max-width:58px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .topbar{height:68px;padding:0 22px}
+  .content{padding:24px 24px 40px}
+  .page-header h1{font-size:28px}
+  .welcome-panel{min-height:168px;padding:24px}
+  .metric-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+  .metric-card{min-height:105px}
+  .command-grid{grid-template-columns:minmax(0,1.05fr) minmax(0,.95fr);gap:14px}
+  .quick-actions{grid-template-columns:1fr 1fr}
+  .journey-steps{grid-template-columns:1fr}
+  .journey-steps button{padding:9px 4px}
+  .form-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .record-main b{max-width:310px}
+}
+
+/* Phone: task-first, touch-first */
+@media (max-width:700px){
+  body{background:#f6f8fb}
+  .app-shell{min-height:100dvh}
+  .app-main{width:100%;min-width:0}
+  .topbar{height:60px;padding:0 12px;background:rgba(255,255,255,.97);box-shadow:0 1px 0 rgba(20,34,56,.03)}
+  .mobile-brand{gap:9px;min-width:0}
+  .mobile-brand .icon-button{width:36px;height:36px;border-radius:10px;background:#fff}
+  .mobile-brand .brandlockup.compact{padding:0}
+  .mobile-brand .brandlockup.compact img{width:34px;height:34px}
+  .topbar-actions{margin-left:auto}
+  .topbar-actions .connection{font-size:8px;padding:6px 8px;border:1px solid #d9eee1}
+  .user-chip span{width:30px;height:30px}
+  .content{padding:14px 12px calc(88px + env(safe-area-inset-bottom));max-width:none}
+  .page-header{margin:2px 0 12px;display:block}
+  .page-header .eyebrow{font-size:9px;letter-spacing:.11em}
+  .page-header h1{font-size:23px;line-height:1.12;margin:5px 0 4px;letter-spacing:-.035em}
+  .page-header p{font-size:10.5px;line-height:1.45;max-width:330px}
+  .mobile-search{margin-bottom:12px}
+  .searchbox{height:44px;border-radius:12px;box-shadow:0 2px 10px rgba(20,34,56,.035)}
+  .searchbox input{font-size:11px}
+  .welcome-panel{min-height:0;padding:17px 16px;border-radius:16px;margin-bottom:10px;align-items:center;box-shadow:0 7px 22px rgba(20,34,56,.055)}
+  .welcome-panel h2{font-size:20px;margin:5px 0 5px}
+  .welcome-panel p{font-size:10.5px;line-height:1.45;max-width:245px}
+  .welcome-mark{width:58px;height:58px;border-radius:15px;flex:0 0 58px;box-shadow:none}
+  .welcome-mark img{width:46px;height:46px}
+  .metric-grid{grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px}
+  .metric-card{min-height:88px;padding:11px;border-radius:12px}
+  .metric-card:nth-child(n+3){display:none}
+  .metric-card strong{font-size:22px;margin:6px 0 2px}
+  .metric-card span{font-size:9.5px}
+  .metric-card small{font-size:7.5px}
+  .mobile-today-strip{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin:0 0 12px}
+  .mobile-today-strip div{background:#fff;border:1px solid var(--border);border-radius:10px;padding:8px 7px;min-width:0}
+  .mobile-today-strip span{display:block;color:var(--muted);font-size:7px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mobile-today-strip strong{display:block;margin-top:3px;font-size:14px;line-height:1.1}
+  .command-grid{display:flex;flex-direction:column;gap:10px}
+  .panel{padding:13px;border-radius:14px}
+  .panel-title{margin-bottom:10px;gap:8px}
+  .panel-title h2{font-size:15px;margin-top:3px}
+  .panel-title p{font-size:9.5px}
+  .quick-actions{grid-template-columns:1fr 1fr;gap:7px}
+  .quick-actions button{min-height:68px;padding:9px;border-radius:11px;gap:8px}
+  .quick-actions b{width:29px;height:29px;border-radius:8px;font-size:8px;flex:0 0 29px}
+  .quick-actions strong{font-size:9.5px}
+  .quick-actions small{font-size:7.5px;line-height:1.25}
+  .journey-panel{order:2}
+  .journey-steps{grid-template-columns:1fr}
+  .journey-steps button{min-height:43px;padding:8px 1px}
+  .journey-steps button:nth-child(n+7){display:none}
+  .journey-steps i{width:24px;height:24px;font-size:7px}
+  .journey-steps span{font-size:9.5px}
+  .journey-steps em{font-size:7.5px}
+  .journey-note-inline{font-size:8px}
+  .view-all{font-size:9px;min-height:40px}
+  .workspace-panel{min-height:0}
+  .workspace-panel>.panel-title{align-items:center}
+  .workspace-panel>.panel-title .refresh{font-size:8px;padding:7px 8px}
+  .create-record summary{min-height:52px}
+  .create-record summary strong{font-size:10px}
+  .create-record summary small{font-size:8px}
+  .form-grid{grid-template-columns:1fr;gap:9px}
+  .form-grid label>span{font-size:8.5px}
+  .form-grid input,.form-grid select{height:43px;font-size:10px}
+  .primary.form-submit{height:43px}
+  .record-list{margin-top:4px}
+  .record-row{display:flex;flex-direction:column;gap:8px;padding:12px 0;min-height:0}
+  .record-main{width:100%}
+  .record-main b{max-width:calc(100vw - 90px);font-size:10px}
+  .record-main span{font-size:8px}
+  .record-meta{width:100%;display:flex;flex-direction:row;justify-content:space-between;align-items:center;gap:6px}
+  .row-actions{max-width:none;justify-content:flex-end}
+  .row-actions button{font-size:7.5px;padding:6px 7px;min-height:30px}
+  .empty-state{padding:42px 12px}
+  .empty-state strong{font-size:11px}
+  .empty-state span{font-size:9px;line-height:1.4}
+  .search-results{margin-bottom:10px}
+  .search-grid{grid-template-columns:1fr}
+  .modalback{padding:6px;align-items:end}
+  .modal{width:100%;max-height:calc(100dvh - 12px);border-radius:18px 18px 12px 12px;padding:14px;box-shadow:0 -12px 50px rgba(15,23,42,.18)}
+  .modal-head{padding-bottom:12px}
+  .modal-head h2{font-size:18px}
+  .modal-head>div>span:last-child{font-size:8.5px;line-height:1.35}
+  .tabs{overflow-x:auto;scrollbar-width:none}
+  .tabs::-webkit-scrollbar{display:none}
+  .tabs button{white-space:nowrap;min-height:40px;font-size:9px;padding:8px 10px}
+  .workspace-form{grid-template-columns:1fr}
+  .workspace-form textarea,.workspace-form input,.workspace-form select{font-size:10px;min-height:43px}
+  .workspace-form textarea{min-height:95px}
+  .workspace-form button{min-height:43px}
+  .clinical-note{font-size:8.5px;line-height:1.45}
+  .patient-summary{grid-template-columns:1fr;gap:7px}
+  .patient-summary>div{padding:10px}
+  .patienttimeline{grid-template-columns:1fr;gap:8px}
+  .patienttimeline p{font-size:8.5px}
+  .modal-nav{display:grid;grid-template-columns:1fr 1fr}
+  .modal-nav button{min-height:38px;font-size:8.5px}
+  .nav-overlay{background:rgba(10,20,35,.42);backdrop-filter:blur(2px)}
+  .nav-drawer{width:min(330px,88vw);padding:13px 12px}
+  .nav-drawer .brandlockup{align-items:flex-start;padding:0 5px 12px}
+  .nav-drawer .brandlockup img{width:118px;max-height:88px}
+  .nav-drawer section{margin:12px 0}
+  .nav-drawer section small{font-size:9px;padding-bottom:6px}
+  .nav-drawer button{min-height:40px;font-size:10px}
+  .nav-drawer .navglyph{width:29px;height:29px}
+  .mobile-bottom-nav{height:68px;padding:4px 4px env(safe-area-inset-bottom);box-shadow:0 -5px 20px rgba(20,34,56,.07)}
+  .mobile-bottom-nav button{min-width:0;border-radius:10px;gap:2px}
+  .mobile-bottom-nav button span{font-size:10px;line-height:1}
+  .mobile-bottom-nav button small{font-size:8px}
+  .mobile-bottom-nav button.active{background:var(--clinai-blue-soft)}
+}
+
+@media (max-width:360px){
+  .content{padding-left:10px;padding-right:10px}
+  .welcome-mark{display:none}
+  .mobile-today-strip{grid-template-columns:repeat(2,1fr)}
+  .quick-actions{grid-template-columns:1fr}
+  .quick-actions button{min-height:58px}
+}

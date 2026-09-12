@@ -9,7 +9,7 @@ const manifest = JSON.parse(fs.readFileSync(`${root}/apps/web/public/manifest.js
 
 for (const token of ['--clinai-blue', '--clinai-red', '--surface', '--border']) assert.match(css, new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
 for (const marker of ['desktop-sidebar','tablet-rail','mobile-bottom-nav','nav-drawer','mobile-search','metric-grid','quick-actions','create-record']) assert.match(css, new RegExp(`\\.${marker}`));
-for (const marker of ['Command Center','ClinAI','Clinical journey','Register patient','View queue','Patients','Queue','Tasks','More']) assert.match(page, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+for (const marker of ['Home','ClinAI','Patient journey','Register patient','View queue','Patients','Queue','Tasks','More']) assert.match(page, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
 assert.match(page, /\/clinai-logo\.png/);
 assert.match(page, /\/clinai-icon\.png/);
 assert.match(layout, /favicon\.ico/);

@@ -2,8 +2,8 @@ import type { ReactNode } from 'react';
 import './globals.css';
 
 export const metadata={
-  title:'ClinAI | Connected Healthcare OS',
-  description:'ClinAI clinical operations, connected care and healthcare intelligence workspace.',
+  title:'ClinAI | Better care, connected',
+  description:'ClinAI helps care teams keep patient care clear, connected and organized.',
   icons:{icon:[{url:'/favicon.ico'},{url:'/clinai-icon.png',type:'image/png'}],apple:'/clinai-icon-192.png'},
   manifest:'/manifest.json',
 };
