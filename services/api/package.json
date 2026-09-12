@@ -18,5 +18,5 @@
     "typescript": "^5.8.0",
     "@types/pg": "^8.15.5"
   },
-  "version": "0.14.0"
+  "version": "0.15.0"
 }
