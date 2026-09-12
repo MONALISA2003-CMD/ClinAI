@@ -87,7 +87,7 @@ export async function callOpenAICompatible(model: AIModel, prompt: string, syste
   if (opts.tools?.length && model.toolCalling) { body.tools = opts.tools; body.tool_choice = 'auto'; }
   if (model.structuredOutput) body.response_format = { type: 'json_schema', json_schema: { name: 'clinai_answer', strict: true, schema } };
   const controller = new AbortController();
-  const timeoutMs = Math.max(3000, Number(process.env.CLINAI_PROVIDER_TIMEOUT_MS || 9000));
+  const timeoutMs = Math.max(3000, Number(process.env.CLINAI_PROVIDER_TIMEOUT_MS || 15000));
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   let response: Response;
   try {
