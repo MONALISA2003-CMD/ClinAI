@@ -11,7 +11,7 @@ const groups:any=[
  ['SUPPLY',['inventory','procurement','suppliers']],
  ['PATIENT',['patient-portal','telemedicine','remote-monitoring','notifications','documents']],
  ['INTELLIGENCE',['ai','analytics','population-health']],
- ['PLATFORM',['staff','facilities','tasks','workflows','interoperability','trust','audit','settings']]
+ ['PLATFORM',['staff','facilities','tasks','workflows','interoperability','trust','audit','settings','terminology','guidelines','care-pathways','hie','reporting','offline-sync']]
 ];
 const journey:any=[['Registration','registration'],['Check-in & Queue','queue'],['Triage & Vitals','triage'],['Encounter','encounters'],['Emergency','emergency'],['Inpatient','inpatient'],['Nursing','nursing'],['Surgery','surgery'],['Maternity','maternity'],['Pediatrics','pediatrics'],['Immunization','immunization'],['Chronic Care','chronic-care'],['Orders','orders'],['Lab / Imaging','laboratory'],['Pharmacy','pharmacy'],['Billing','billing'],['Telemedicine','telemedicine'],['Remote Monitoring','remote-monitoring'],['Discharge','inpatient'],['Follow-up','follow-up']];
 const pretty=(x:string)=>x.replaceAll('-',' ').replace(/\b\w/g,c=>c.toUpperCase());
@@ -60,7 +60,7 @@ const fields:Record<string,Field[]>= {
  facilities:[{key:'name',label:'Facility name'},{key:'type',label:'Facility type'},{key:'status',label:'Status'}],
  tasks:[{key:'title',label:'Task title'},{key:'patientId',label:'Patient ID'},{key:'priority',label:'Priority',options:['normal','urgent','critical']}],
  workflows:[{key:'name',label:'Workflow name'},{key:'trigger',label:'Trigger'},{key:'status',label:'Status'}],
- interoperability:[{key:'system',label:'Connected system'},{key:'standard',label:'Standard',options:['FHIR','HL7v2','DICOM','DHIS2']},{key:'status',label:'Status'}],
+ interoperability:[{key:'system',label:'Connected system'},{key:'standard',label:'Standard',options:['FHIR','HL7v2','DICOM','DHIS2']},{key:'status',label:'Status'}], terminology:[{key:'system',label:'Terminology system'},{key:'code',label:'Code'},{key:'display',label:'Display'},{key:'version',label:'Version'}], guidelines:[{key:'title',label:'Guideline title'},{key:'domain',label:'Domain'},{key:'jurisdiction',label:'Jurisdiction',options:['UG','INTL']},{key:'version',label:'Version'},{key:'sourceUrl',label:'Source URL'}], 'care-pathways':[{key:'code',label:'Pathway code'},{key:'name',label:'Pathway name'},{key:'domain',label:'Domain'},{key:'jurisdiction',label:'Jurisdiction',options:['UG','INTL']},{key:'version',label:'Version'}], hie:[{key:'name',label:'Connection name'},{key:'protocol',label:'Protocol',options:['FHIR','HL7v2','DICOM','DHIS2']},{key:'baseUrl',label:'Base URL'},{key:'status',label:'Status',options:['disabled','testing','active']}], reporting:[{key:'reportingSystem',label:'Reporting system'},{key:'indicatorCode',label:'Indicator code'},{key:'indicatorName',label:'Indicator name'},{key:'periodGranularity',label:'Period',options:['daily','weekly','monthly','quarterly','annual']}], 'offline-sync':[{key:'deviceId',label:'Device ID'},{key:'resourceType',label:'Resource type'},{key:'operation',label:'Operation',options:['create','update','delete']},{key:'operationId',label:'Operation ID'}],
  trust:[{key:'control',label:'Control'},{key:'status',label:'Status'}],
  audit:[{key:'action',label:'Action'},{key:'entityType',label:'Entity type'},{key:'entityId',label:'Entity ID'}],
  settings:[{key:'name',label:'Setting name'},{key:'value',label:'Value'}],

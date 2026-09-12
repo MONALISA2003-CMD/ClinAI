@@ -73,3 +73,43 @@ V5 deepens the longitudinal clinical record and makes Uganda a first-class local
 Research and implementation rationale: `docs/V5-UGANDA-PATIENT360-FHIR-RESEARCH.md`. The implementation follows the direction of Uganda MoH DH-ASK and Health Information Exchange/Interoperability guidance while retaining international FHIR/WHO SMART interoperability.
 
 The `/api/uganda/profile` endpoint intentionally reports national integrations as not connected until approved interfaces and credentials are configured.
+
+## V6: Uganda Clinical Interoperability + Governance Layer
+
+V6 deepens the Uganda-first architecture using current Uganda Ministry of Health material and current WHO SMART/FHIR material.
+
+### Added persistence
+- facility_identifiers
+- health_worker_profiles
+- terminology_concepts
+- clinical_guidelines
+- clinical_guideline_rules
+- care_pathways
+- care_pathway_steps
+- immunization_schedule_rules
+- hie_connections
+- hie_messages
+- reporting_mappings
+- offline_sync_queue
+
+### Added API
+- `/api/uganda/architecture`
+- `/api/facilities/:facilityId/identifiers`
+- `/api/health-workers`
+- `/api/terminology`
+- `/api/guidelines`
+- `/api/guidelines/:id/rules`
+- `/api/care-pathways`
+- `/api/care-pathways/:id/steps`
+- `/api/immunization/schedule`
+- `/api/hie/connections`
+- `/api/hie/messages`
+- `/api/reporting/mappings`
+- `/api/offline/sync`
+
+### V6 research boundary
+ClinAI does not claim live connection to Uganda national HIE, facility registry, health-worker registry, terminology registry or external reporting services. The architecture is adapter-ready and requires approved interfaces, credentials, data-sharing agreements, conformance testing and governance before activation.
+
+Clinical content is configuration-driven. Uganda-approved protocols and WHO SMART content should be loaded, versioned, reviewed and tested through the governance layer rather than hard-coded into application logic.
+
+See `docs/V6-UGANDA-CLINICAL-INTEROPERABILITY-RESEARCH.md`.
