@@ -29,6 +29,43 @@ function org(req:any){ return req.user?.organizationId || 'demo-org'; }
 const WRITE_ROLES = new Set(['admin','doctor','nurse','lab','pharmacist','reception','cashier','inventory','manager']);
 function canWrite(req:any){ return WRITE_ROLES.has(req.user?.role || ''); }
 function now(){ return new Date().toISOString(); }
+
+async function ensureDemoTenant(){
+  if(!pool) return null;
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    let orgRow=await client.query('SELECT id FROM organizations WHERE name=$1 LIMIT 1',['ClinAI Demo Organization']);
+    let organizationId:string;
+    if(orgRow.rowCount){ organizationId=orgRow.rows[0].id; }
+    else {
+      const r=await client.query('INSERT INTO organizations(name,status) VALUES($1,$2) RETURNING id',['ClinAI Demo Organization','active']);
+      organizationId=r.rows[0].id;
+    }
+    let facility=await client.query('SELECT id FROM facilities WHERE organization_id=$1 ORDER BY created_at LIMIT 1',[organizationId]);
+    if(!facility.rowCount) await client.query('INSERT INTO facilities(organization_id,name,type) VALUES($1,$2,$3)',[organizationId,'Main Facility','clinic']);
+    let user=await client.query('SELECT id FROM users WHERE firebase_uid=$1 LIMIT 1',['demo-user']);
+    let userId:string;
+    if(user.rowCount) userId=user.rows[0].id;
+    else { const r=await client.query('INSERT INTO users(firebase_uid,email,display_name) VALUES($1,$2,$3) RETURNING id',['demo-user','demo@clinai.local','ClinAI Demo User']); userId=r.rows[0].id; }
+    let role=await client.query('SELECT id FROM roles WHERE organization_id=$1 AND code=$2',[organizationId,'admin']);
+    let roleId:string;
+    if(role.rowCount) roleId=role.rows[0].id;
+    else { const r=await client.query('INSERT INTO roles(organization_id,code,name) VALUES($1,$2,$3) RETURNING id',[organizationId,'admin','Administrator']); roleId=r.rows[0].id; }
+    await client.query('INSERT INTO user_roles(user_id,role_id) VALUES($1,$2) ON CONFLICT DO NOTHING',[userId,roleId]);
+    await client.query('COMMIT');
+    return {organizationId,userId};
+  }catch(e){ await client.query('ROLLBACK'); throw e; }
+  finally{ client.release(); }
+}
+const demoTenant=await ensureDemoTenant();
+function dbOrganizationId(req:any){ return req.user?.organizationId || demoTenant?.organizationId || null; }
+function dbUserId(req:any){ return req.user?.sub && req.user.sub!=='system' ? req.user.sub : demoTenant?.userId || null; }
+async function dbAudit(client:any, req:any, action:string, entityType:string, entityId:string, metadata:Row={}){
+  const organizationId=dbOrganizationId(req), actorId=dbUserId(req);
+  if(!organizationId) return;
+  await client.query('INSERT INTO audit_logs(organization_id,actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,$2,$3,$4,$5,$6)',[organizationId,actorId,action,entityType,entityId,JSON.stringify(metadata)]);
+}
 function add(m:Mod, data:Row, req:any){ const row={id:data.id||randomUUID(), organizationId:data.organizationId||org(req), createdAt:data.createdAt||now(), updatedAt:now(), ...data}; store[m].push(row); audit.push({id:randomUUID(),action:'CREATE',module:m,resourceId:row.id,actorId:actor(req),at:now()}); events.push({id:randomUUID(),type:`${m}.created`,payload:row,at:now()}); persist(); return row; }
 function patch(m:Mod,id:string,data:Row,req:any){ const row=store[m].find(x=>x.id===id && x.organizationId===req.user?.organizationId); if(!row) return null; Object.assign(row,data,{updatedAt:now()}); audit.push({id:randomUUID(),action:'UPDATE',module:m,resourceId:id,actorId:actor(req),at:now()}); events.push({id:randomUUID(),type:`${m}.updated`,payload:row,at:now()}); persist(); return row; }
 function remove(m:Mod,id:string,req:any){ const i=store[m].findIndex(x=>x.id===id && x.organizationId===req.user?.organizationId); if(i<0)return false; store[m].splice(i,1); audit.push({id:randomUUID(),action:'DELETE',module:m,resourceId:id,actorId:actor(req),at:now()}); persist(); return true; }
@@ -60,7 +97,7 @@ app.get('/api/system/status',async(_req,reply)=>{
   }
 });
 app.get('/api/modules',async()=>modules);
-app.post('/api/auth/demo',async()=>({token:await app.jwt.sign({sub:'demo-user',role:'admin',organizationId:'demo-org'},{expiresIn:'8h'})}));
+app.post('/api/auth/demo',async()=>{ if(!demoTenant) return {token:await app.jwt.sign({sub:'demo-user',role:'admin',organizationId:'demo-org'},{expiresIn:'8h'})}; return {token:await app.jwt.sign({sub:demoTenant.userId,role:'admin',organizationId:demoTenant.organizationId},{expiresIn:'8h'}),organizationId:demoTenant.organizationId,userId:demoTenant.userId}; });
 app.addHook('preHandler',async(req)=>{
   const publicPath=(req.raw.url||'/').split('?')[0];
   if(publicPath==='/'||publicPath==='/health'||publicPath==='/api/auth/demo') return;
@@ -75,12 +112,64 @@ app.addHook('preHandler',async(req)=>{
 
 app.get('/api/dashboard',async()=>{const count=(m:Mod)=>store[m].length; return {patients:count('patients'),appointments:count('appointments'),waiting:store.queue.filter(x=>['waiting','waiting-triage','waiting-doctor'].includes(x.status)).length,criticalLabs:store.laboratory.filter(x=>x.critical).length,openTasks:store.tasks.filter(x=>x.status==='open').length,unpaid:store.billing.filter(x=>x.status!=='paid').length};});
 app.get('/api/audit',async()=>audit.slice(-500).reverse()); app.get('/api/events',async()=>events.slice(-500).reverse());
-app.get('/api/:module',async(req:any)=>{const m=req.params.module as Mod;if(!store[m])throw Object.assign(new Error('Unknown module'), { statusCode: 404 }); const q=req.query||{}; let data=store[m].filter(x=>x.organizationId===org(req)); if(q.patientId)data=data.filter(x=>x.patientId===q.patientId); if(q.status)data=data.filter(x=>x.status===q.status); return {data:data.reverse(),count:data.length};});
-app.get('/api/:module/:id',async(req:any)=>{const m=req.params.module as Mod;if(!store[m])throw Object.assign(new Error('Not found'), { statusCode: 404 });const row=store[m].find(x=>x.id===req.params.id && x.organizationId===org(req));if(!row)throw Object.assign(new Error('Not found'), { statusCode: 404 });return row;});
-
-app.post('/api/patients',async(req:any,reply)=>{const p=patient.parse(req.body);const duplicate=store.patients.find(x=>x.phone&&p.phone&&x.phone===p.phone&&x.lastName.toLowerCase()===p.lastName.toLowerCase());if(duplicate)return reply.code(409).send({error:'Possible duplicate patient',duplicate});const n=`CLN-${String(store.patients.length+1).padStart(6,'0')}`;return reply.code(201).send(add('patients',{...p,patientNumber:n,status:'active'},req));});
-app.post('/api/appointments',async(req:any,reply)=>{const p=appointment.parse(req.body);if(!store.patients.some(x=>x.id===p.patientId))return reply.code(400).send({error:'Patient not found'});const a=add('appointments',p,req);return reply.code(201).send(a);});
-app.post('/api/encounters',async(req:any,reply)=>{const e=encounter.parse(req.body);const x=add('encounters',e,req);add('tasks',{patientId:e.patientId,encounterId:x.id,type:'clinical-review',status:'open',priority:'normal'},req);return reply.code(201).send(x);});
+app.get('/api/patients',async(req:any)=>{
+  if(!pool) return {data:store.patients.filter(x=>x.organizationId===org(req)),count:store.patients.filter(x=>x.organizationId===org(req)).length};
+  const q=String(req.query?.q||'').trim(); const params:any[]=[dbOrganizationId(req)];
+  let where='p.organization_id=$1';
+  if(q){ params.push(`%${q}%`); where += ' AND (p.patient_number ILIKE $2 OR p.first_name ILIKE $2 OR p.last_name ILIKE $2 OR COALESCE(p.phone,\'\') ILIKE $2)'; }
+  const r=await pool.query(`SELECT p.id,p.organization_id AS "organizationId",p.facility_id AS "facilityId",p.patient_number AS "patientNumber",p.first_name AS "firstName",p.middle_name AS "middleName",p.last_name AS "lastName",p.date_of_birth AS "dateOfBirth",p.sex,p.phone,p.email,p.address,p.national_identifier AS "nationalId",p.preferred_language AS "preferredLanguage",p.status,p.created_at AS "createdAt",p.updated_at AS "updatedAt" FROM patients p WHERE ${where} ORDER BY p.created_at DESC LIMIT 100`,params);
+  return {data:r.rows,count:r.rowCount};
+});
+app.get('/api/patients/:id',async(req:any,reply)=>{
+  if(!pool) return reply.code(404).send({error:'Patient not found'});
+  const r=await pool.query(`SELECT p.id,p.organization_id AS "organizationId",p.facility_id AS "facilityId",p.patient_number AS "patientNumber",p.first_name AS "firstName",p.middle_name AS "middleName",p.last_name AS "lastName",p.date_of_birth AS "dateOfBirth",p.sex,p.phone,p.email,p.address,p.national_identifier AS "nationalId",p.preferred_language AS "preferredLanguage",p.status,p.created_at AS "createdAt",p.updated_at AS "updatedAt" FROM patients p WHERE p.id=$1 AND p.organization_id=$2`,[req.params.id,dbOrganizationId(req)]);
+  if(!r.rowCount) return reply.code(404).send({error:'Patient not found'}); return r.rows[0];
+});
+app.get('/api/appointments',async(req:any)=>{
+  if(!pool) return {data:store.appointments.filter(x=>x.organizationId===org(req)),count:store.appointments.length};
+  const params:any[]=[dbOrganizationId(req)]; let where='a.organization_id=$1';
+  if(req.query?.patientId){params.push(String(req.query.patientId));where+=' AND a.patient_id=$2';}
+  const x=await pool.query(`SELECT a.id,a.organization_id AS "organizationId",a.patient_id AS "patientId",a.provider_user_id AS "providerId",a.facility_id AS "facilityId",a.start_at AS "startAt",a.end_at AS "endAt",a.type,a.status,a.reason,a.created_at AS "createdAt" FROM appointments a WHERE ${where} ORDER BY a.start_at DESC LIMIT 200`,params); return {data:x.rows,count:x.rowCount};
+});
+app.get('/api/encounters',async(req:any)=>{
+  if(!pool) return {data:store.encounters.filter(x=>x.organizationId===org(req)),count:store.encounters.length};
+  const params:any[]=[dbOrganizationId(req)]; let where='e.organization_id=$1';
+  if(req.query?.patientId){params.push(String(req.query.patientId));where+=' AND e.patient_id=$2';}
+  const x=await pool.query(`SELECT e.id,e.organization_id AS "organizationId",e.patient_id AS "patientId",e.appointment_id AS "appointmentId",e.provider_user_id AS "providerId",e.facility_id AS "facilityId",e.type,e.status,e.started_at AS "startedAt",e.ended_at AS "endedAt" FROM encounters e WHERE ${where} ORDER BY e.started_at DESC LIMIT 200`,params); return {data:x.rows,count:x.rowCount};
+});
+app.post('/api/patients',async(req:any,reply)=>{
+  const p=patient.parse(req.body);
+  if(!pool) return reply.code(201).send(add('patients',{...p,patientNumber:`CLN-${String(store.patients.length+1).padStart(6,'0')}`,status:'active'},req));
+  const client=await pool.connect();
+  try{ await client.query('BEGIN');
+    const duplicate=await client.query('SELECT id,patient_number AS "patientNumber",first_name AS "firstName",last_name AS "lastName",phone FROM patients WHERE organization_id=$1 AND phone IS NOT NULL AND phone=$2 AND lower(last_name)=lower($3) LIMIT 1',[dbOrganizationId(req),p.phone||null,p.lastName]);
+    if(duplicate.rowCount){ await client.query('ROLLBACK'); return reply.code(409).send({error:'Possible duplicate patient',duplicate:duplicate.rows[0]}); }
+    const seq=await client.query("SELECT COALESCE(MAX(CASE WHEN patient_number ~ '^CLN-[0-9]+$' THEN substring(patient_number from 5)::integer ELSE 0 END),0)+1 AS n FROM patients WHERE organization_id=$1",[dbOrganizationId(req)]);
+    const number=`CLN-${String(seq.rows[0].n).padStart(6,'0')}`;
+    const r=await client.query(`INSERT INTO patients(organization_id,patient_number,first_name,last_name,date_of_birth,sex,phone,email,national_identifier,preferred_language,address) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id,organization_id AS "organizationId",patient_number AS "patientNumber",first_name AS "firstName",last_name AS "lastName",date_of_birth AS "dateOfBirth",sex,phone,email,national_identifier AS "nationalId",preferred_language AS "preferredLanguage",address,status,created_at AS "createdAt",updated_at AS "updatedAt"`,[dbOrganizationId(req),number,p.firstName,p.lastName,p.dateOfBirth||null,p.sex||null,p.phone||null,p.email||null,p.nationalId||null,p.preferredLanguage||null,p.address?JSON.stringify(p.address):null]);
+    await dbAudit(client,req,'CREATE','patient',r.rows[0].id,{patientNumber:number}); await client.query('COMMIT'); return reply.code(201).send(r.rows[0]);
+  }catch(e:any){ await client.query('ROLLBACK'); if(e.code==='23505') return reply.code(409).send({error:'Patient number already exists'}); throw e; } finally{client.release();}
+});
+app.post('/api/appointments',async(req:any,reply)=>{
+  const a=appointment.parse(req.body);
+  if(!pool) return reply.code(201).send(add('appointments',a,req));
+  const client=await pool.connect(); try{ await client.query('BEGIN');
+    const pc=await client.query('SELECT id FROM patients WHERE id=$1 AND organization_id=$2',[a.patientId,dbOrganizationId(req)]);
+    if(!pc.rowCount){await client.query('ROLLBACK');return reply.code(400).send({error:'Patient not found'});}
+    const end=new Date(new Date(a.startAt).getTime()+a.durationMinutes*60000).toISOString();
+    const r=await client.query(`INSERT INTO appointments(organization_id,patient_id,provider_user_id,facility_id,start_at,end_at,type,reason,status) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id,organization_id AS "organizationId",patient_id AS "patientId",provider_user_id AS "providerId",facility_id AS "facilityId",start_at AS "startAt",end_at AS "endAt",type,reason,status,created_at AS "createdAt"`,[dbOrganizationId(req),a.patientId,a.providerId||null,a.facilityId||null,a.startAt,end,a.type,a.reason||null,a.status]);
+    await dbAudit(client,req,'CREATE','appointment',r.rows[0].id,{patientId:a.patientId}); await client.query('COMMIT'); return reply.code(201).send(r.rows[0]);
+  }catch(e){await client.query('ROLLBACK');throw e;}finally{client.release();}
+});
+app.post('/api/encounters',async(req:any,reply)=>{
+  const e=encounter.parse(req.body);
+  if(!pool) return reply.code(201).send(add('encounters',e,req));
+  const client=await pool.connect(); try{await client.query('BEGIN');
+    const r=await client.query(`INSERT INTO encounters(organization_id,patient_id,appointment_id,provider_user_id,facility_id,type,status) SELECT $1,$2,$3,$4,$5,$6,$7 WHERE EXISTS(SELECT 1 FROM patients WHERE id=$2 AND organization_id=$1) RETURNING id,organization_id AS "organizationId",patient_id AS "patientId",appointment_id AS "appointmentId",provider_user_id AS "providerId",facility_id AS "facilityId",type,status,started_at AS "startedAt"`,[dbOrganizationId(req),e.patientId,e.appointmentId||null,e.providerId||null,e.facilityId||null,e.type,e.status]);
+    if(!r.rowCount){await client.query('ROLLBACK');return reply.code(400).send({error:'Patient not found'});}
+    await dbAudit(client,req,'CREATE','encounter',r.rows[0].id,{patientId:e.patientId}); await client.query('COMMIT'); return reply.code(201).send(r.rows[0]);
+  }catch(err){await client.query('ROLLBACK');throw err;}finally{client.release();}
+});
 app.post('/api/triage',async(req:any,reply)=>{const t=triage.parse(req.body);const x=add('triage',{...t,status:'completed',completedAt:now()},req);add('queue',{patientId:t.patientId,encounterId:t.encounterId,status:t.acuity==='emergency'?'emergency':'waiting-doctor',priority:t.acuity},req);return reply.code(201).send(x);});
 app.post('/api/orders',async(req:any,reply)=>{const o=order.parse(req.body);const x=add('orders',{...o,status:'ordered',orderedAt:now()},req);if(o.category==='laboratory')add('laboratory',{orderId:x.id,patientId:o.patientId,status:'ordered',priority:o.priority,code:o.code,description:o.description},req); if(o.category==='imaging')add('imaging',{orderId:x.id,patientId:o.patientId,status:'ordered',priority:o.priority,code:o.code,description:o.description},req); if(o.category==='medication')add('pharmacy',{orderId:x.id,patientId:o.patientId,status:'prescribed',priority:o.priority,medicationCode:o.code,description:o.description},req); if(o.category==='procedure')add('procedures',{orderId:x.id,patientId:o.patientId,status:'ordered',code:o.code,description:o.description},req); return reply.code(201).send(x);});
 
