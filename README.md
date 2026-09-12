@@ -123,3 +123,7 @@ Uganda child health, growth, IMCI and immunization continuity. See `docs/V9-UGAN
 
 ## V11
 Population health and surveillance intelligence adds surveillance events/cases, population cohorts and members, population indicators, surveillance summary, cohort management and dashboard APIs. It is designed for Uganda-first interoperability while remaining country-adaptable. National surveillance endpoints are not claimed as connected.
+
+## V16 ClinAI Intelligence Engine
+
+The V16 build adds a server-side Gemini Interactions API v1 gateway, patient and organization context assembly, Ask ClinAI, patient intelligence, attention analysis, documentation drafts, role briefings, translation, AI usage/audit tracking, knowledge-source registry, evaluation workflow, responsive AI UI and a controlled human-review boundary. Configure `GEMINI_AUTHORIZATION_KEY` on the API service. `GEMINI_API_KEY` remains a compatibility fallback. Do not expose either key to the browser.
