@@ -1,6 +1,6 @@
 'use client';
 import {useEffect,useMemo,useState} from 'react';
-const API=process.env.NEXT_PUBLIC_API_URL||'http://localhost:4000';
+const API=(process.env.NEXT_PUBLIC_API_URL||'https://clinai-api.onrender.com').replace(/\/$/,'');
 type Row=Record<string,any>;
 const groups:any=[['CARE',['patients','appointments','registration','queue','triage','encounters','clinical-notes','diagnoses','orders','care-plans','referrals','follow-up']],['CLINICAL',['laboratory','imaging','pharmacy','nursing','emergency','inpatient','beds','surgery','maternity','pediatrics','immunization','chronic-care']],['FINANCE',['billing','payments','insurance','claims','accounting']],['SUPPLY',['inventory','procurement','suppliers']],['PATIENT',['patient-portal','telemedicine','remote-monitoring','notifications','documents']],['INTELLIGENCE',['ai','analytics','population-health']],['PLATFORM',['staff','facilities','tasks','workflows','interoperability','trust','audit','settings']]];
 const pretty=(x:string)=>x.replaceAll('-',' ').replace(/\b\w/g,c=>c.toUpperCase());

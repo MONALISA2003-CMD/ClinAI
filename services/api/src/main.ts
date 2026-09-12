@@ -30,6 +30,25 @@ const WRITE_ROLES = new Set(['admin','doctor','nurse','lab','pharmacist','recept
 function canWrite(req:any){ return WRITE_ROLES.has(req.user?.role || ''); }
 function now(){ return new Date().toISOString(); }
 
+async function ensureRuntimeSchema(){
+  if(!pool) return;
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS module_records (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      module text NOT NULL,
+      status text NOT NULL DEFAULT 'active',
+      payload jsonb NOT NULL DEFAULT '{}',
+      created_by uuid REFERENCES users(id),
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_module_records_org_module_created ON module_records(organization_id,module,created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_module_records_payload_gin ON module_records USING gin(payload);
+  `);
+}
+await ensureRuntimeSchema();
+
 async function ensureDemoTenant(){
   if(!pool) return null;
   const client=await pool.connect();
@@ -113,7 +132,19 @@ app.addHook('preHandler',async(req)=>{
   }
 });
 
-app.get('/api/dashboard',async()=>{const count=(m:Mod)=>store[m].length; return {patients:count('patients'),appointments:count('appointments'),waiting:store.queue.filter(x=>['waiting','waiting-triage','waiting-doctor'].includes(x.status)).length,criticalLabs:store.laboratory.filter(x=>x.critical).length,openTasks:store.tasks.filter(x=>x.status==='open').length,unpaid:store.billing.filter(x=>x.status!=='paid').length};});
+app.get('/api/dashboard',async(req:any)=>{
+  if(!pool){const count=(m:Mod)=>store[m].length;return {patients:count('patients'),appointments:count('appointments'),waiting:store.queue.filter(x=>['waiting','waiting-triage','waiting-doctor'].includes(x.status)).length,criticalLabs:store.laboratory.filter(x=>x.critical).length,openTasks:store.tasks.filter(x=>x.status==='open').length,unpaid:store.billing.filter(x=>x.status!=='paid').length};}
+  const oid=dbOrganizationId(req);
+  const [p,a,q,l,t,i]=await Promise.all([
+    pool.query('SELECT count(*)::int n FROM patients WHERE organization_id=$1',[oid]),
+    pool.query('SELECT count(*)::int n FROM appointments WHERE organization_id=$1',[oid]),
+    pool.query("SELECT count(*)::int n FROM queue_entries qe JOIN queues q ON q.id=qe.queue_id WHERE q.organization_id=$1 AND qe.status IN ('waiting','waiting-triage','waiting-doctor','emergency')",[oid]),
+    pool.query("SELECT count(*)::int n FROM module_records WHERE organization_id=$1 AND module='laboratory' AND COALESCE(payload->>'critical','false')='true' AND COALESCE(payload->>'status','') NOT IN ('released','resolved')",[oid]),
+    pool.query("SELECT count(*)::int n FROM module_records WHERE organization_id=$1 AND module='tasks' AND COALESCE(payload->>'status','open')='open'",[oid]),
+    pool.query("SELECT count(*)::int n FROM invoices WHERE organization_id=$1 AND status <> 'paid'",[oid])
+  ]);
+  return {patients:p.rows[0].n,appointments:a.rows[0].n,waiting:q.rows[0].n,criticalLabs:l.rows[0].n,openTasks:t.rows[0].n,unpaid:i.rows[0].n};
+});
 app.get('/api/audit',async()=>audit.slice(-500).reverse()); app.get('/api/events',async()=>events.slice(-500).reverse());
 app.get('/api/patients',async(req:any)=>{
   if(!pool) return {data:store.patients.filter(x=>x.organizationId===org(req)),count:store.patients.filter(x=>x.organizationId===org(req)).length};
@@ -176,12 +207,63 @@ app.post('/api/encounters',async(req:any,reply)=>{
     await dbAudit(client,req,'CREATE','encounter',r.rows[0].id,{patientId:e.patientId}); await client.query('COMMIT'); return reply.code(201).send(r.rows[0]);
   }catch(err){await client.query('ROLLBACK');throw err;}finally{client.release();}
 });
-app.post('/api/triage',async(req:any,reply)=>{const t=triage.parse(req.body);const x=add('triage',{...t,status:'completed',completedAt:now()},req);add('queue',{patientId:t.patientId,encounterId:t.encounterId,status:t.acuity==='emergency'?'emergency':'waiting-doctor',priority:t.acuity},req);return reply.code(201).send(x);});
-app.post('/api/orders',async(req:any,reply)=>{const o=order.parse(req.body);const x=add('orders',{...o,status:'ordered',orderedAt:now()},req);if(o.category==='laboratory')add('laboratory',{orderId:x.id,patientId:o.patientId,status:'ordered',priority:o.priority,code:o.code,description:o.description},req); if(o.category==='imaging')add('imaging',{orderId:x.id,patientId:o.patientId,status:'ordered',priority:o.priority,code:o.code,description:o.description},req); if(o.category==='medication')add('pharmacy',{orderId:x.id,patientId:o.patientId,status:'prescribed',priority:o.priority,medicationCode:o.code,description:o.description},req); if(o.category==='procedure')add('procedures',{orderId:x.id,patientId:o.patientId,status:'ordered',code:o.code,description:o.description},req); return reply.code(201).send(x);});
+app.post('/api/triage',async(req:any,reply)=>{
+  const t=triage.parse(req.body);
+  if(!pool){const x=add('triage',{...t,status:'completed',completedAt:now()},req);add('queue',{patientId:t.patientId,encounterId:t.encounterId,status:t.acuity==='emergency'?'emergency':'waiting-doctor',priority:t.acuity},req);return reply.code(201).send(x);}
+  const client=await pool.connect(); try{await client.query('BEGIN');
+    const p=await client.query('SELECT id FROM patients WHERE id=$1 AND organization_id=$2',[t.patientId,dbOrganizationId(req)]); if(!p.rowCount){await client.query('ROLLBACK');return reply.code(404).send({error:'Patient not found'});}
+    const record={...t,status:'completed',completedAt:now()};
+    const tr=await client.query(`INSERT INTO module_records(organization_id,module,status,payload,created_by) VALUES($1,'triage','completed',$2,$3) RETURNING id,created_at AS "createdAt"`,[dbOrganizationId(req),JSON.stringify(record),dbUserId(req)]);
+    let q=await client.query('SELECT id FROM queues WHERE organization_id=$1 ORDER BY created_at LIMIT 1',[dbOrganizationId(req)]); if(!q.rowCount) q=await client.query("INSERT INTO queues(organization_id,code,name) VALUES($1,'GENERAL','General Queue') RETURNING id",[dbOrganizationId(req)]);
+    const status=t.acuity==='emergency'?'emergency':'waiting-doctor';
+    const qe=await client.query('INSERT INTO queue_entries(queue_id,patient_id,priority,status) VALUES($1,$2,$3,$4) RETURNING id',[q.rows[0].id,t.patientId,t.acuity,status]);
+    await dbAudit(client,req,'CREATE','triage',tr.rows[0].id,{patientId:t.patientId,acuity:t.acuity}); await client.query('COMMIT'); return reply.code(201).send({id:tr.rows[0].id,...record,queueEntryId:qe.rows[0].id});
+  }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
+});
+app.post('/api/orders',async(req:any,reply)=>{
+  const o=order.parse(req.body);
+  if(!pool){const x=add('orders',{...o,status:'ordered',orderedAt:now()},req);if(o.category==='laboratory')add('laboratory',{orderId:x.id,patientId:o.patientId,status:'ordered',priority:o.priority,code:o.code,description:o.description},req);if(o.category==='imaging')add('imaging',{orderId:x.id,patientId:o.patientId,status:'ordered',priority:o.priority,code:o.code,description:o.description},req);if(o.category==='medication')add('pharmacy',{orderId:x.id,patientId:o.patientId,status:'prescribed',priority:o.priority,medicationCode:o.code,description:o.description},req);if(o.category==='procedure')add('procedures',{orderId:x.id,patientId:o.patientId,status:'ordered',code:o.code,description:o.description},req);return reply.code(201).send(x);}
+  const client=await pool.connect();try{await client.query('BEGIN');
+    const p=await client.query('SELECT id FROM patients WHERE id=$1 AND organization_id=$2',[o.patientId,dbOrganizationId(req)]);if(!p.rowCount){await client.query('ROLLBACK');return reply.code(404).send({error:'Patient not found'});}
+    const r=await client.query(`INSERT INTO clinical_orders(patient_id,encounter_id,ordered_by,order_type,priority,status,details) VALUES($1,$2,$3,$4,$5,'ordered',$6) RETURNING id,patient_id AS "patientId",encounter_id AS "encounterId",order_type AS category,priority,status,details,created_at AS "createdAt"`,[o.patientId,o.encounterId||null,dbUserId(req),o.category,o.priority,JSON.stringify({code:o.code,description:o.description,...(o.details||{})})]);
+    const routed=await client.query(`INSERT INTO module_records(organization_id,module,status,payload,created_by) VALUES($1,$2,'ordered',$3,$4) RETURNING id`,[dbOrganizationId(req),o.category,JSON.stringify({orderId:r.rows[0].id,patientId:o.patientId,encounterId:o.encounterId||null,code:o.code,description:o.description,priority:o.priority,status:'ordered'}),dbUserId(req)]);
+    await dbAudit(client,req,'CREATE','clinical_order',r.rows[0].id,{category:o.category,code:o.code,routedRecordId:routed.rows[0].id});await client.query('COMMIT');return reply.code(201).send(r.rows[0]);
+  }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
+});
 
-app.post('/api/:module',async(req:any,reply)=>{const m=req.params.module as Mod;if(!store[m])throw Object.assign(new Error('Not found'), { statusCode: 404 });if(['patients','appointments','encounters','triage','orders'].includes(m))throw Object.assign(new Error('Use the validated endpoint for this resource'), { statusCode: 400 });return reply.code(201).send(add(m,generic.parse(req.body),req));});
-app.patch('/api/:module/:id',async(req:any)=>{const m=req.params.module as Mod;if(!store[m])throw Object.assign(new Error('Not found'), { statusCode: 404 });const row=patch(m,req.params.id,generic.parse(req.body),req);if(!row)throw Object.assign(new Error('Not found'), { statusCode: 404 });return row;});
-app.delete('/api/:module/:id',async(req:any)=>{const m=req.params.module as Mod;if(!store[m])throw Object.assign(new Error('Not found'), { statusCode: 404 });if(!remove(m,req.params.id,req))throw Object.assign(new Error('Not found'), { statusCode: 404 });return {ok:true};});
+app.get('/api/queue',async(req:any)=>{
+  if(!pool) return {data:store.queue.filter(x=>x.organizationId===org(req)).sort((a,b)=>String(a.createdAt).localeCompare(String(b.createdAt))),count:store.queue.length};
+  const oid=dbOrganizationId(req);
+  const r=await pool.query(`SELECT qe.id, q.code AS "queueCode", q.name AS "queueName", qe.patient_id AS "patientId", qe.appointment_id AS "appointmentId", qe.priority, qe.status, qe.joined_at AS "joinedAt", qe.called_at AS "calledAt", qe.completed_at AS "completedAt" FROM queue_entries qe JOIN queues q ON q.id=qe.queue_id WHERE q.organization_id=$1 ORDER BY qe.joined_at ASC LIMIT 500`,[oid]);
+  return {data:r.rows,count:r.rowCount};
+});
+app.post('/api/queue',async(req:any,reply)=>{
+  const b=z.object({patientId:z.string().uuid(),appointmentId:z.string().uuid().optional(),facilityId:z.string().uuid().optional(),priority:z.enum(['normal','routine','urgent','emergency','stat']).default('normal'),status:z.string().default('waiting')}).parse(req.body);
+  if(!pool)return reply.code(201).send(add('queue',b,req));
+  const client=await pool.connect(); try{await client.query('BEGIN');
+    const patient=await client.query('SELECT id FROM patients WHERE id=$1 AND organization_id=$2',[b.patientId,dbOrganizationId(req)]);
+    if(!patient.rowCount){await client.query('ROLLBACK');return reply.code(404).send({error:'Patient not found'});}
+    let q=await client.query('SELECT id FROM queues WHERE organization_id=$1 AND facility_id IS NOT DISTINCT FROM $2 ORDER BY created_at LIMIT 1',[dbOrganizationId(req),b.facilityId||null]);
+    if(!q.rowCount) q=await client.query('INSERT INTO queues(organization_id,facility_id,code,name) VALUES($1,$2,$3,$4) RETURNING id',[dbOrganizationId(req),b.facilityId||null,'GENERAL','General Queue']);
+    const dup=await client.query("SELECT id FROM queue_entries WHERE queue_id=$1 AND patient_id=$2 AND status NOT IN ('completed','cancelled','no-show') LIMIT 1",[q.rows[0].id,b.patientId]);
+    if(dup.rowCount){await client.query('ROLLBACK');return reply.code(409).send({error:'Patient already has an active queue entry',queueEntryId:dup.rows[0].id});}
+    const r=await client.query(`INSERT INTO queue_entries(queue_id,patient_id,appointment_id,priority,status) VALUES($1,$2,$3,$4,$5) RETURNING id,patient_id AS "patientId",appointment_id AS "appointmentId",priority,status,joined_at AS "joinedAt"`,[q.rows[0].id,b.patientId,b.appointmentId||null,b.priority,b.status]);
+    await dbAudit(client,req,'CREATE','queue_entry',r.rows[0].id,{patientId:b.patientId}); await client.query('COMMIT'); return reply.code(201).send(r.rows[0]);
+  }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
+});
+
+app.get('/api/:module',async(req:any,reply)=>{
+  const m=req.params.module as Mod;if(!store[m])return reply.code(404).send({error:'Module not found'});
+  if(!pool)return {data:store[m].filter(x=>x.organizationId===org(req)).slice(-500).reverse(),count:store[m].filter(x=>x.organizationId===org(req)).length};
+  if(['patients','appointments','encounters','queue'].includes(m)) return reply.code(400).send({error:'Use the resource endpoint for this module'});
+  const params:any[]=[dbOrganizationId(req),m]; let where='organization_id=$1 AND module=$2';
+  if(req.query?.status){params.push(String(req.query.status));where+=' AND status=$3';}
+  const r=await pool.query(`SELECT id,organization_id AS "organizationId",module,status,payload,created_by AS "createdBy",created_at AS "createdAt",updated_at AS "updatedAt" FROM module_records WHERE ${where} ORDER BY created_at DESC LIMIT 500`,params);
+  return {data:r.rows.map((x:any)=>({id:x.id,organizationId:x.organizationId,module:x.module,status:x.status,...x.payload,createdBy:x.createdBy,createdAt:x.createdAt,updatedAt:x.updatedAt})),count:r.rowCount};
+});
+app.post('/api/:module',async(req:any,reply)=>{const m=req.params.module as Mod;if(!store[m])throw Object.assign(new Error('Not found'),{statusCode:404});if(['patients','appointments','encounters','triage','orders','queue'].includes(m))throw Object.assign(new Error('Use the validated endpoint for this resource'),{statusCode:400});const body=generic.parse(req.body);if(!pool)return reply.code(201).send(add(m,body,req));const r=await pool.query(`INSERT INTO module_records(organization_id,module,status,payload,created_by) VALUES($1,$2,$3,$4,$5) RETURNING id,organization_id AS "organizationId",module,status,payload,created_by AS "createdBy",created_at AS "createdAt",updated_at AS "updatedAt"`,[dbOrganizationId(req),m,body.status||'active',JSON.stringify(body),dbUserId(req)]);await pool.query('INSERT INTO audit_logs(organization_id,actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,$2,$3,$4,$5,$6)',[dbOrganizationId(req),dbUserId(req),'CREATE',m,r.rows[0].id,JSON.stringify({module:m})]);return reply.code(201).send({id:r.rows[0].id,organizationId:r.rows[0].organizationId,module:m,status:r.rows[0].status,...r.rows[0].payload,createdBy:r.rows[0].createdBy,createdAt:r.rows[0].createdAt,updatedAt:r.rows[0].updatedAt});});
+app.patch('/api/:module/:id',async(req:any,reply)=>{const m=req.params.module as Mod;if(!store[m])return reply.code(404).send({error:'Module not found'});const body=generic.parse(req.body);if(!pool){const row=patch(m,req.params.id,body,req);if(!row)return reply.code(404).send({error:'Not found'});return row;}const r=await pool.query(`UPDATE module_records SET payload=payload || $1::jsonb,status=COALESCE($2,status),updated_at=now() WHERE id=$3 AND organization_id=$4 AND module=$5 RETURNING id,organization_id AS "organizationId",module,status,payload,created_by AS "createdBy",created_at AS "createdAt",updated_at AS "updatedAt"`,[JSON.stringify(body),body.status||null,req.params.id,dbOrganizationId(req),m]);if(!r.rowCount)return reply.code(404).send({error:'Not found'});return {id:r.rows[0].id,organizationId:r.rows[0].organizationId,module:m,status:r.rows[0].status,...r.rows[0].payload,createdBy:r.rows[0].createdBy,createdAt:r.rows[0].createdAt,updatedAt:r.rows[0].updatedAt};});
+app.delete('/api/:module/:id',async(req:any,reply)=>{const m=req.params.module as Mod;if(!store[m])return reply.code(404).send({error:'Module not found'});if(!pool){if(!remove(m,req.params.id,req))return reply.code(404).send({error:'Not found'});return {ok:true};}const r=await pool.query('DELETE FROM module_records WHERE id=$1 AND organization_id=$2 AND module=$3 RETURNING id',[req.params.id,dbOrganizationId(req),m]);if(!r.rowCount)return reply.code(404).send({error:'Not found'});await pool.query('INSERT INTO audit_logs(organization_id,actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,$2,$3,$4,$5,$6)',[dbOrganizationId(req),dbUserId(req),'DELETE',m,req.params.id,JSON.stringify({module:m})]);return {ok:true};});
 
 app.post('/api/workflows/:name',async(req:any,reply)=>{const b=(req.body||{}) as Row;const name=req.params.name as string;let results:Row[]=[];switch(name){case'checkin':results=[add('registration',{...b,status:'checked-in',checkedInAt:now()},req),add('queue',{patientId:b.patientId,appointmentId:b.appointmentId,status:'waiting-triage',priority:b.priority||'normal'},req)];break;case'triage':results=[add('triage',{...b,status:'completed',completedAt:now()},req),add('queue',{patientId:b.patientId,status:b.acuity==='emergency'?'emergency':'waiting-doctor',priority:b.acuity||'routine'},req)];break;case'lab_result':results=[add('laboratory',{...b,status:'verified',verifiedAt:now()},req),add('notifications',{patientId:b.patientId,channel:b.channel||'in-app',template:b.critical?'critical-lab':'result-ready',status:'queued'},req),add('tasks',{patientId:b.patientId,type:b.critical?'critical-result-review':'result-review',status:'open',priority:b.critical?'critical':'normal'},req)];break;case'dispense':results=[add('pharmacy',{...b,status:'dispensed',dispensedAt:now()},req),add('inventory',{itemId:b.itemId,quantityDelta:-(b.quantity||1),movement:'dispense'},req),add('notifications',{patientId:b.patientId,channel:'in-app',template:'prescription-ready',status:'queued'},req)];break;case'discharge':results=[add('inpatient',{...b,status:'discharged',dischargedAt:now()},req),add('follow-up',{patientId:b.patientId,status:'due',dueAt:b.followUpDate||null},req),add('tasks',{patientId:b.patientId,type:'follow-up-booking',status:'open'},req)];break;case'payment':results=[add('payments',{...b,status:'completed',paidAt:now()},req),add('notifications',{patientId:b.patientId,channel:b.channel||'in-app',template:'payment-receipt',status:'queued'},req)];break;case'referral':results=[add('referrals',{...b,status:'sent',sentAt:now()},req),add('tasks',{patientId:b.patientId,type:'referral-tracking',status:'open'},req)];break;default:throw Object.assign(new Error('Workflow not implemented'), { statusCode: 404 });}return reply.code(201).send({workflow:name,results,eventId:randomUUID()});});
 
@@ -204,7 +286,7 @@ app.get('/api/patients/:id/360',async(req:any,reply)=>{
   ]);
   return {patient:patientQ.rows[0],contacts:contacts.rows,emergencyContacts:emergency.rows,allergies:allergies.rows,appointments:appointments.rows,encounters:encounters.rows,orders:orders.rows,diagnoses:diagnoses.rows,observations:observations.rows,clinicalNotes:notes.rows,notifications:notifications.rows};
 });
-app.post('/api/queue/:id/transition',async(req:any,reply)=>{const q=store.queue.find(x=>x.id===req.params.id);if(!q)return reply.code(404).send({error:'Queue entry not found'});const next=String(req.body?.status||'');const allowed=['waiting','called','in-service','completed','cancelled','no-show','waiting-triage','waiting-doctor','emergency'];if(!allowed.includes(next))return reply.code(400).send({error:'Invalid queue status'});patch('queue',q.id,{status:next,calledAt:next==='called'?now():q.calledAt,completedAt:next==='completed'?now():q.completedAt},req);events.push({id:randomUUID(),type:'queue.transitioned',from:q.status,to:next,resourceId:q.id,at:now()});persist();return q});
+app.post('/api/queue/:id/transition',async(req:any,reply)=>{const next=String(req.body?.status||'');const allowed=['waiting','called','in-service','completed','cancelled','no-show','waiting-triage','waiting-doctor','emergency'];if(!allowed.includes(next))return reply.code(400).send({error:'Invalid queue status'});if(!pool){const q=store.queue.find(x=>x.id===req.params.id&&x.organizationId===org(req));if(!q)return reply.code(404).send({error:'Queue entry not found'});const from=q.status;const updated=patch('queue',q.id,{status:next,calledAt:next==='called'?now():q.calledAt,completedAt:next==='completed'?now():q.completedAt},req);events.push({id:randomUUID(),type:'queue.transitioned',from,to:next,resourceId:q.id,at:now()});persist();return updated;}const r=await pool.query(`UPDATE queue_entries qe SET status=$1,called_at=CASE WHEN $1='called' THEN now() ELSE qe.called_at END,completed_at=CASE WHEN $1='completed' THEN now() ELSE qe.completed_at END FROM queues q WHERE qe.id=$2 AND qe.queue_id=q.id AND q.organization_id=$3 RETURNING qe.id,qe.patient_id AS "patientId",qe.status,qe.priority,qe.joined_at AS "joinedAt",qe.called_at AS "calledAt",qe.completed_at AS "completedAt"`,[next,req.params.id,dbOrganizationId(req)]);if(!r.rowCount)return reply.code(404).send({error:'Queue entry not found'});await pool.query('INSERT INTO audit_logs(organization_id,actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,$2,$3,$4,$5,$6)',[dbOrganizationId(req),dbUserId(req),'TRANSITION','queue_entry',req.params.id,JSON.stringify({status:next})]);return r.rows[0];});
 app.post('/api/laboratory/:id/verify',async(req:any)=>{const x=patch('laboratory',req.params.id,{status:'verified',verifiedAt:now(),verifiedBy:actor(req),critical:Boolean(req.body?.critical),abnormalFlag:req.body?.abnormalFlag||null},req);if(!x)throw Object.assign(new Error('Lab record not found'),{statusCode:404});add('notifications',{patientId:x.patientId,channel:'in-app',template:x.critical?'critical-lab':'result-ready',status:'queued',payload:{laboratoryId:x.id}},req);add('tasks',{patientId:x.patientId,type:x.critical?'critical-result-review':'result-review',status:'open',priority:x.critical?'critical':'normal',referenceId:x.id},req);return x});
 app.post('/api/pharmacy/:id/dispense',async(req:any)=>{const x=store.pharmacy.find(v=>v.id===req.params.id);if(!x)throw Object.assign(new Error('Pharmacy order not found'),{statusCode:404});const qty=Number(req.body?.quantity||1);if(qty<=0)throw Object.assign(new Error('Quantity must be positive'),{statusCode:400});patch('pharmacy',x.id,{status:'dispensed',quantity:qty,dispensedAt:now(),dispensedBy:actor(req)},req);add('inventory',{itemId:req.body?.itemId||x.medicationCode,quantityDelta:-qty,movement:'dispense',referenceId:x.id},req);add('notifications',{patientId:x.patientId,channel:'in-app',template:'prescription-ready',status:'queued'},req);return store.pharmacy.find(v=>v.id===x.id)});
 app.post('/api/billing/:id/pay',async(req:any)=>{const inv=store.billing.find(v=>v.id===req.params.id);if(!inv)throw Object.assign(new Error('Invoice not found'),{statusCode:404});const amount=Number(req.body?.amount||0);if(amount<=0)throw Object.assign(new Error('Payment amount must be positive'),{statusCode:400});const payment=add('payments',{invoiceId:inv.id,patientId:inv.patientId,amount,method:req.body?.method||'cash',status:'completed',paidAt:now()},req);const total=Number(inv.total||0), paid=store.payments.filter(x=>x.invoiceId===inv.id&&x.status==='completed').reduce((s,x)=>s+Number(x.amount||0),0);patch('billing',inv.id,{paidAmount:paid,status:paid>=total?'paid':'partially-paid'},req);add('notifications',{patientId:inv.patientId,channel:'in-app',template:'payment-receipt',status:'queued',payload:{paymentId:payment.id}},req);return payment});
@@ -229,15 +311,17 @@ app.get('/api/fhir/Patient/:id',async(req:any,reply)=>{
   return fhirPatient(p);
 });
 app.get('/api/fhir/Patient',async(req:any)=>{
-  const q=String(req.query?.identifier||req.query?.name||'').toLowerCase();
-  const rows=store.patients.filter(x=>x.organizationId===org(req)).filter(x=>!q || `${x.patientNumber} ${x.firstName} ${x.lastName}`.toLowerCase().includes(q)).slice(0,100);
+  const q=String(req.query?.identifier||req.query?.name||'').trim();
+  let rows:any[]=[];
+  if(pool){const params:any[]=[dbOrganizationId(req)];let where='organization_id=$1';if(q){params.push(`%${q}%`);where+=' AND (patient_number ILIKE $2 OR first_name ILIKE $2 OR last_name ILIKE $2)';}const r=await pool.query(`SELECT id,patient_number AS "patientNumber",first_name AS "firstName",last_name AS "lastName",date_of_birth AS "dateOfBirth",sex,phone,email,address FROM patients WHERE ${where} ORDER BY created_at DESC LIMIT 100`,params);rows=r.rows;}else rows=store.patients.filter(x=>x.organizationId===org(req)).filter(x=>!q || `${x.patientNumber} ${x.firstName} ${x.lastName}`.toLowerCase().includes(q.toLowerCase())).slice(0,100);
   return {resourceType:'Bundle',type:'searchset',total:rows.length,entry:rows.map(x=>({fullUrl:`urn:uuid:${x.id}`,resource:fhirPatient(x)}))};
 });
 
 app.post('/api/clinical/observations',async(req:any,reply)=>{
-  const body=z.object({patientId:z.string(),encounterId:z.string().optional(),code:z.string(),display:z.string().optional(),valueNumeric:z.number().optional(),valueText:z.string().optional(),unit:z.string().optional()}).parse(req.body);
-  const x=add('clinical-notes',{kind:'observation',...body,recordedAt:now()},req);
-  return reply.code(201).send(x);
+  const body=z.object({patientId:z.string().uuid(),encounterId:z.string().uuid().optional(),code:z.string(),display:z.string().optional(),valueNumeric:z.number().optional(),valueText:z.string().optional(),unit:z.string().optional()}).parse(req.body);
+  if(!pool)return reply.code(201).send(add('clinical-notes',{kind:'observation',...body,recordedAt:now()},req));
+  const r=await pool.query(`INSERT INTO observations(patient_id,encounter_id,code,display,value_numeric,value_text,unit,performer_user_id) SELECT $1,$2,$3,$4,$5,$6,$7,$8 WHERE EXISTS(SELECT 1 FROM patients WHERE id=$1 AND organization_id=$9) RETURNING id,patient_id AS "patientId",encounter_id AS "encounterId",code,display,value_numeric AS "valueNumeric",value_text AS "valueText",unit,observed_at AS "observedAt"`,[body.patientId,body.encounterId||null,body.code,body.display||null,body.valueNumeric??null,body.valueText??null,body.unit||null,dbUserId(req),dbOrganizationId(req)]);
+  if(!r.rowCount)return reply.code(404).send({error:'Patient not found'});return reply.code(201).send(r.rows[0]);
 });
 app.post('/api/clinical/notes/:encounterId/sign',async(req:any,reply)=>{
   const note=store['clinical-notes'].find(x=>x.encounterId===req.params.encounterId && x.organizationId===org(req));
