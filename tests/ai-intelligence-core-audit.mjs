@@ -20,7 +20,8 @@ for (const tool of ['get_patient_snapshot','get_facility_context','find_attentio
 
 assert.ok(orchestrator.includes('function_call'), 'Gemini function-call orchestration missing');
 assert.ok(orchestrator.includes('function_result'), 'Gemini function-result loop missing');
-assert.ok(orchestrator.includes('previous_interaction_id'), 'multi-step Interactions continuation missing');
+assert.ok(orchestrator.includes('store: false') && orchestrator.includes('history.push(...results)'), 'stateless multi-step Interactions history missing');
+assert.ok(!orchestrator.includes('previous_interaction_id: interaction.data.id'), 'invalid store=false + previous_interaction_id combination remains');
 assert.ok(orchestrator.includes('response_format'), 'structured response format missing');
 assert.ok(orchestrator.includes('google_search') && orchestrator.includes('url_context'), 'research tools missing');
 assert.ok(orchestrator.includes('code_execution'), 'code execution capability missing');

@@ -19,6 +19,7 @@ const GEMINI_API_VERSION = 'v1';
 const AI_PROMPT_VERSION = 'clinai-intelligence-core-1';
 const INTELLIGENCE_SERVICE_URL = (process.env.INTELLIGENCE_SERVICE_URL || '').replace(/\/$/, '');
 const ENABLE_GEMINI_CODE_EXECUTION = process.env.GEMINI_ENABLE_CODE_EXECUTION === 'true';
+const GEMINI_MAX_TOOL_ROUNDS = Math.min(4, Math.max(0, Number(process.env.GEMINI_MAX_TOOL_ROUNDS || 2)));
 
 const aiSafety = [
   'Clinical decision support only. A qualified healthcare professional remains responsible for diagnosis and treatment.',
@@ -274,22 +275,41 @@ async function runAgent(deps: Deps, req: any, input: string, options: { purpose:
   const context = options.patientId ? await patientContext(deps.pool, deps.dbOrganizationId(req), options.patientId) : await orgContext(deps.pool, deps.dbOrganizationId(req));
   const evidence = await approvedKnowledge(deps.pool, deps.dbOrganizationId(req));
   const prompt = `User role: ${options.role || 'healthcare professional'}\nRequested mode: ${options.mode || 'intelligence'}\nPatient context is ${options.patientId ? 'patient-specific' : 'facility/organization-level'}.\n\nInitial available context:\n${aiText(context, 22000)}\n\nApproved evidence registry:\n${aiText(evidence, 10000)}\n\nUser request:\n${input}`;
-  const body: any = { model: options.mode === 'quick' ? GEMINI_FAST_MODEL : GEMINI_REASONING_MODEL, input: prompt, system_instruction: baseSystem, tools, store: false, response_format: { type: 'text', mime_type: 'application/json', schema: responseSchema } };
-  let interaction: any = await geminiRequest(body);
+  const model = options.mode === 'quick' ? GEMINI_FAST_MODEL : GEMINI_REASONING_MODEL;
+
+  // Stateless Interactions mode is used deliberately. Google documents that store=false
+  // cannot be combined with previous_interaction_id. We therefore preserve the exact
+  // user_input + model-generated steps + function_result steps ourselves.
+  const history: any[] = [{ type: 'user_input', content: [{ type: 'text', text: prompt }] }];
+  let interaction: any = await geminiRequest({ model, input: history, system_instruction: baseSystem, tools, store: false, response_format: { type: 'text', mime_type: 'application/json', schema: responseSchema } });
   const toolsUsed: Row[] = [];
   const calculations: Row[] = [];
   let loop = 0;
-  while (loop < 6) {
+  while (loop < GEMINI_MAX_TOOL_ROUNDS) {
     const calls = extractFunctionCalls(interaction.data);
     if (!calls.length) break;
-    const results = await Promise.all(calls.map(async (call: any) => {
-      const args = typeof call.arguments === 'string' ? JSON.parse(call.arguments) : (call.arguments || {});
-      const result = await executeTool(call.name, args, deps, req);
+
+    // Preserve every model-generated step exactly as returned, including thought,
+    // function_call and tool metadata/signatures. This is required for stateless
+    // function calling and prevents "function response must immediately follow"
+    // protocol errors.
+    for (const step of interaction.data?.steps || []) history.push(step);
+
+    const results = [] as any[];
+    for (const call of calls) {
+      let args: any;
+      try { args = typeof call.arguments === 'string' ? JSON.parse(call.arguments) : (call.arguments || {}); }
+      catch { args = {}; }
+      let result: any;
+      try { result = await executeTool(call.name, args, deps, req); }
+      catch (error: any) { result = { error: error?.message || `Tool ${call.name} failed.` }; }
       toolsUsed.push({ name: call.name, arguments: args, callId: call.id });
       if (call.name === 'calculate' || call.name === 'analyze_dataset') calculations.push({ tool: call.name, operation: args.operation, result });
-      return { type: 'function_result', name: call.name, call_id: call.id, result: [{ type: 'text', text: aiText(result, 12000) }] };
-    }));
-    interaction = await geminiRequest({ model: options.mode === 'quick' ? GEMINI_FAST_MODEL : GEMINI_REASONING_MODEL, previous_interaction_id: interaction.data.id, input: results, system_instruction: baseSystem, tools, store: false, response_format: { type: 'text', mime_type: 'application/json', schema: responseSchema } });
+      results.push({ type: 'function_result', name: call.name, call_id: call.id, result: [{ type: 'text', text: aiText(result, 12000) }] });
+    }
+
+    history.push(...results);
+    interaction = await geminiRequest({ model, input: history, system_instruction: baseSystem, tools, store: false, response_format: { type: 'text', mime_type: 'application/json', schema: responseSchema } });
     loop += 1;
   }
   const raw = extractText(interaction.data);
@@ -315,7 +335,14 @@ async function geminiRequest(body: any) {
   const response = await fetch(`https://generativelanguage.googleapis.com/${GEMINI_API_VERSION}/interactions`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': GEMINI_API_KEY }, body: JSON.stringify(body) });
   const text = await response.text();
   let data: any; try { data = JSON.parse(text); } catch { data = { error: { message: text } }; }
-  if (!response.ok) throw Object.assign(new Error(data?.error?.message || 'Gemini request failed'), { statusCode: response.status });
+  if (!response.ok) {
+    const rawMessage = data?.error?.message || 'Gemini request failed';
+    const message = response.status === 429
+      ? 'ClinAI AI usage limit has been reached for the configured Gemini project. Please wait for the quota window to reset or connect the project to a paid Gemini tier. No clinical answer was generated.'
+      : rawMessage;
+    const error = Object.assign(new Error(message), { statusCode: response.status, code: data?.error?.status, providerMessage: rawMessage });
+    throw error;
+  }
   return { data };
 }
 
