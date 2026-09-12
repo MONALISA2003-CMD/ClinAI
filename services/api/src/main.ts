@@ -41,7 +41,15 @@ const triage=z.object({patientId:z.string(),encounterId:z.string().optional(),ch
 const generic=z.record(z.any());
 
 app.get('/',async()=>({ok:true,service:'clinai-api',status:'live',health:'/health'}));
-app.get('/health',async()=>({ok:true,service:'clinai-api',time:now(),persistence:true}));
+app.get('/health',async(_req,reply)=>{
+  if(!pool) return reply.code(503).send({ok:false,service:'clinai-api',time:now(),persistence:false,database:{connected:false,engine:'postgresql'}});
+  try {
+    const r=await pool.query("select count(*)::int as table_count from information_schema.tables where table_schema='public' and table_type='BASE TABLE'");
+    return {ok:true,service:'clinai-api',time:now(),persistence:true,database:{connected:true,engine:'postgresql',tableCount:r.rows[0].table_count}};
+  } catch {
+    return reply.code(503).send({ok:false,service:'clinai-api',time:now(),persistence:false,database:{connected:false,engine:'postgresql'}});
+  }
+});
 app.get('/api/system/status',async(_req,reply)=>{
   if(!pool) return reply.code(503).send({ok:false,service:'clinai-api',database:{connected:false,mode:'json'},message:'DATABASE_URL is not configured'});
   try {
