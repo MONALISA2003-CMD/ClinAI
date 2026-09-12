@@ -24,3 +24,20 @@
 - [x] 22 Deployment/configuration baseline
 
 A checked item means the implementation surface and integration boundary exists in the repository. It does not mean a third-party provider, medical device, legal certification, or clinical safety validation has been completed.
+
+## Connected journey acceptance
+
+- [x] Appointment check-in creates or reuses an active queue entry
+- [x] Queue transitions persist in PostgreSQL
+- [x] Triage vitals persist as clinical observations
+- [x] Clinical notes can be signed once
+- [x] Laboratory orders create a sample
+- [x] Laboratory results can be entered, verified and released
+- [x] Medication orders can be dispensed
+- [x] Invoices can receive partial/full payments without overpayment
+- [x] Referrals can be sent and tracked through tasks
+- [x] Discharge closes the encounter and creates follow-up work
+- [x] Audit records are persisted in PostgreSQL
+- [x] Critical workflow events are written to the outbox
+- [x] Patient 360 is available from the patient workspace
+- [x] FHIR resource endpoints are available for core clinical resources
