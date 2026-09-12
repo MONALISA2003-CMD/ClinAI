@@ -672,7 +672,7 @@ app.get('/api/patients/:id/360',async(req:any,reply)=>{
   if(!pool) { const p=store.patients.find(x=>x.id===req.params.id&&x.organizationId===org(req)); if(!p)return reply.code(404).send({error:'Patient not found'}); const related=(m:Mod)=>store[m].filter(x=>x.patientId===p.id).sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt))); return {patient:p,contacts:store['patient-contacts'].filter(x=>x.patientId===p.id),emergencyContacts:store['emergency-contacts'].filter(x=>x.patientId===p.id),allergies:store.allergies.filter(x=>x.patientId===p.id),timeline:[...related('encounters'),...related('orders'),...related('triage'),...related('laboratory'),...related('pharmacy'),...related('billing'),...related('payments'),...related('referrals'),...related('follow-up')].sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt))),alerts:store.notifications.filter(x=>x.patientId===p.id&&x.status!=='resolved')}; }
   const patientQ=await pool.query(`SELECT p.id,p.organization_id AS "organizationId",p.facility_id AS "facilityId",p.patient_number AS "patientNumber",p.first_name AS "firstName",p.middle_name AS "middleName",p.last_name AS "lastName",p.date_of_birth AS "dateOfBirth",p.sex,p.phone,p.email,p.address,p.national_identifier AS "nationalId",p.preferred_language AS "preferredLanguage",p.status,p.created_at AS "createdAt",p.updated_at AS "updatedAt" FROM patients p WHERE p.id=$1 AND p.organization_id=$2`,[req.params.id,dbOrganizationId(req)]);
   if(!patientQ.rowCount)return reply.code(404).send({error:'Patient not found'}); const id=req.params.id;
-  const [contacts,emergency,allergies,appointments,encounters,orders,diagnoses,observations,notes,notifications,admissions,immunizations,chronicCare,telemedicine,remoteMonitoring,carePlans,referrals,followUp,careTasks,clinicalAlerts]=await Promise.all([
+  const [contacts,emergency,allergies,appointments,encounters,orders,diagnoses,observations,notes,medications,notifications,admissions,immunizations,chronicCare,telemedicine,remoteMonitoring,carePlans,referrals,followUp,careTasks,clinicalAlerts]=await Promise.all([
     pool.query(`SELECT id,type,value,is_primary AS "isPrimary" FROM patient_contacts WHERE patient_id=$1 ORDER BY is_primary DESC,id`,[id]),
     pool.query(`SELECT id,name,relationship,phone,address FROM emergency_contacts WHERE patient_id=$1 ORDER BY id`,[id]),
     pool.query(`SELECT id,substance,reaction,severity,status FROM allergies WHERE patient_id=$1 ORDER BY id DESC`,[id]),
@@ -1430,6 +1430,13 @@ async function ensureV14Schema(){
       event_type text NOT NULL, from_state text, to_state text, payload jsonb NOT NULL DEFAULT '{}',
       actor_id uuid REFERENCES users(id) ON DELETE SET NULL, created_at timestamptz NOT NULL DEFAULT now()
     );
+    ALTER TABLE clinical_workflow_events ADD COLUMN IF NOT EXISTS patient_id uuid REFERENCES patients(id) ON DELETE SET NULL;
+    ALTER TABLE clinical_workflow_events ADD COLUMN IF NOT EXISTS encounter_id uuid REFERENCES encounters(id) ON DELETE SET NULL;
+    ALTER TABLE clinical_workflow_events ADD COLUMN IF NOT EXISTS from_state text;
+    ALTER TABLE clinical_workflow_events ADD COLUMN IF NOT EXISTS to_state text;
+    ALTER TABLE clinical_workflow_events ADD COLUMN IF NOT EXISTS payload jsonb NOT NULL DEFAULT '{}';
+    ALTER TABLE clinical_workflow_events ADD COLUMN IF NOT EXISTS actor_id uuid REFERENCES users(id) ON DELETE SET NULL;
+    ALTER TABLE clinical_workflow_events ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
     CREATE INDEX IF NOT EXISTS clinical_workflow_patient_idx ON clinical_workflow_events(organization_id,patient_id,created_at DESC);
     CREATE TABLE IF NOT EXISTS patient_consents (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
@@ -1501,7 +1508,7 @@ app.get('/api/patients/:id/timeline',async(req:any,reply)=>{
     UNION ALL SELECT mo.id,COALESCE(mo.created_at,now()),'medication',m.name,mo.status,mo.patient_id FROM medication_orders mo JOIN medications m ON m.id=mo.medication_id JOIN patients p ON p.id=mo.patient_id WHERE p.organization_id=$1 AND mo.patient_id=$2
     UNION ALL SELECT r.id,r.created_at,'referral',COALESCE(r.destination,'Referral'),r.status,r.patient_id FROM referrals r WHERE r.organization_id=$1 AND r.patient_id=$2
     UNION ALL SELECT mr.id,mr.created_at,'follow-up',COALESCE(mr.payload->>'reason','Follow-up'),mr.status,$2::uuid FROM module_records mr WHERE mr.organization_id=$1 AND mr.module IN ('follow-up','followup') AND mr.payload->>'patientId'=$2
-    UNION ALL SELECT id,created_at,'workflow',event_type,status,event_type,patient_id FROM clinical_workflow_events WHERE organization_id=$1 AND patient_id=$2
+    UNION ALL SELECT id,created_at,'workflow',event_type,COALESCE(to_state,from_state,'recorded'),patient_id FROM clinical_workflow_events WHERE organization_id=$1 AND patient_id=$2
     ORDER BY at DESC LIMIT 150`,[o,p]);
   return {data:q.rows};
 });

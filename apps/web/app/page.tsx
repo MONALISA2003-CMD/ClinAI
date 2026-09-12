@@ -111,7 +111,14 @@ export default function Home(){
  const [showIntro,setShowIntro]=useState(true);
  const [token,setToken]=useState(''),[online,setOnline]=useState(true),[pending,setPending]=useState(0),[module,setModule]=useState('command-center'),[rows,setRows]=useState<Row[]>([]),[dash,setDash]=useState<Row>({}),[status,setStatus]=useState('Connecting'),[error,setError]=useState(''),[search,setSearch]=useState(''),[patient360,setPatient360]=useState<Row|null>(null),[encounter,setEncounter]=useState<Row|null>(null),[searchResults,setSearchResults]=useState<Row>({}),[navOpen,setNavOpen]=useState(false);
  async function login(){try{const r=await fetch(`${API}/api/auth/demo`,{method:'POST'});const d=await r.json();if(!r.ok)throw new Error(d.error||'Login failed');setToken(d.token)}catch(e:any){setError(e.message);setStatus('Offline')}}
- async function load(){if(!token||module==='command-center'){setRows([]);return}setStatus('Loading');setError('');try{const endpoint=module==='laboratory'?'/api/laboratory/results':`/api/${module}`;const r=await fetch(`${API}${endpoint}`,{headers:{Authorization:`Bearer ${token}`}});const d=await r.json();if(!r.ok)throw new Error(humanError(d.error||`Unable to load ${pretty(module)}`));setRows(d.data||[]);setStatus('Ready')}catch(e:any){setRows([]);setError(humanError(e.message));setStatus('Error')}}
+ async function load(){if(!token||module==='command-center'){setRows([]);return}setStatus('Loading');setError('');try{const endpoint=({
+  laboratory:'/api/laboratory/results',
+  reporting:'/api/operations/summary',
+  'offline-sync':'/api/offline/sync',
+  'health-connections':'/api/hie/connections',
+  security:'/api/audit',
+  audit:'/api/audit',
+ } as Record<string,string>)[module]||`/api/${module}`;const r=await fetch(`${API}${endpoint}`,{headers:{Authorization:`Bearer ${token}`}});const d=await r.json();if(!r.ok)throw new Error(humanError(d.error||`Unable to load ${pretty(module)}`));const payload=d.data;setRows(Array.isArray(payload)?payload:(payload&&typeof payload==='object'?[payload]:[]));setStatus('Ready')}catch(e:any){setRows([]);setError(humanError(e.message));setStatus('Error')}}
  async function refreshDash(){if(!token)return;try{const r=await fetch(`${API}/api/dashboard`,{headers:{Authorization:`Bearer ${token}`}});if(r.ok)setDash(await r.json())}catch{}}
  async function runSearch(){if(!token||search.trim().length<2){setSearchResults({});return}try{const r=await fetch(`${API}/api/search?q=${encodeURIComponent(search.trim())}`,{headers:{Authorization:`Bearer ${token}`}});const d=await r.json();setSearchResults(d)}catch{setSearchResults({})}}
  async function openPatient(id:string){try{const r=await fetch(`${API}/api/patients/${id}/360`,{headers:{Authorization:`Bearer ${token}`}});const d=await r.json();if(!r.ok)throw new Error(humanError(d.error||'Unable to open patient'));setPatient360(d)}catch(e:any){setError(humanError(e.message))}}
