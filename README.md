@@ -114,9 +114,5 @@ Clinical content is configuration-driven. Uganda-approved protocols and WHO SMAR
 
 See `docs/V6-UGANDA-CLINICAL-INTEROPERABILITY-RESEARCH.md`.
 
-
-## V7 — Uganda clinical pathway + reporting + offline execution
-
-V7 deepens the Uganda-first architecture with patient pathway enrollment/execution, versioned rule evaluation, reporting submission staging, and device synchronization. Neon PostgreSQL remains the clinical source of truth. The current production boundary remains integration-ready: national HIE/HMIS/registry connections are not claimed until approved endpoints, credentials and conformance testing are available.
-
-Research basis: Uganda MoH Strategic Plan II 2025/26–2029/30; Uganda MoH Guidelines for Introduction of Digital Health Solutions and Innovations; WHO SMART Guidelines current catalogue and SMART Base FHIR R4; WHO 2026 infectious-disease surveillance DAK; WHO offline FHIR/Android guidance.
+## V8 — Uganda maternal, newborn and postnatal layer
+V8 adds source-linked maternal care, ANC contacts, birth events, newborn records and postnatal contacts. It is based on current Uganda MoH maternal-health publications and the latest WHO SMART/DAK material reviewed on 2026-09-12. National guidance remains authoritative for Uganda-specific content; WHO SMART provides the computable structure. See `docs/V8-UGANDA-MATERNAL-NEWBORN-RESEARCH.md`.

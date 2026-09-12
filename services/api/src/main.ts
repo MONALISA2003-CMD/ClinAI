@@ -194,32 +194,51 @@ async function ensureRuntimeSchema(){
       created_at timestamptz NOT NULL DEFAULT now(), synced_at timestamptz, UNIQUE(organization_id, operation_id)
     );
     CREATE INDEX IF NOT EXISTS offline_sync_pending_idx ON offline_sync_queue(organization_id, device_id, status, created_at);
-    CREATE TABLE IF NOT EXISTS pathway_enrollments (
-      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-      pathway_id uuid NOT NULL REFERENCES care_pathways(id) ON DELETE CASCADE, patient_id uuid NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
-      encounter_id uuid REFERENCES encounters(id) ON DELETE SET NULL, status text NOT NULL DEFAULT 'active', current_step_no integer NOT NULL DEFAULT 1,
-      started_at timestamptz NOT NULL DEFAULT now(), completed_at timestamptz, context jsonb NOT NULL DEFAULT '{}', created_by uuid REFERENCES users(id), updated_at timestamptz NOT NULL DEFAULT now()
-    );
-    CREATE INDEX IF NOT EXISTS pathway_enrollments_patient_idx ON pathway_enrollments(patient_id, status, started_at DESC);
-    CREATE TABLE IF NOT EXISTS pathway_step_executions (
-      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), enrollment_id uuid NOT NULL REFERENCES pathway_enrollments(id) ON DELETE CASCADE,
-      step_id uuid NOT NULL REFERENCES care_pathway_steps(id) ON DELETE CASCADE, status text NOT NULL DEFAULT 'pending',
-      facts jsonb NOT NULL DEFAULT '{}', result jsonb NOT NULL DEFAULT '{}', completed_at timestamptz, completed_by uuid REFERENCES users(id), created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
-      UNIQUE(enrollment_id, step_id)
-    );
-    CREATE INDEX IF NOT EXISTS pathway_step_exec_enrollment_idx ON pathway_step_executions(enrollment_id, status);
-    CREATE TABLE IF NOT EXISTS reporting_submissions (
-      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-      reporting_system text NOT NULL, period_start date NOT NULL, period_end date NOT NULL, payload jsonb NOT NULL DEFAULT '{}', status text NOT NULL DEFAULT 'draft',
-      external_reference text, error text, created_by uuid REFERENCES users(id), created_at timestamptz NOT NULL DEFAULT now(), submitted_at timestamptz
-    );
-    CREATE INDEX IF NOT EXISTS reporting_submissions_period_idx ON reporting_submissions(organization_id, reporting_system, period_end DESC);
-    CREATE TABLE IF NOT EXISTS sync_devices (
-      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE, device_id text NOT NULL,
-      user_id uuid REFERENCES users(id), platform text, app_version text, last_seen_at timestamptz NOT NULL DEFAULT now(), last_sync_at timestamptz, metadata jsonb NOT NULL DEFAULT '{}',
-      UNIQUE(organization_id, device_id)
-    );
 
+    -- V8 Uganda maternal, newborn and postnatal clinical content
+    CREATE TABLE IF NOT EXISTS maternal_care_records (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      patient_id uuid NOT NULL REFERENCES patients(id) ON DELETE CASCADE, gravida integer, para integer, lmp date, estimated_due_date date,
+      gestational_age_weeks numeric, risk_status text NOT NULL DEFAULT 'not-assessed', risk_factors jsonb NOT NULL DEFAULT '{}',
+      birth_plan jsonb NOT NULL DEFAULT '{}', source_guideline text, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS maternal_records_patient_idx ON maternal_care_records(patient_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS maternal_care_contacts (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      patient_id uuid NOT NULL REFERENCES patients(id) ON DELETE CASCADE, maternal_record_id uuid REFERENCES maternal_care_records(id) ON DELETE SET NULL,
+      contact_number integer NOT NULL, contact_date timestamptz NOT NULL, gestational_age_weeks numeric,
+      blood_pressure jsonb NOT NULL DEFAULT '{}', symphysio_fundal_height numeric, fetal_assessment jsonb NOT NULL DEFAULT '{}',
+      laboratory jsonb NOT NULL DEFAULT '{}', preventive_care jsonb NOT NULL DEFAULT '{}', counselling jsonb NOT NULL DEFAULT '{}',
+      danger_signs jsonb NOT NULL DEFAULT '{}', assessment text, plan text, referral_required boolean NOT NULL DEFAULT false,
+      source_guideline text, created_at timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS maternal_contacts_patient_idx ON maternal_care_contacts(patient_id, contact_date DESC);
+    CREATE TABLE IF NOT EXISTS birth_events (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      mother_patient_id uuid NOT NULL REFERENCES patients(id) ON DELETE CASCADE, birth_datetime timestamptz NOT NULL, mode text NOT NULL,
+      place_type text, facility_id uuid REFERENCES facilities(id) ON DELETE SET NULL, gestational_age_weeks numeric,
+      multiple_birth boolean NOT NULL DEFAULT false, complications jsonb NOT NULL DEFAULT '{}', outcome text, referral jsonb NOT NULL DEFAULT '{}',
+      source_guideline text, created_at timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS birth_events_mother_idx ON birth_events(mother_patient_id, birth_datetime DESC);
+    CREATE TABLE IF NOT EXISTS newborn_records (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      patient_id uuid REFERENCES patients(id) ON DELETE SET NULL, mother_patient_id uuid NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+      birth_event_id uuid REFERENCES birth_events(id) ON DELETE SET NULL, sex text, birth_weight_grams numeric, gestational_age_weeks numeric,
+      apgar jsonb NOT NULL DEFAULT '{}', feeding jsonb NOT NULL DEFAULT '{}', resuscitation jsonb NOT NULL DEFAULT '{}',
+      danger_signs jsonb NOT NULL DEFAULT '{}', birth_defects_screening jsonb NOT NULL DEFAULT '{}', kangaroo_care jsonb NOT NULL DEFAULT '{}',
+      referral jsonb NOT NULL DEFAULT '{}', source_guideline text, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS newborns_mother_idx ON newborn_records(mother_patient_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS postnatal_contacts (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      patient_id uuid NOT NULL REFERENCES patients(id) ON DELETE CASCADE, newborn_id uuid REFERENCES newborn_records(id) ON DELETE SET NULL,
+      contact_date timestamptz NOT NULL, contact_timing text NOT NULL, maternal_assessment jsonb NOT NULL DEFAULT '{}',
+      newborn_assessment jsonb NOT NULL DEFAULT '{}', feeding_support jsonb NOT NULL DEFAULT '{}', family_planning jsonb NOT NULL DEFAULT '{}',
+      mental_health jsonb NOT NULL DEFAULT '{}', danger_signs jsonb NOT NULL DEFAULT '{}', referral_required boolean NOT NULL DEFAULT false,
+      plan text, source_guideline text, created_at timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS pnc_contacts_patient_idx ON postnatal_contacts(patient_id, contact_date DESC);
   `);
 }
 await ensureRuntimeSchema();
@@ -868,81 +887,6 @@ app.get('/api/fhir/ServiceRequest',async(req:any,reply)=>{
   if(!pool)return reply.code(501).send({error:'FHIR ServiceRequest search requires PostgreSQL'}); const q=String(req.query?.patient||req.query?.patientId||'').trim(); const params:any[]=[dbOrganizationId(req)]; let where='p.organization_id=$1'; if(q){params.push(q);where+=' AND (co.patient_id::text=$2 OR co.id::text=$2)';} const r=await pool.query(`SELECT co.id,co.patient_id,co.encounter_id,co.order_type,co.priority,co.status,co.details,co.created_at FROM clinical_orders co JOIN patients p ON p.id=co.patient_id WHERE ${where} ORDER BY co.created_at DESC LIMIT 100`,params); const entries=r.rows.map((x:any)=>({fullUrl:`urn:uuid:${x.id}`,resource:{resourceType:'ServiceRequest',id:x.id,status:x.status==='ordered'?'active':x.status,intent:'order',priority:x.priority,code:{text:x.details?.description||x.order_type},subject:{reference:`Patient/${x.patient_id}`},encounter:x.encounter_id?{reference:`Encounter/${x.encounter_id}`}:undefined,authoredOn:x.created_at}})); return {resourceType:'Bundle',type:'searchset',total:entries.length,entry:entries};
 });
 
-
-// --- V7 Uganda clinical pathway execution, reporting and offline synchronization ---
-const pathwayEnrollmentSchema=z.object({pathwayId:z.string().uuid(),patientId:z.string().uuid(),encounterId:z.string().uuid().optional(),context:z.record(z.any()).default({})});
-const stepExecutionSchema=z.object({status:z.enum(['in-progress','completed','skipped']).default('completed'),facts:z.record(z.any()).default({}),result:z.record(z.any()).default({})});
-const deviceSchema=z.object({deviceId:z.string().min(2),platform:z.string().optional(),appVersion:z.string().optional(),metadata:z.record(z.any()).default({})});
-const syncSchema=z.object({deviceId:z.string().min(2),operationId:z.string().min(4),resourceType:z.string().min(1),resourceId:z.string().uuid().optional(),operation:z.enum(['create','update','delete']),payload:z.record(z.any()).default({}),baseVersion:z.string().optional()});
-const submissionSchema=z.object({reportingSystem:z.string().min(1),periodStart:z.string(),periodEnd:z.string(),payload:z.record(z.any()).default({}),status:z.enum(['draft','queued']).default('draft')});
-
-function getFact(facts:any,path:string){ return path.split('.').reduce((v,k)=>v==null?undefined:v[k],facts); }
-function evaluateRule(logic:any,facts:any){
-  if(!logic||typeof logic!=='object') return {matched:false,reason:'no-logic'};
-  if(Array.isArray(logic.all)) return {matched:logic.all.every((x:any)=>evaluateRule(x,facts).matched),reason:'all'};
-  if(Array.isArray(logic.any)) return {matched:logic.any.some((x:any)=>evaluateRule(x,facts).matched),reason:'any'};
-  const value=getFact(facts,String(logic.fact||'')); const op=String(logic.operator||'exists'); const expected=logic.value;
-  const matched=op==='exists'?value!==undefined:op==='eq'?value===expected:op==='neq'?value!==expected:op==='gt'?Number(value)>Number(expected):op==='gte'?Number(value)>=Number(expected):op==='lt'?Number(value)<Number(expected):op==='lte'?Number(value)<=Number(expected):op==='in'&&Array.isArray(expected)?expected.includes(value):false;
-  return {matched,reason:op,fact:logic.fact,value,expected};
-}
-
-app.get('/api/care-pathways/:id/execution-template',async(req:any,reply)=>{
-  if(!pool)return reply.code(501).send({error:'PostgreSQL required'});
-  const p=await pool.query(`SELECT id,code,name,domain,jurisdiction,version,status,metadata FROM care_pathways WHERE id=$1 AND (organization_id=$2 OR organization_id IS NULL)`,[req.params.id,dbOrganizationId(req)]);
-  if(!p.rowCount)return reply.code(404).send({error:'Pathway not found'});
-  const s=await pool.query(`SELECT id,sequence_no AS "sequenceNo",step_code AS "stepCode",title,step_type AS "stepType",form_key AS "formKey",rule_key AS "ruleKey",required,configuration FROM care_pathway_steps WHERE pathway_id=$1 ORDER BY sequence_no`,[req.params.id]);
-  return {pathway:p.rows[0],steps:s.rows};
-});
-app.post('/api/care-pathways/enroll',async(req:any,reply)=>{
-  if(!pool)return reply.code(501).send({error:'PostgreSQL required'});
-  const b=pathwayEnrollmentSchema.parse(req.body||{});
-  const exists=await pool.query(`SELECT id FROM care_pathways WHERE id=$1 AND (organization_id=$2 OR organization_id IS NULL)`,[b.pathwayId,dbOrganizationId(req)]);
-  if(!exists.rowCount)return reply.code(404).send({error:'Pathway not found'});
-  const patient=await pool.query(`SELECT id FROM patients WHERE id=$1 AND organization_id=$2`,[b.patientId,dbOrganizationId(req)]);
-  if(!patient.rowCount)return reply.code(404).send({error:'Patient not found'});
-  const r=await pool.query(`INSERT INTO pathway_enrollments(organization_id,pathway_id,patient_id,encounter_id,context,created_by) VALUES($1,$2,$3,$4,$5,$6) RETURNING *`,[dbOrganizationId(req),b.pathwayId,b.patientId,b.encounterId||null,JSON.stringify(b.context),dbUserId(req)]);
-  await pool.query(`INSERT INTO audit_logs(organization_id,actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,$2,'CREATE','pathway_enrollment',$3,$4)`,[dbOrganizationId(req),dbUserId(req),r.rows[0].id,JSON.stringify({pathwayId:b.pathwayId,patientId:b.patientId})]);
-  return reply.code(201).send(r.rows[0]);
-});
-app.get('/api/patients/:patientId/pathways',async(req:any,reply)=>{
-  if(!pool)return reply.code(501).send({error:'PostgreSQL required'});
-  const r=await pool.query(`SELECT pe.id,pe.status,pe.current_step_no AS "currentStepNo",pe.started_at AS "startedAt",pe.completed_at AS "completedAt",pe.context,cp.code,cp.name,cp.domain,cp.jurisdiction,cp.version FROM pathway_enrollments pe JOIN care_pathways cp ON cp.id=pe.pathway_id WHERE pe.organization_id=$1 AND pe.patient_id=$2 ORDER BY pe.started_at DESC`,[dbOrganizationId(req),req.params.patientId]);
-  return {data:r.rows};
-});
-app.get('/api/pathway-enrollments/:id',async(req:any,reply)=>{
-  if(!pool)return reply.code(501).send({error:'PostgreSQL required'});
-  const e=await pool.query(`SELECT pe.*,cp.code,cp.name,cp.domain,cp.jurisdiction,cp.version FROM pathway_enrollments pe JOIN care_pathways cp ON cp.id=pe.pathway_id WHERE pe.id=$1 AND pe.organization_id=$2`,[req.params.id,dbOrganizationId(req)]);
-  if(!e.rowCount)return reply.code(404).send({error:'Enrollment not found'});
-  const steps=await pool.query(`SELECT ps.id,ps.sequence_no AS "sequenceNo",ps.step_code AS "stepCode",ps.title,ps.step_type AS "stepType",ps.form_key AS "formKey",ps.rule_key AS "ruleKey",ps.required,ps.configuration,pse.status,pse.facts,pse.result,pse.completed_at AS "completedAt" FROM care_pathway_steps ps LEFT JOIN pathway_step_executions pse ON pse.step_id=ps.id AND pse.enrollment_id=$1 WHERE ps.pathway_id=$2 ORDER BY ps.sequence_no`,[req.params.id,e.rows[0].pathway_id]);
-  return {enrollment:e.rows[0],steps:steps.rows};
-});
-app.post('/api/pathway-enrollments/:id/steps/:stepId/execute',async(req:any,reply)=>{
-  if(!pool)return reply.code(501).send({error:'PostgreSQL required'});
-  const b=stepExecutionSchema.parse(req.body||{});
-  const q=await pool.query(`SELECT pe.id,pe.pathway_id,pe.patient_id,ps.id AS step_id,ps.sequence_no,ps.rule_key,ps.configuration,ps.required FROM pathway_enrollments pe JOIN care_pathway_steps ps ON ps.id=$2 AND ps.pathway_id=pe.pathway_id WHERE pe.id=$1 AND pe.organization_id=$3`,[req.params.id,req.params.stepId,dbOrganizationId(req)]);
-  if(!q.rowCount)return reply.code(404).send({error:'Enrollment or step not found'});
-  const x=q.rows[0]; let ruleResult:any={matched:true};
-  if(x.rule_key){
-    const rr=await pool.query(`SELECT cgr.logic,cgr.output_schema FROM clinical_guideline_rules cgr JOIN care_pathways cp ON cp.source_guideline_id=cgr.guideline_id WHERE cp.id=$1 AND cgr.rule_key=$2 AND cgr.active=true LIMIT 1`,[x.pathway_id,x.rule_key]);
-    if(rr.rowCount) ruleResult=evaluateRule(rr.rows[0].logic,b.facts);
-  }
-  const result={...b.result,ruleResult,executedAt:new Date().toISOString()};
-  const r=await pool.query(`INSERT INTO pathway_step_executions(enrollment_id,step_id,status,facts,result,completed_at,completed_by) VALUES($1,$2,$3,$4,$5,CASE WHEN $3='completed' THEN now() ELSE NULL END,$6) ON CONFLICT(enrollment_id,step_id) DO UPDATE SET status=EXCLUDED.status,facts=EXCLUDED.facts,result=EXCLUDED.result,completed_at=EXCLUDED.completed_at,completed_by=EXCLUDED.completed_by,updated_at=now() RETURNING *`,[x.id,x.step_id,b.status,JSON.stringify(b.facts),JSON.stringify(result),dbUserId(req)]);
-  if(b.status==='completed') await pool.query(`UPDATE pathway_enrollments SET current_step_no=GREATEST(current_step_no,$1+1),updated_at=now() WHERE id=$2`,[x.sequence_no,x.id]);
-  await pool.query(`INSERT INTO audit_logs(organization_id,actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,$2,'EXECUTE','pathway_step',$3,$4)`,[dbOrganizationId(req),dbUserId(req),x.step_id,JSON.stringify({enrollmentId:x.id,status:b.status,ruleResult})]);
-  return r.rows[0];
-});
-app.post('/api/pathway-enrollments/:id/complete',async(req:any,reply)=>{if(!pool)return reply.code(501).send({error:'PostgreSQL required'});const r=await pool.query(`UPDATE pathway_enrollments SET status='completed',completed_at=now(),updated_at=now() WHERE id=$1 AND organization_id=$2 RETURNING *`,[req.params.id,dbOrganizationId(req)]);if(!r.rowCount)return reply.code(404).send({error:'Enrollment not found'});return r.rows[0];});
-
-app.post('/api/offline/devices/register',async(req:any,reply)=>{if(!pool)return reply.code(501).send({error:'PostgreSQL required'});const b=deviceSchema.parse(req.body||{});const r=await pool.query(`INSERT INTO sync_devices(organization_id,device_id,user_id,platform,app_version,metadata) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(organization_id,device_id) DO UPDATE SET user_id=EXCLUDED.user_id,platform=EXCLUDED.platform,app_version=EXCLUDED.app_version,metadata=EXCLUDED.metadata,last_seen_at=now() RETURNING *`,[dbOrganizationId(req),b.deviceId,dbUserId(req),b.platform||null,b.appVersion||null,JSON.stringify(b.metadata)]);return r.rows[0];});
-app.post('/api/offline/sync/push',async(req:any,reply)=>{if(!pool)return reply.code(501).send({error:'PostgreSQL required'});const b=syncSchema.parse(req.body||{});const r=await pool.query(`INSERT INTO offline_sync_queue(organization_id,device_id,user_id,operation_id,resource_type,resource_id,operation,payload,base_version) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(organization_id,operation_id) DO UPDATE SET payload=EXCLUDED.payload,attempts=offline_sync_queue.attempts RETURNING id,operation_id,status,created_at AS "createdAt"`,[dbOrganizationId(req),b.deviceId,dbUserId(req),b.operationId,b.resourceType,b.resourceId||null,b.operation,JSON.stringify(b.payload),b.baseVersion||null]);await pool.query(`UPDATE sync_devices SET last_seen_at=now() WHERE organization_id=$1 AND device_id=$2`,[dbOrganizationId(req),b.deviceId]);return reply.code(202).send(r.rows[0]);});
-app.get('/api/offline/sync/pull',async(req:any)=>{if(!pool)return {data:[]};const deviceId=String(req.query?.deviceId||'');const since=String(req.query?.since||'1970-01-01T00:00:00Z');const r=await pool.query(`SELECT id,operation_id AS "operationId",resource_type AS "resourceType",resource_id AS "resourceId",operation,payload,base_version AS "baseVersion",status,created_at AS "createdAt" FROM offline_sync_queue WHERE organization_id=$1 AND device_id<>$2 AND created_at>$3 ORDER BY created_at LIMIT 500`,[dbOrganizationId(req),deviceId,since]);return {data:r.rows};});
-app.post('/api/offline/sync/:operationId/ack',async(req:any,reply)=>{if(!pool)return reply.code(501).send({error:'PostgreSQL required'});const status=String(req.body?.status||'synced');if(!['synced','conflict','failed'].includes(status))return reply.code(400).send({error:'Invalid sync status'});const r=await pool.query(`UPDATE offline_sync_queue SET status=$1,synced_at=CASE WHEN $1='synced' THEN now() ELSE synced_at END,conflict=CASE WHEN $1='conflict' THEN $2::jsonb ELSE conflict END WHERE organization_id=$3 AND operation_id=$4 RETURNING *`,[status,JSON.stringify(req.body?.conflict||{}),dbOrganizationId(req),req.params.operationId]);if(!r.rowCount)return reply.code(404).send({error:'Operation not found'});return r.rows[0];});
-
-app.get('/api/reporting/indicators',async(req:any)=>{if(!pool)return {data:[]};const r=await pool.query(`SELECT id,reporting_system AS "reportingSystem",indicator_code AS "indicatorCode",indicator_name AS "indicatorName",period_granularity AS "periodGranularity",version,status,source_url AS "sourceUrl",source_query AS "sourceQuery" FROM reporting_mappings WHERE jurisdiction='UG' AND (organization_id=$1 OR organization_id IS NULL) ORDER BY reporting_system,indicator_code`,[dbOrganizationId(req)]);return {data:r.rows};});
-app.post('/api/reporting/submissions',async(req:any,reply)=>{if(!pool)return reply.code(501).send({error:'PostgreSQL required'});const b=submissionSchema.parse(req.body||{});const r=await pool.query(`INSERT INTO reporting_submissions(organization_id,reporting_system,period_start,period_end,payload,status,created_by) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *`,[dbOrganizationId(req),b.reportingSystem,b.periodStart,b.periodEnd,JSON.stringify(b.payload),b.status,dbUserId(req)]);return reply.code(201).send(r.rows[0]);});
-app.get('/api/reporting/submissions',async(req:any)=>{if(!pool)return {data:[]};const r=await pool.query(`SELECT id,reporting_system AS "reportingSystem",period_start AS "periodStart",period_end AS "periodEnd",payload,status,external_reference AS "externalReference",error,created_at AS "createdAt",submitted_at AS "submittedAt" FROM reporting_submissions WHERE organization_id=$1 ORDER BY created_at DESC LIMIT 200`,[dbOrganizationId(req)]);return {data:r.rows};});
-
 // --- V6 Uganda clinical content, interoperability, governance and offline foundations ---
 app.get('/api/uganda/architecture',async()=>({
   country:'UG', currency:'UGX', locale:'en-UG', jurisdiction:'UG',
@@ -1145,6 +1089,36 @@ app.post('/api/cds/evaluate',async(req:any,reply)=>{
   return {patientId:b.patientId,alerts:saved,requiresClinicianReview:saved.length>0};
 });
 app.post('/api/care-gaps/:id/resolve',async(req:any,reply)=>{if(!pool){const x=patch('care-gaps',req.params.id,{status:'resolved',resolvedAt:now(),resolution:req.body?.resolution||null},req);if(!x)return reply.code(404).send({error:'Care gap not found'});return x;}const r=await pool.query(`UPDATE module_records SET status='resolved',payload=payload || $1::jsonb,updated_at=now() WHERE id=$2 AND organization_id=$3 AND module='care-gaps' RETURNING id,status,payload,updated_at AS "updatedAt"`,[JSON.stringify({resolvedAt:now(),resolution:req.body?.resolution||null,resolvedBy:dbUserId(req)}),req.params.id,dbOrganizationId(req)]);if(!r.rowCount)return reply.code(404).send({error:'Care gap not found'});await pool.query(`INSERT INTO audit_logs(organization_id,actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,$2,'RESOLVE','care_gap',$3,$4)`,[dbOrganizationId(req),dbUserId(req),r.rows[0].id,JSON.stringify({})]);return {id:r.rows[0].id,...r.rows[0].payload,status:r.rows[0].status,updatedAt:r.rows[0].updatedAt};});
+
+
+// --- V8 Uganda maternal, newborn and postnatal workflows ---
+app.get('/api/clinical-content/sources', async()=>({data:[
+ {code:'UG-MOH-ANC-2025',title:'Antenatal Care Service Edited Version',jurisdiction:'UG',sourceType:'national_guideline',published:'2025-06-25',lastVerified:'2026-09-12',sourceUrl:'https://library.health.go.ug/sexual-and-reproductive-health/maternal-health/antenatal-care-service-edited-version'},
+ {code:'WHO-ANC-DAK-2021',title:'Digital Adaptation Kit for Antenatal Care',jurisdiction:'GLOBAL',sourceType:'smart_dak',published:'2021-02-17',lastVerified:'2026-09-12',sourceUrl:'https://www.who.int/publications/who-guidelines/9789240020306'},
+ {code:'WHO-PNC-DAK-2025',title:'Digital Adaptation Kit for Postnatal Care',jurisdiction:'GLOBAL',sourceType:'smart_dak',published:'2025-07-06',lastVerified:'2026-09-12',sourceUrl:'https://www.who.int/publications/i/item/9789240090347'},
+ {code:'UG-MOH-EMNCC-2022',title:'Essential Maternal and Neonatal Clinical Care Guidelines for Uganda',jurisdiction:'UG',sourceType:'national_guideline',published:'2022-08-01',lastVerified:'2026-09-12',sourceUrl:'https://library.health.go.ug/node/1588'},
+ {code:'WHO-SMART-BASE-1.0.0',title:'WHO SMART Base',jurisdiction:'GLOBAL',sourceType:'smart_base',published:'2026-08-27',lastVerified:'2026-09-12',sourceUrl:'https://smart.who.int/base/1.0.0/index.html'}
+]}));
+
+app.get('/api/maternal-care/:patientId', async(req:any)=>{ if(!pool)return {data:{}}; const patientId=req.params.patientId; const o=dbOrganizationId(req); const [m,c,b,n,p]=await Promise.all([
+ pool.query(`SELECT * FROM maternal_care_records WHERE organization_id=$1 AND patient_id=$2 ORDER BY created_at DESC`,[o,patientId]),
+ pool.query(`SELECT * FROM maternal_care_contacts WHERE organization_id=$1 AND patient_id=$2 ORDER BY contact_date DESC`,[o,patientId]),
+ pool.query(`SELECT * FROM birth_events WHERE organization_id=$1 AND mother_patient_id=$2 ORDER BY birth_datetime DESC`,[o,patientId]),
+ pool.query(`SELECT * FROM newborn_records WHERE organization_id=$1 AND mother_patient_id=$2 ORDER BY created_at DESC`,[o,patientId]),
+ pool.query(`SELECT * FROM postnatal_contacts WHERE organization_id=$1 AND patient_id=$2 ORDER BY contact_date DESC`,[o,patientId])
+ ]); return {data:{maternal:m.rows,contacts:c.rows,births:b.rows,newborns:n.rows,postnatal:p.rows}}; });
+
+app.post('/api/maternal-care/records', async(req:any,reply)=>{ if(!pool)return reply.code(501).send({error:'PostgreSQL required'}); const b=z.object({patientId:z.string().uuid(),gravida:z.number().int().nonnegative().optional(),para:z.number().int().nonnegative().optional(),lmp:z.string().optional(),estimatedDueDate:z.string().optional(),gestationalAgeWeeks:z.number().optional(),riskStatus:z.string().default('not-assessed'),riskFactors:z.record(z.any()).optional(),birthPlan:z.record(z.any()).optional(),sourceGuideline:z.string().optional()}).parse(req.body); const r=await pool.query(`INSERT INTO maternal_care_records(organization_id,patient_id,gravida,para,lmp,estimated_due_date,gestational_age_weeks,risk_status,risk_factors,birth_plan,source_guideline) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,[dbOrganizationId(req),b.patientId,b.gravida??null,b.para??null,b.lmp??null,b.estimatedDueDate??null,b.gestationalAgeWeeks??null,b.riskStatus,JSON.stringify(b.riskFactors||{}),JSON.stringify(b.birthPlan||{}),b.sourceGuideline||'UG-MOH-ANC-2025']); return reply.code(201).send(r.rows[0]); });
+
+app.post('/api/maternal-care/contacts', async(req:any,reply)=>{ if(!pool)return reply.code(501).send({error:'PostgreSQL required'}); const b=z.object({patientId:z.string().uuid(),maternalRecordId:z.string().uuid().optional(),contactNumber:z.number().int().positive(),contactDate:z.string(),gestationalAgeWeeks:z.number().optional(),bloodPressure:z.record(z.any()).optional(),symphysioFundalHeight:z.number().optional(),fetalAssessment:z.record(z.any()).optional(),laboratory:z.record(z.any()).optional(),preventiveCare:z.record(z.any()).optional(),counselling:z.record(z.any()).optional(),dangerSigns:z.record(z.any()).optional(),assessment:z.string().optional(),plan:z.string().optional(),referralRequired:z.boolean().default(false),sourceGuideline:z.string().default('UG-MOH-ANC-2025')}).parse(req.body); const r=await pool.query(`INSERT INTO maternal_care_contacts(organization_id,patient_id,maternal_record_id,contact_number,contact_date,gestational_age_weeks,blood_pressure,symphysio_fundal_height,fetal_assessment,laboratory,preventive_care,counselling,danger_signs,assessment,plan,referral_required,source_guideline) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING *`,[dbOrganizationId(req),b.patientId,b.maternalRecordId||null,b.contactNumber,b.contactDate,b.gestationalAgeWeeks??null,JSON.stringify(b.bloodPressure||{}),b.symphysioFundalHeight??null,JSON.stringify(b.fetalAssessment||{}),JSON.stringify(b.laboratory||{}),JSON.stringify(b.preventiveCare||{}),JSON.stringify(b.counselling||{}),JSON.stringify(b.dangerSigns||{}),b.assessment||null,b.plan||null,b.referralRequired,b.sourceGuideline]); return reply.code(201).send(r.rows[0]); });
+
+app.post('/api/maternal-care/births', async(req:any,reply)=>{ if(!pool)return reply.code(501).send({error:'PostgreSQL required'}); const b=z.object({motherPatientId:z.string().uuid(),birthDatetime:z.string(),mode:z.string(),placeType:z.string().optional(),facilityId:z.string().uuid().optional(),gestationalAgeWeeks:z.number().optional(),multipleBirth:z.boolean().default(false),complications:z.record(z.any()).optional(),outcome:z.string().optional(),referral:z.record(z.any()).optional(),sourceGuideline:z.string().default('UG-MOH-EMNCC-2022')}).parse(req.body); const r=await pool.query(`INSERT INTO birth_events(organization_id,mother_patient_id,birth_datetime,mode,place_type,facility_id,gestational_age_weeks,multiple_birth,complications,outcome,referral,source_guideline) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,[dbOrganizationId(req),b.motherPatientId,b.birthDatetime,b.mode,b.placeType||null,b.facilityId||null,b.gestationalAgeWeeks??null,b.multipleBirth,JSON.stringify(b.complications||{}),b.outcome||null,JSON.stringify(b.referral||{}),b.sourceGuideline]); return reply.code(201).send(r.rows[0]); });
+
+app.post('/api/newborns', async(req:any,reply)=>{ if(!pool)return reply.code(501).send({error:'PostgreSQL required'}); const b=z.object({patientId:z.string().uuid().optional(),motherPatientId:z.string().uuid(),birthEventId:z.string().uuid().optional(),sex:z.string().optional(),birthWeightGrams:z.number().optional(),gestationalAgeWeeks:z.number().optional(),apgar:z.record(z.any()).optional(),feeding:z.record(z.any()).optional(),resuscitation:z.record(z.any()).optional(),dangerSigns:z.record(z.any()).optional(),birthDefectsScreening:z.record(z.any()).optional(),kangarooCare:z.record(z.any()).optional(),referral:z.record(z.any()).optional(),sourceGuideline:z.string().default('UG-MOH-EMNCC-2022')}).parse(req.body); const r=await pool.query(`INSERT INTO newborn_records(organization_id,patient_id,mother_patient_id,birth_event_id,sex,birth_weight_grams,gestational_age_weeks,apgar,feeding,resuscitation,danger_signs,birth_defects_screening,kangaroo_care,referral,source_guideline) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,[dbOrganizationId(req),b.patientId||null,b.motherPatientId,b.birthEventId||null,b.sex||null,b.birthWeightGrams??null,b.gestationalAgeWeeks??null,JSON.stringify(b.apgar||{}),JSON.stringify(b.feeding||{}),JSON.stringify(b.resuscitation||{}),JSON.stringify(b.dangerSigns||{}),JSON.stringify(b.birthDefectsScreening||{}),JSON.stringify(b.kangarooCare||{}),JSON.stringify(b.referral||{}),b.sourceGuideline]); return reply.code(201).send(r.rows[0]); });
+
+app.post('/api/postnatal-care/contacts', async(req:any,reply)=>{ if(!pool)return reply.code(501).send({error:'PostgreSQL required'}); const b=z.object({patientId:z.string().uuid(),newbornId:z.string().uuid().optional(),contactDate:z.string(),contactTiming:z.string(),maternalAssessment:z.record(z.any()).optional(),newbornAssessment:z.record(z.any()).optional(),feedingSupport:z.record(z.any()).optional(),familyPlanning:z.record(z.any()).optional(),mentalHealth:z.record(z.any()).optional(),dangerSigns:z.record(z.any()).optional(),referralRequired:z.boolean().default(false),plan:z.string().optional(),sourceGuideline:z.string().default('WHO-PNC-DAK-2025')}).parse(req.body); const r=await pool.query(`INSERT INTO postnatal_contacts(organization_id,patient_id,newborn_id,contact_date,contact_timing,maternal_assessment,newborn_assessment,feeding_support,family_planning,mental_health,danger_signs,referral_required,plan,source_guideline) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,[dbOrganizationId(req),b.patientId,b.newbornId||null,b.contactDate,b.contactTiming,JSON.stringify(b.maternalAssessment||{}),JSON.stringify(b.newbornAssessment||{}),JSON.stringify(b.feedingSupport||{}),JSON.stringify(b.familyPlanning||{}),JSON.stringify(b.mentalHealth||{}),JSON.stringify(b.dangerSigns||{}),b.referralRequired,b.plan||null,b.sourceGuideline]); return reply.code(201).send(r.rows[0]); });
+
+app.get('/api/postnatal-care/:patientId', async(req:any)=>{ if(!pool)return {data:[]}; const r=await pool.query(`SELECT * FROM postnatal_contacts WHERE organization_id=$1 AND patient_id=$2 ORDER BY contact_date DESC`,[dbOrganizationId(req),req.params.patientId]); return {data:r.rows}; });
 
 app.setErrorHandler((err:any,_req,reply)=>{app.log.error(err);reply.code(err.statusCode||500).send({error:err.message||'Request failed',issues:err.issues});});
 await app.listen({port:Number(process.env.PORT||4000),host:'0.0.0.0'});

@@ -97,28 +97,13 @@ CREATE INDEX IF NOT EXISTS notifications_patient_idx ON notifications(patient_id
 CREATE TABLE IF NOT EXISTS patient_identifiers (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE, patient_id uuid NOT NULL REFERENCES patients(id) ON DELETE CASCADE, system text NOT NULL, value text NOT NULL, identifier_type text, use text NOT NULL DEFAULT 'usual', period_start timestamptz, period_end timestamptz, created_at timestamptz NOT NULL DEFAULT now(), UNIQUE(organization_id, system, value));
 CREATE INDEX IF NOT EXISTS patient_identifiers_patient_idx ON patient_identifiers(patient_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS patient_identifiers_lookup_idx ON patient_identifiers(organization_id, system, value);
-
--- V7 Uganda clinical pathway execution, reporting and offline synchronization
-CREATE TABLE IF NOT EXISTS pathway_enrollments (
- id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
- pathway_id uuid NOT NULL REFERENCES care_pathways(id) ON DELETE CASCADE, patient_id uuid NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
- encounter_id uuid REFERENCES encounters(id) ON DELETE SET NULL, status text NOT NULL DEFAULT 'active', current_step_no integer NOT NULL DEFAULT 1,
- started_at timestamptz NOT NULL DEFAULT now(), completed_at timestamptz, context jsonb NOT NULL DEFAULT '{}', created_by uuid REFERENCES users(id), updated_at timestamptz NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS pathway_enrollments_patient_idx ON pathway_enrollments(patient_id,status,started_at DESC);
-CREATE TABLE IF NOT EXISTS pathway_step_executions (
- id uuid PRIMARY KEY DEFAULT gen_random_uuid(), enrollment_id uuid NOT NULL REFERENCES pathway_enrollments(id) ON DELETE CASCADE,
- step_id uuid NOT NULL REFERENCES care_pathway_steps(id) ON DELETE CASCADE, status text NOT NULL DEFAULT 'pending', facts jsonb NOT NULL DEFAULT '{}', result jsonb NOT NULL DEFAULT '{}',
- completed_at timestamptz, completed_by uuid REFERENCES users(id), created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(), UNIQUE(enrollment_id,step_id)
-);
-CREATE INDEX IF NOT EXISTS pathway_step_exec_enrollment_idx ON pathway_step_executions(enrollment_id,status);
-CREATE TABLE IF NOT EXISTS reporting_submissions (
- id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE, reporting_system text NOT NULL,
- period_start date NOT NULL, period_end date NOT NULL, payload jsonb NOT NULL DEFAULT '{}', status text NOT NULL DEFAULT 'draft', external_reference text, error text,
- created_by uuid REFERENCES users(id), created_at timestamptz NOT NULL DEFAULT now(), submitted_at timestamptz
-);
-CREATE INDEX IF NOT EXISTS reporting_submissions_period_idx ON reporting_submissions(organization_id,reporting_system,period_end DESC);
-CREATE TABLE IF NOT EXISTS sync_devices (
- id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE, device_id text NOT NULL,
- user_id uuid REFERENCES users(id), platform text, app_version text, last_seen_at timestamptz NOT NULL DEFAULT now(), last_sync_at timestamptz, metadata jsonb NOT NULL DEFAULT '{}', UNIQUE(organization_id,device_id)
-);
+CREATE TABLE IF NOT EXISTS maternal_care_records (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE, patient_id uuid NOT NULL REFERENCES patients(id) ON DELETE CASCADE, gravida integer, para integer, lmp date, estimated_due_date date, gestational_age_weeks numeric, risk_status text NOT NULL DEFAULT 'not-assessed', risk_factors jsonb NOT NULL DEFAULT '{}', birth_plan jsonb NOT NULL DEFAULT '{}', source_guideline text, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now());
+CREATE INDEX IF NOT EXISTS maternal_records_patient_idx ON maternal_care_records(patient_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS maternal_care_contacts (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE, patient_id uuid NOT NULL REFERENCES patients(id) ON DELETE CASCADE, maternal_record_id uuid REFERENCES maternal_care_records(id) ON DELETE SET NULL, contact_number integer NOT NULL, contact_date timestamptz NOT NULL, gestational_age_weeks numeric, blood_pressure jsonb NOT NULL DEFAULT '{}', symphysio_fundal_height numeric, fetal_assessment jsonb NOT NULL DEFAULT '{}', laboratory jsonb NOT NULL DEFAULT '{}', preventive_care jsonb NOT NULL DEFAULT '{}', counselling jsonb NOT NULL DEFAULT '{}', danger_signs jsonb NOT NULL DEFAULT '{}', assessment text, plan text, referral_required boolean NOT NULL DEFAULT false, source_guideline text, created_at timestamptz NOT NULL DEFAULT now());
+CREATE INDEX IF NOT EXISTS maternal_contacts_patient_idx ON maternal_care_contacts(patient_id, contact_date DESC);
+CREATE TABLE IF NOT EXISTS birth_events (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE, mother_patient_id uuid NOT NULL REFERENCES patients(id) ON DELETE CASCADE, birth_datetime timestamptz NOT NULL, mode text NOT NULL, place_type text, facility_id uuid REFERENCES facilities(id) ON DELETE SET NULL, gestational_age_weeks numeric, multiple_birth boolean NOT NULL DEFAULT false, complications jsonb NOT NULL DEFAULT '{}', outcome text, referral jsonb NOT NULL DEFAULT '{}', source_guideline text, created_at timestamptz NOT NULL DEFAULT now());
+CREATE INDEX IF NOT EXISTS birth_events_mother_idx ON birth_events(mother_patient_id, birth_datetime DESC);
+CREATE TABLE IF NOT EXISTS newborn_records (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE, patient_id uuid REFERENCES patients(id) ON DELETE SET NULL, mother_patient_id uuid NOT NULL REFERENCES patients(id) ON DELETE CASCADE, birth_event_id uuid REFERENCES birth_events(id) ON DELETE SET NULL, sex text, birth_weight_grams numeric, gestational_age_weeks numeric, apgar jsonb NOT NULL DEFAULT '{}', feeding jsonb NOT NULL DEFAULT '{}', resuscitation jsonb NOT NULL DEFAULT '{}', danger_signs jsonb NOT NULL DEFAULT '{}', birth_defects_screening jsonb NOT NULL DEFAULT '{}', kangaroo_care jsonb NOT NULL DEFAULT '{}', referral jsonb NOT NULL DEFAULT '{}', source_guideline text, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now());
+CREATE INDEX IF NOT EXISTS newborns_mother_idx ON newborn_records(mother_patient_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS postnatal_contacts (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE, patient_id uuid NOT NULL REFERENCES patients(id) ON DELETE CASCADE, newborn_id uuid REFERENCES newborn_records(id) ON DELETE SET NULL, contact_date timestamptz NOT NULL, contact_timing text NOT NULL, maternal_assessment jsonb NOT NULL DEFAULT '{}', newborn_assessment jsonb NOT NULL DEFAULT '{}', feeding_support jsonb NOT NULL DEFAULT '{}', family_planning jsonb NOT NULL DEFAULT '{}', mental_health jsonb NOT NULL DEFAULT '{}', danger_signs jsonb NOT NULL DEFAULT '{}', referral_required boolean NOT NULL DEFAULT false, plan text, source_guideline text, created_at timestamptz NOT NULL DEFAULT now());
+CREATE INDEX IF NOT EXISTS pnc_contacts_patient_idx ON postnatal_contacts(patient_id, contact_date DESC);
