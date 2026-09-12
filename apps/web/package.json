@@ -17,5 +17,5 @@
     "@types/react-dom": "^19.0.0",
     "typescript": "^5.8.0"
   },
-  "version": "0.16.0"
+  "version": "0.17.0"
 }

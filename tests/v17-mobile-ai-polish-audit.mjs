@@ -1,0 +1,15 @@
+import fs from 'node:fs';
+import assert from 'node:assert/strict';
+const web=fs.readFileSync('apps/web/app/page.tsx','utf8');
+const layout=fs.readFileSync('apps/web/app/layout.tsx','utf8');
+const css=fs.readFileSync('apps/web/app/globals.css','utf8');
+const api=fs.readFileSync('services/api/src/main.ts','utf8');
+assert.ok(layout.includes("export const viewport={width:'device-width',initialScale:1}"),'mobile viewport declaration missing');
+assert.ok(web.includes('function AIResponse'),'human-readable AI response renderer missing');
+assert.ok(web.includes('AI ready') && web.includes('ClinAI intelligence is available'),'AI status copy missing');
+assert.ok(!web.includes('status.model') && !web.includes('status.apiVersion'),'model/version should not be exposed in the UI');
+assert.ok(web.includes('Reviewing the record…'),'AI loading state missing');
+assert.ok(css.includes('overflow-x:hidden') && css.includes('-webkit-text-size-adjust:100%'),'mobile overflow/text scaling guard missing');
+assert.ok(css.includes('.ai-response h3') && css.includes('.ai-response ul'),'AI response typography/list styles missing');
+assert.ok(api.includes('Do not use Markdown syntax, asterisks, hashes, tables, or decorative formatting'),'AI plain-text instruction missing');
+console.log('ClinAI V17 mobile and AI presentation audit passed.');

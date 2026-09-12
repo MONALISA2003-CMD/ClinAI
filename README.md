@@ -127,3 +127,10 @@ Population health and surveillance intelligence adds surveillance events/cases, 
 ## V16 ClinAI Intelligence Engine
 
 The V16 build adds a server-side Gemini Interactions API v1 gateway, patient and organization context assembly, Ask ClinAI, patient intelligence, attention analysis, documentation drafts, role briefings, translation, AI usage/audit tracking, knowledge-source registry, evaluation workflow, responsive AI UI and a controlled human-review boundary. Configure `GEMINI_AUTHORIZATION_KEY` on the API service. `GEMINI_API_KEY` remains a compatibility fallback. Do not expose either key to the browser.
+
+
+## V17 Mobile and AI presentation polish
+
+V17 refines the Clinical Intelligence Engine for real phone use without changing the clinical safety boundary. The web app now declares a device-width viewport, guards against horizontal overflow and unwanted text scaling, improves touch-first spacing, and gives AI responses a clean human-readable presentation. Gemini model and API version details are no longer displayed to normal users. The AI gateway also explicitly requests plain text without Markdown decoration, while the frontend renderer safely normalizes legacy Markdown-style output if a provider returns it.
+
+The AI status card now shows only whether ClinAI intelligence is available. Loading feedback uses human language, and the role selector uses readable role names. The clinical intelligence response area supports headings, paragraphs and lists without exposing implementation formatting.
