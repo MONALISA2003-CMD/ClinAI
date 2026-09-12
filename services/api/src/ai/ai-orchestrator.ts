@@ -36,6 +36,12 @@ const MULTI_MODEL_MODE = process.env.CLINAI_MULTI_MODEL_MODE !== 'false';
 const AI_FALLBACK_ATTEMPTS = Math.max(1, Math.min(5, Number(process.env.CLINAI_AI_FALLBACK_ATTEMPTS || 3)));
 const multiModelCache = new Map<string, { expiresAt: number; result: any }>();
 const MULTI_MODEL_CACHE_MS = Math.max(30000, Number(process.env.CLINAI_MULTI_MODEL_CACHE_MS || 300000));
+const AI_PROVIDER_TIMEOUT_MS = Math.max(3000, Number(process.env.CLINAI_PROVIDER_TIMEOUT_MS || 9000));
+const AI_QUICK_MAX_TOKENS = Math.max(300, Number(process.env.CLINAI_QUICK_MAX_TOKENS || 700));
+const AI_STANDARD_MAX_TOKENS = Math.max(500, Number(process.env.CLINAI_STANDARD_MAX_TOKENS || 1800));
+const AI_CONTEXT_CACHE_MS = Math.max(5000, Number(process.env.CLINAI_CONTEXT_CACHE_MS || 30000));
+const AI_FREE_TOOL_ROUNDS = Math.max(0, Math.min(1, Number(process.env.CLINAI_FREE_TOOL_ROUNDS || 1)));
+const contextCache = new Map<string, { expiresAt: number; value: any }>();
 
 async function acquireFreeTierSlot() {
   if (!FREE_TIER_MODE) return;
@@ -306,12 +312,13 @@ async function runOpenAICompatibleAgent(deps: Deps, req: any, model: any, input:
   const messages:any[] = [{ role: 'system', content: baseSystem }, { role: 'user', content: prompt }];
   const toolsUsed:any[] = [];
   const calculations:any[] = [];
-  const maxRounds = allowTools ? Math.max(0, Math.min(3, Number(process.env.CLINAI_OPENAI_TOOL_ROUNDS || 2))) : 0;
+  const maxRounds = allowTools ? (FREE_TIER_MODE ? AI_FREE_TOOL_ROUNDS : Math.max(0, Math.min(3, Number(process.env.CLINAI_OPENAI_TOOL_ROUNDS || 2)))) : 0;
   let usage:any = {};
   let finalText = '';
   for (let round = 0; round <= maxRounds; round += 1) {
     const response:any = await callOpenAICompatible(model, prompt, baseSystem, responseSchema, {
-      reasoning: options.mode !== 'quick',
+      reasoning: options.mode !== 'quick' && model.provider !== 'groq',
+      maxTokens: options.mode === 'quick' ? AI_QUICK_MAX_TOKENS : AI_STANDARD_MAX_TOKENS,
       tools: allowTools ? openAIToolDeclarations() : undefined,
       messages,
     });
@@ -352,10 +359,30 @@ async function runAgent(deps: Deps, req: any, input: string, options: { purpose:
   if (cached && cached.expiresAt > Date.now()) return { ...cached.result, cached: true };
   if (cached) multiModelCache.delete(cacheKey);
 
-  const context = options.patientId ? await patientContext(deps.pool, deps.dbOrganizationId(req), options.patientId) : await orgContext(deps.pool, deps.dbOrganizationId(req));
-  const evidence = await approvedKnowledge(deps.pool, deps.dbOrganizationId(req));
+  const organizationId = deps.dbOrganizationId(req);
+  const contextKey = `${organizationId || 'none'}:${options.patientId || 'facility'}:${options.mode || 'intelligence'}`;
+  let context = contextCache.get(contextKey)?.value;
+  if (!context || (contextCache.get(contextKey)?.expiresAt || 0) <= Date.now()) {
+    // Quick requests use the smallest useful context. Full patient/facility context is reserved for intelligence/research work.
+    if (options.mode === 'quick') {
+      context = options.patientId ? await query(deps.pool, `SELECT id,patient_number AS "patientNumber",first_name AS "firstName",last_name AS "lastName",status,preferred_language AS "preferredLanguage" FROM patients WHERE id=$1 AND organization_id=$2`, [options.patientId, organizationId]) : { facility: 'current organization', generatedAt: new Date().toISOString() };
+    } else {
+      context = options.patientId ? await patientContext(deps.pool, organizationId, options.patientId) : await orgContext(deps.pool, organizationId);
+    }
+    contextCache.set(contextKey, { expiresAt: Date.now() + AI_CONTEXT_CACHE_MS, value: context });
+  }
+  let evidence: any[] = [];
+  // Evidence is useful for intelligence/research, but loading it for every quick request only adds latency.
+  if (options.mode !== 'quick') {
+    const evidenceKey = `evidence:${organizationId || 'none'}`;
+    const cachedEvidence = contextCache.get(evidenceKey);
+    if (cachedEvidence && cachedEvidence.expiresAt > Date.now()) evidence = cachedEvidence.value;
+    else { evidence = await approvedKnowledge(deps.pool, organizationId); contextCache.set(evidenceKey, { expiresAt: Date.now() + AI_CONTEXT_CACHE_MS, value: evidence }); }
+  }
   const safeContext = patientData && !ALLOW_PUBLIC_AI_WITH_PATIENT_DATA ? redactForPublicModel(context) : context;
-  const prompt = `User role: ${options.role || 'healthcare professional'}\nRequested mode: ${options.mode || 'intelligence'}\nPatient-specific request: ${patientData ? 'yes' : 'no'}\n\nClinAI context:\n${aiText(safeContext, patientData && !ALLOW_PUBLIC_AI_WITH_PATIENT_DATA ? 14000 : 22000)}\n\nApproved evidence registry:\n${aiText(evidence, 9000)}\n\nUser request:\n${input}`;
+  const contextLimit = options.mode === 'quick' ? 7000 : (patientData && !ALLOW_PUBLIC_AI_WITH_PATIENT_DATA ? 14000 : 22000);
+  const evidenceLimit = options.mode === 'quick' ? 0 : 9000;
+  const prompt = `User role: ${options.role || 'healthcare professional'}\nRequested mode: ${options.mode || 'intelligence'}\nPatient-specific request: ${patientData ? 'yes' : 'no'}\n\nClinAI context:\n${aiText(safeContext, contextLimit)}${evidenceLimit ? `\n\nApproved evidence registry:\n${aiText(evidence, evidenceLimit)}` : ''}\n\nUser request:\n${input}`;
 
   if (!MULTI_MODEL_MODE) return runGeminiAgent(deps, req, input, options, prompt, context, evidence, cacheKey);
 
@@ -376,7 +403,7 @@ async function runAgent(deps: Deps, req: any, input: string, options: { purpose:
       if (model.provider === 'gemini') {
         result = await runGeminiAgent(deps, req, input, options, prompt, context, evidence, cacheKey, model.id);
       } else {
-        const allowTools = model.toolCalling && (!patientData || ALLOW_PUBLIC_AI_WITH_PATIENT_DATA);
+        const allowTools = model.toolCalling && options.mode !== 'quick' && (!patientData || ALLOW_PUBLIC_AI_WITH_PATIENT_DATA);
         result = await runOpenAICompatibleAgent(deps, req, model, input, prompt, options, allowTools);
         await recordProviderUsage(deps.pool, req, model, result, 'completed');
         await recordWork(deps.pool, req, deps.dbOrganizationId(req), options.patientId || null, { ...result, purpose: options.purpose, status: 'completed', question: input, evidenceCount: (result.structured.evidence || []).length, confidence: result.structured.confidence, resultSummary: { directAnswer: result.structured.directAnswer } });
@@ -454,7 +481,15 @@ async function runGeminiAgent(deps: Deps, req: any, input: string, options: any,
 }
 
 async function geminiRequest(body: any) {
-  const response = await fetch(`https://generativelanguage.googleapis.com/${GEMINI_API_VERSION}/interactions`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': GEMINI_API_KEY }, body: JSON.stringify(body) });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), AI_PROVIDER_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(`https://generativelanguage.googleapis.com/${GEMINI_API_VERSION}/interactions`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': GEMINI_API_KEY }, body: JSON.stringify(body), signal: controller.signal });
+  } catch (error: any) {
+    const message = error?.name === 'AbortError' ? 'Gemini took too long to respond. ClinAI stopped waiting so another available intelligence provider can be tried.' : (error?.message || 'Gemini connection failed.');
+    throw Object.assign(new Error(message), { statusCode: 504, code: error?.name === 'AbortError' ? 'PROVIDER_TIMEOUT' : 'PROVIDER_NETWORK_ERROR' });
+  } finally { clearTimeout(timeout); }
   const text = await response.text();
   let data: any; try { data = JSON.parse(text); } catch { data = { error: { message: text } }; }
   if (!response.ok) {

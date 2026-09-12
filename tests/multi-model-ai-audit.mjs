@@ -13,3 +13,9 @@ console.log('ClinAI multi-model AI audit passed.');
 assert.ok(orch.includes('runOpenAICompatibleAgent'));
 assert.ok(orch.includes('openAIToolDeclarations'));
 assert.ok(orch.includes('CLINAI_ALLOW_PUBLIC_AI_WITH_PATIENT_DATA'));
+
+assert.ok(orch.includes('AI_FREE_TOOL_ROUNDS'));
+assert.ok(orch.includes('AI_PROVIDER_TIMEOUT_MS'));
+assert.ok(orch.includes('AI_QUICK_MAX_TOKENS'));
+assert.ok(orch.includes('contextCache'));
+console.log('ClinAI performance/free-tier safeguards passed.');

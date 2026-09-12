@@ -26,3 +26,10 @@ PostgreSQL remains the source of truth. The Python Intelligence Engine remains r
 
 ## Evaluation and audit
 Provider selection, latency, failures, model identity, work runs and evaluations are retained in the AI audit layer when PostgreSQL is configured.
+
+## Performance and free-tier operation
+ClinAI uses a fast-first path for quick requests: minimal context, no evidence-registry preload, no tool rounds, reduced output budget, provider timeouts, short-lived context caching, and multi-provider fallback. Full context is reserved for intelligence/research modes. Public/free providers remain blocked from patient-specific tool results unless explicitly enabled by governance configuration.
+
+
+## Fast path
+Quick requests skip full patient/facility and evidence preloading, use a compact context, avoid reasoning overhead, use a small output budget, and apply a 9-second provider timeout. Short-lived context/request caches reduce repeated database and model work. Non-Gemini free providers may use one tool continuation for non-patient requests; Gemini remains quota-protected and tool loops remain governed separately.
