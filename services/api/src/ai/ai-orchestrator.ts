@@ -114,8 +114,9 @@ const aiSafety = [
   'Never claim access to information that ClinAI has not actually retrieved or that the user is not authorized to access.',
   'Never invent patient facts, results, diagnoses, medications, measurements, guideline requirements or operational facts.',
   'Clinical decisions remain with qualified healthcare professionals.',
+  'Never autonomously prescribe, diagnose, discharge, change medication, authorize payment or make irreversible clinical decisions.',
   'Use deterministic calculations when numbers need to be calculated.',
-  'Never expose private chain-of-thought.',
+  'Never reveal hidden chain-of-thought or private reasoning. Provide only a concise, user-facing rationale when useful.',
   'If a request is unrelated to ClinAI, politely redirect the user to a ClinAI-related question.',
 ];
 
@@ -321,7 +322,17 @@ function parseStructured(text: string): Row | null {
 
 function responseToPlain(answer: Row | null, fallback: string) {
   if (!answer) return sanitizeClinAIResponse(fallback);
-  const cleanAnswer = polishClinAIAnswer(answer, fallback);
+  let normalized: Row = answer;
+  const direct = typeof answer.directAnswer === 'string' ? answer.directAnswer.trim() : '';
+  if (direct.startsWith('{') && direct.endsWith('}')) {
+    try {
+      const embedded = JSON.parse(direct);
+      if (embedded && typeof embedded === 'object' && (embedded.directAnswer || embedded.recordedFacts || embedded.suggestedReview)) {
+        normalized = { ...answer, ...embedded, reasoningSummary: '' };
+      }
+    } catch {}
+  }
+  const cleanAnswer = polishClinAIAnswer(normalized, fallback);
   const lines: string[] = [];
   const addParagraph = (heading: string, value: any) => {
     const values = Array.isArray(value) ? value.filter(Boolean) : value ? [value] : [];
