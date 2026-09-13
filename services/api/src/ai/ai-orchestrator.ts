@@ -3,6 +3,7 @@ import type { Pool } from 'pg';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { AI_MODELS, availableModels, configuredProviders, selectModel, callOpenAICompatible, stableRequestKey } from './ai-providers.js';
+import { buildPatientIntelligence, buildEvidenceIndex, buildQuestionIntent, compactIntelligenceForPrompt } from './clinical-intelligence.js';
 
 type Row = Record<string, any>;
 type Deps = {
@@ -171,7 +172,7 @@ async function query(pool: Pool | null, sql: string, params: any[] = []) {
 
 async function patientContext(pool: Pool | null, organizationId: string | null, patientId: string) {
   if (!organizationId) return { patient: null };
-  const [patient, allergies, encounters, observations, diagnoses, orders, medications, referrals, followups, immunizations, maternal, pediatrics, growth, carePlans, tasks, notes, reconciliation, events] = await Promise.all([
+  const [patient, allergies, encounters, observations, diagnoses, orders, medications, referrals, followups, immunizations, maternal, pediatrics, growth, carePlans, tasks, notes, reconciliation, events, labResults, imagingStudies, appointments, admissions, chronicCare, telemedicine, remoteMonitoring, clinicalAlerts] = await Promise.all([
     query(pool, `SELECT id,patient_number AS "patientNumber",first_name AS "firstName",middle_name AS "middleName",last_name AS "lastName",date_of_birth AS "dateOfBirth",sex,phone,address,status,preferred_language AS "preferredLanguage" FROM patients WHERE id=$1 AND organization_id=$2`, [patientId, organizationId]),
     query(pool, `SELECT substance,reaction,severity,status FROM allergies a JOIN patients p ON p.id=a.patient_id WHERE a.patient_id=$1 AND p.organization_id=$2 ORDER BY a.id DESC LIMIT 30`, [patientId, organizationId]),
     query(pool, `SELECT id,type,status,started_at AS "startedAt",ended_at AS "endedAt",reason FROM encounters WHERE patient_id=$1 AND organization_id=$2 ORDER BY started_at DESC LIMIT 40`, [patientId, organizationId]),
@@ -190,8 +191,19 @@ async function patientContext(pool: Pool | null, organizationId: string | null, 
     query(pool, `SELECT cn.id,cn.note_type AS "noteType",cn.subjective,cn.objective,cn.assessment,cn.plan,cn.signed_at AS "signedAt",e.started_at AS "encounterAt" FROM clinical_notes cn JOIN encounters e ON e.id=cn.encounter_id JOIN patients p ON p.id=e.patient_id WHERE e.patient_id=$1 AND p.organization_id=$2 ORDER BY e.started_at DESC LIMIT 30`, [patientId, organizationId]),
     query(pool, `SELECT id,status,medication_name AS "medicationName",discrepancies,created_at AS "createdAt" FROM medication_reconciliation WHERE patient_id=$1 AND organization_id=$2 ORDER BY created_at DESC LIMIT 30`, [patientId, organizationId]),
     query(pool, `SELECT event_type AS kind,from_state AS "fromState",to_state AS "toState",payload,created_at AS at FROM clinical_workflow_events WHERE patient_id=$1 AND organization_id=$2 ORDER BY created_at DESC LIMIT 60`, [patientId, organizationId]),
+    query(pool, `SELECT lr.id,ls.order_id AS "orderId",lt.name AS "testName",lr.value_numeric AS "valueNumeric",lr.value_text AS "valueText",lr.unit,lr.abnormal_flag AS "abnormalFlag",lr.critical,lr.status,ls.received_at AS "receivedAt" FROM lab_results lr JOIN lab_samples ls ON ls.id=lr.sample_id JOIN clinical_orders co ON co.id=ls.order_id JOIN lab_tests lt ON lt.id=lr.test_id WHERE co.patient_id=$1 AND co.organization_id=$2 ORDER BY COALESCE(ls.received_at,now()) DESC LIMIT 60`, [patientId, organizationId]),
+    query(pool, `SELECT id,order_id AS "orderId",study_name AS "studyName",modality,body_site AS "bodySite",priority,status,critical,report,created_at AS "createdAt",performed_at AS "performedAt",report_verified_at AS "reportVerifiedAt",report_released_at AS "reportReleasedAt" FROM imaging_studies WHERE patient_id=$1 AND organization_id=$2 ORDER BY created_at DESC LIMIT 40`, [patientId, organizationId]),
+    query(pool, `SELECT id,start_at AS "startAt",end_at AS "endAt",type,status,reason FROM appointments WHERE patient_id=$1 AND organization_id=$2 ORDER BY start_at DESC LIMIT 40`, [patientId, organizationId]),
+    query(pool, `SELECT id,encounter_id AS "encounterId",ward,bed,status,admitted_at AS "admittedAt",discharged_at AS "dischargedAt",discharge_summary AS "dischargeSummary" FROM admissions WHERE patient_id=$1 AND organization_id=$2 ORDER BY admitted_at DESC LIMIT 20`, [patientId, organizationId]),
+    query(pool, `SELECT id,condition_code AS "conditionCode",condition_name AS "conditionName",status,risk_level AS "riskLevel",next_review_at AS "nextReviewAt",goals,measures,medications FROM chronic_care_records WHERE patient_id=$1 AND organization_id=$2 ORDER BY updated_at DESC LIMIT 30`, [patientId, organizationId]),
+    query(pool, `SELECT id,appointment_id AS "appointmentId",encounter_id AS "encounterId",scheduled_at AS "scheduledAt",status,identity_verified AS "identityVerified",consent_confirmed AS "consentConfirmed",started_at AS "startedAt",ended_at AS "endedAt",notes FROM telemedicine_sessions WHERE patient_id=$1 AND organization_id=$2 ORDER BY scheduled_at DESC LIMIT 30`, [patientId, organizationId]),
+    query(pool, `SELECT id,device_id AS "deviceId",metric,value_numeric AS "valueNumeric",unit,measured_at AS "measuredAt",source,validation_status AS "validationStatus",alert_status AS "alertStatus" FROM remote_monitoring_readings WHERE patient_id=$1 AND organization_id=$2 ORDER BY measured_at DESC LIMIT 60`, [patientId, organizationId]),
+    query(pool, `SELECT id,module,status,payload,created_at AS "createdAt" FROM module_records WHERE organization_id=$2 AND payload->>'patientId'=$1 AND module IN ('clinical-alerts','care-gaps') ORDER BY created_at DESC LIMIT 40`, [patientId, organizationId]),
   ]);
-  return { patient: patient[0] || null, allergies, encounters, observations, diagnoses, orders, medications, referrals, followups, immunizations, maternal, pediatrics, growth, carePlans, tasks, notes, reconciliation, events };
+  const context: Row = { patient: patient[0] || null, allergies, encounters, observations, diagnoses, orders, medications, referrals, followups, immunizations, maternal, pediatrics, growth, carePlans, tasks, notes, reconciliation, events, labResults, imagingStudies, appointments, admissions, chronicCare, telemedicine, remoteMonitoring, clinicalAlerts };
+  context.intelligence = buildPatientIntelligence(context);
+  context.evidenceIndex = buildEvidenceIndex(context);
+  return context;
 }
 
 async function orgContext(pool: Pool | null, organizationId: string | null) {
@@ -209,7 +221,14 @@ async function orgContext(pool: Pool | null, organizationId: string | null) {
     query(pool, `SELECT ii.id,ii.name,ii.unit,ii.reorder_level AS "reorderLevel",coalesce(sum(ib.quantity),0)::numeric AS quantity FROM inventory_items ii LEFT JOIN inventory_batches ib ON ib.item_id=ii.id WHERE ii.organization_id=$1 GROUP BY ii.id,ii.name,ii.unit,ii.reorder_level HAVING coalesce(sum(ib.quantity),0)<=ii.reorder_level ORDER BY quantity`, [organizationId]),
     query(pool, `SELECT severity,title,status,started_at AS "startedAt",resolved_at AS "resolvedAt" FROM facility_operational_incidents WHERE organization_id=$1 AND status NOT IN ('resolved','closed') ORDER BY started_at DESC LIMIT 30`, [organizationId]),
   ]);
-  return { summary: summary[0] || {}, queue, labs: labs[0] || {}, tasks: tasks[0] || {}, referrals: referrals[0] || {}, appointments, encounters, billing: billing[0] || {}, facilities, inventoryAlerts: inventory, incidents };
+  const signals = [
+    ...(queue || []).filter(x => Number(x.oldestWaitMinutes || 0) >= 30).map(x => ({ type: 'queue-pressure', status: x.status, priority: x.priority, count: x.count, oldestWaitMinutes: x.oldestWaitMinutes })),
+    ...(labs || []).filter(x => Number(x.criticalUnreleased || 0) > 0).map(x => ({ type: 'critical-results', count: x.criticalUnreleased })),
+    ...(tasks || []).filter(x => Number(x.urgentTasks || 0) > 0).map(x => ({ type: 'urgent-tasks', count: x.urgentTasks })),
+    ...(referrals || []).filter(x => Number(x.delayedReferrals || 0) > 0).map(x => ({ type: 'delayed-referrals', count: x.delayedReferrals })),
+    ...(incidents || []).map(x => ({ type: 'facility-incident', severity: x.severity, count: x.count }))
+  ];
+  return { summary: summary[0] || {}, queue, labs: labs[0] || {}, tasks: tasks[0] || {}, referrals: referrals[0] || {}, appointments, encounters, billing: billing[0] || {}, facilities, inventoryAlerts: inventory, incidents, intelligence: { signals: signals.slice(0, 30), generatedAt: new Date().toISOString() } };
 }
 
 async function approvedKnowledge(pool: Pool | null, organizationId: string | null) {
@@ -260,8 +279,8 @@ const toolDeclarations = [
   { type: 'function', name: 'find_attention_items', description: 'Find deterministic proactive attention items across the facility, including critical results, overdue follow-up, urgent tasks, referral delays, long waits, stock alerts and incidents.', parameters: { type: 'object', properties: { patientId: { type: 'string', description: 'Optional patient filter' } } } },
   { type: 'function', name: 'find_abnormal_results', description: 'Find abnormal or critical laboratory results for the current organization, optionally for one patient.', parameters: { type: 'object', properties: { patientId: { type: 'string' }, limit: { type: 'integer' } } } },
   { type: 'function', name: 'find_care_gaps', description: 'Find overdue follow-ups, open care gaps, incomplete referrals and priority care tasks.', parameters: { type: 'object', properties: { patientId: { type: 'string' }, limit: { type: 'integer' } } } },
-  { type: 'function', name: 'calculate', description: 'Run a deterministic clinical, operational or mathematical calculation. Use this instead of doing arithmetic in prose.', parameters: { type: 'object', properties: { operation: { type: 'string', description: 'Supported operations include bmi, bsa_mosteller, mean_arterial_pressure, pulse_pressure, shock_index, anion_gap, anion_gap_with_potassium, corrected_calcium, corrected_sodium, egfr_ckd_epi_2021, cockcroft_gault, percentage, percent_change, rate_per_1000, collection_rate, occupancy_rate, age_years, gestational_age, estimated_due_date, statistics, trend, forecast_linear, zscore_anomalies, waiting_time_minutes, stock_days' }, inputs: { type: 'object' } }, required: ['operation','inputs'] } },
-  { type: 'function', name: 'analyze_dataset', description: 'Use the deterministic Python intelligence engine for descriptive statistics, trends, forecasts, anomalies or period comparisons.', parameters: { type: 'object', properties: { operation: { type: 'string', enum: ['describe','trend','forecast','anomalies','compare'] }, values: { type: 'array', items: { type: 'number' } }, secondValues: { type: 'array', items: { type: 'number' } }, horizon: { type: 'integer' }, threshold: { type: 'number' } }, required: ['operation','values'] } },
+  { type: 'function', name: 'calculate', description: 'Run a deterministic clinical, operational or mathematical calculation. Use this instead of doing arithmetic in prose.', parameters: { type: 'object', properties: { operation: { type: 'string', description: 'Supported operations include bmi, bsa_mosteller, mean_arterial_pressure, pulse_pressure, shock_index, anion_gap, anion_gap_with_potassium, corrected_calcium, corrected_sodium, egfr_ckd_epi_2021, cockcroft_gault, percentage, percent_change, rate_per_1000, collection_rate, occupancy_rate, age_years, gestational_age, estimated_due_date, statistics, trend, forecast_linear, zscore_anomalies, waiting_time_minutes, stock_days, delta, rolling_mean, ewma, reference_range_flags, fluid_balance, urine_output_rate, time_to_event_minutes, coefficient_of_variation, correlation, batch' }, inputs: { type: 'object' } }, required: ['operation','inputs'] } },
+  { type: 'function', name: 'analyze_dataset', description: 'Use the deterministic Python intelligence engine for descriptive statistics, trends, forecasts, anomalies or period comparisons.', parameters: { type: 'object', properties: { operation: { type: 'string', enum: ['describe','trend','forecast','anomalies','compare','rolling','ewma','correlation'] }, values: { type: 'array', items: { type: 'number' } }, secondValues: { type: 'array', items: { type: 'number' } }, horizon: { type: 'integer' }, threshold: { type: 'number' } }, required: ['operation','values'] } },
   { type: 'function', name: 'compare_periods', description: 'Compare patient activity, appointments, encounters, billing and queue activity across two time windows.', parameters: { type: 'object', properties: { currentDays: { type: 'integer' }, previousDays: { type: 'integer' } } } },
   { type: 'function', name: 'get_approved_evidence', description: 'Retrieve approved ClinAI knowledge sources and organization-approved guidance metadata.', parameters: { type: 'object', properties: { specialty: { type: 'string' } } } },
 ];
@@ -405,22 +424,22 @@ async function recordProviderUsage(pool: Pool | null, req: any, model: any, resu
   } catch {}
 }
 
-async function runAgent(deps: Deps, req: any, input: string, options: { purpose: string; role?: string; patientId?: string | null; mode?: string; allowResearch?: boolean; allowCodeExecution?: boolean; preferredModel?: string }) {
+async function runAgent(deps: Deps, req: any, input: string, options: { purpose: string; role?: string; patientId?: string | null; mode?: string; allowResearch?: boolean; allowCodeExecution?: boolean; preferredModel?: string; publicMode?: boolean }) {
   const safetyCheck = classifyRequestSafety(input);
   if (safetyCheck.blocked) {
     const blocked = polishClinAIAnswer({ directAnswer: safetyCheck.message, recordedFacts: [], calculations: [], reasoningSummary: '', suggestedReview: [], uncertainty: [], evidence: [], confidence: 'high' });
     return { runId: randomUUID(), answer: responseToPlain(blocked, blocked.directAnswer), structured: blocked, mode: options.mode || 'intelligence', toolsUsed: [], calculations: [], latencyMs: 0 };
   }
   const patientData = Boolean(options.patientId);
-  const cacheKey = stableRequestKey({ mode: options.mode || 'intelligence', role: options.role || '', patientId: options.patientId || '', input, preferredModel: options.preferredModel || '' });
+  const cacheKey = stableRequestKey({ mode: options.mode || 'intelligence', role: options.role || '', patientId: options.patientId || '', input, preferredModel: options.preferredModel || '', publicMode: Boolean(options.publicMode) });
   const cached = multiModelCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return { ...cached.result, cached: true };
   if (cached) multiModelCache.delete(cacheKey);
 
   const organizationId = deps.dbOrganizationId(req);
-  const contextKey = `${organizationId || 'none'}:${options.patientId || 'facility'}:${options.mode || 'intelligence'}`;
-  let context = contextCache.get(contextKey)?.value;
-  if (!context || (contextCache.get(contextKey)?.expiresAt || 0) <= Date.now()) {
+  const contextKey = `${organizationId || 'none'}:${options.patientId || 'facility'}:${options.mode || 'intelligence'}:${options.publicMode ? 'public' : 'clinical'}`;
+  let context: any = options.publicMode ? { publicHealthOnly: true, generatedAt: new Date().toISOString() } : contextCache.get(contextKey)?.value;
+  if (!options.publicMode && (!context || (contextCache.get(contextKey)?.expiresAt || 0) <= Date.now())) {
     // Quick requests use the smallest useful context. Full patient/facility context is reserved for intelligence/research work.
     if (options.mode === 'quick') {
       context = options.patientId ? await query(deps.pool, `SELECT id,patient_number AS "patientNumber",first_name AS "firstName",last_name AS "lastName",status,preferred_language AS "preferredLanguage" FROM patients WHERE id=$1 AND organization_id=$2`, [options.patientId, organizationId]) : { facility: 'current organization', generatedAt: new Date().toISOString() };
@@ -429,9 +448,11 @@ async function runAgent(deps: Deps, req: any, input: string, options: { purpose:
     }
     contextCache.set(contextKey, { expiresAt: Date.now() + AI_CONTEXT_CACHE_MS, value: context });
   }
+  const patientIntelligence = !options.publicMode && options.patientId ? compactIntelligenceForPrompt(context.intelligence || buildPatientIntelligence(context)) : null;
+  const questionIntent = buildQuestionIntent(input);
   let evidence: any[] = [];
   // Evidence is useful for intelligence/research, but loading it for every quick request only adds latency.
-  if (options.mode !== 'quick') {
+  if (!options.publicMode && options.mode !== 'quick') {
     const evidenceKey = `evidence:${organizationId || 'none'}`;
     const cachedEvidence = contextCache.get(evidenceKey);
     if (cachedEvidence && cachedEvidence.expiresAt > Date.now()) evidence = cachedEvidence.value;
@@ -440,7 +461,26 @@ async function runAgent(deps: Deps, req: any, input: string, options: { purpose:
   const safeContext = patientData && !ALLOW_PUBLIC_AI_WITH_PATIENT_DATA ? redactForPublicModel(context) : context;
   const contextLimit = options.mode === 'quick' ? 7000 : (patientData && !ALLOW_PUBLIC_AI_WITH_PATIENT_DATA ? 14000 : 22000);
   const evidenceLimit = options.mode === 'quick' ? 0 : 9000;
-  const prompt = `User role: ${options.role || 'healthcare professional'}\nRequested mode: ${options.mode || 'intelligence'}\nPatient-specific request: ${patientData ? 'yes' : 'no'}\n\nClinAI context:\n${aiText(safeContext, contextLimit)}${evidenceLimit ? `\n\nApproved evidence registry:\n${aiText(evidence, evidenceLimit)}` : ''}\n\nUser request:\n${input}`;
+  const prompt = `User role: ${options.role || 'healthcare professional'}
+Requested mode: ${options.mode || 'intelligence'}
+Patient-specific request: ${patientData ? 'yes' : 'no'}
+Public-safe mode: ${options.publicMode ? 'yes — do not access or infer patient/facility records' : 'no'}
+Question intent: ${questionIntent.join(', ') || 'general'}
+
+ClinAI context:
+${aiText(safeContext, contextLimit)}${patientIntelligence ? `
+
+Deterministic patient intelligence signals (review signals only):
+${aiText(patientIntelligence, 9000)}` : ''}${!options.publicMode && patientData ? `
+
+Cross-module evidence index (use these references when explaining where information came from):
+${aiText(context.evidenceIndex || buildEvidenceIndex(context), 9000)}` : ''}${evidenceLimit ? `
+
+Approved evidence registry:
+${aiText(evidence, evidenceLimit)}` : ''}
+
+User request:
+${input}`;
 
   if (!MULTI_MODEL_MODE) return runGeminiAgent(deps, req, input, options, prompt, context, evidence, cacheKey);
 
@@ -572,6 +612,29 @@ async function registerWorkAudit(pool: Pool | null, req: any, patientId: string 
   } catch {}
 }
 
+export function registerPublicAI(deps: Deps) {
+  const { app, pool } = deps;
+  app.post('/api/public/feedback', async (req: any, reply: any) => {
+    if (!pool) return reply.code(503).send({ error: 'Feedback storage is unavailable.' });
+    const body = z.object({ type: z.enum(['site','ai','clinical-workflow','technical','other']).default('site'), rating: z.enum(['up','down','neutral']).optional(), reason: z.string().max(120).optional(), message: z.string().min(2).max(2000), page: z.string().max(120).optional(), anonymous: z.boolean().default(true) }).parse(req.body || {});
+    await pool.query(`CREATE TABLE IF NOT EXISTS public_feedback (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), type text NOT NULL, rating text, reason text, message text NOT NULL, page text, anonymous boolean NOT NULL DEFAULT true, created_at timestamptz NOT NULL DEFAULT now())`);
+    const r = await pool.query(`INSERT INTO public_feedback(type,rating,reason,message,page,anonymous) VALUES($1,$2,$3,$4,$5,$6) RETURNING id,created_at AS "createdAt"`, [body.type, body.rating || null, body.reason || null, body.message, body.page || null, body.anonymous]);
+    return reply.code(201).send({ data: { received: true, ...r.rows[0] } });
+  });
+
+  app.post('/api/public/health-assistant', async (req: any, reply: any) => {
+    const body = z.object({ question: z.string().min(3).max(4000), language: z.string().max(60).default('English') }).parse(req.body || {});
+    const safety = classifyRequestSafety(body.question);
+    if (safety.blocked) return reply.code(400).send({ error: safety.message });
+    try {
+      const result = await runAgent(deps, req, body.question, { purpose: 'public-health-assistant', role: 'public user', mode: 'quick', publicMode: true });
+      return { data: { answer: result.answer, runId: result.runId } };
+    } catch (e: any) {
+      return reply.code(e.statusCode || 502).send({ error: sanitizeClinAIResponse(e.message || 'The public health assistant is temporarily unavailable.') });
+    }
+  });
+}
+
 export function registerAI(deps: Deps) {
   const { app, pool } = deps;
   app.get('/api/ai/status', async () => ({ configured: Boolean(GEMINI_API_KEY), intelligenceEngineConfigured: Boolean(INTELLIGENCE_SERVICE_URL), codeExecutionEnabled: ENABLE_GEMINI_CODE_EXECUTION, model: GEMINI_MODEL, apiVersion: GEMINI_API_VERSION, promptVersion: AI_PROMPT_VERSION, mode: FREE_TIER_MODE ? 'free-tier single-call human-reviewed intelligence' : 'tool-using human-reviewed intelligence' }));
@@ -697,6 +760,21 @@ export function registerAI(deps: Deps) {
     const body = z.object({ patientId: z.string().uuid().optional(), useCase: z.string(), modelVersion: z.string().optional(), inputSummary: z.string().optional(), outputSummary: z.string().optional(), expectedResult: z.string().optional(), verdict: z.enum(['pending','pass','fail','needs-review']).default('pending'), safetyFlags: z.array(z.string()).default([]) }).parse(req.body || {});
     const r = await pool.query(`INSERT INTO ai_evaluations(organization_id,patient_id,model_version,use_case,input_summary,output_summary,expected_result,reviewer_id,verdict,safety_flags,reviewed_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,CASE WHEN $9<>'pending' THEN now() END) RETURNING *`, [deps.dbOrganizationId(req), body.patientId || null, body.modelVersion || GEMINI_MODEL, body.useCase, body.inputSummary || null, body.outputSummary || null, body.expectedResult || null, depsUser(req), body.verdict, JSON.stringify(body.safetyFlags)]);
     return reply.code(201).send({ data: r.rows[0] });
+  });
+
+  app.post('/api/ai/feedback', async (req: any, reply: any) => {
+    if (!pool) return reply.code(503).send({ error: 'Feedback storage is unavailable.' });
+    const body = z.object({ runId: z.string().min(1), patientId: z.string().uuid().nullable().optional(), rating: z.enum(['up','down','neutral']), reason: z.enum(['incorrect','missing-information','too-complicated','did-not-answer','unsafe','wrong-patient','other']).optional(), comment: z.string().max(2000).optional(), correctedAnswer: z.string().max(6000).optional() }).parse(req.body || {});
+    await pool.query(`CREATE TABLE IF NOT EXISTS ai_feedback (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE, user_id uuid REFERENCES users(id) ON DELETE SET NULL, patient_id uuid REFERENCES patients(id) ON DELETE SET NULL, run_id text NOT NULL, rating text NOT NULL, reason text, comment text, corrected_answer text, created_at timestamptz NOT NULL DEFAULT now())`);
+    const r = await pool.query(`INSERT INTO ai_feedback(organization_id,user_id,patient_id,run_id,rating,reason,comment,corrected_answer) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id,created_at AS "createdAt"`, [deps.dbOrganizationId(req), deps.dbUserId(req), body.patientId || null, body.runId, body.rating, body.reason || null, body.comment || null, body.correctedAnswer || null]);
+    return reply.code(201).send({ data: { recorded: true, ...r.rows[0] } });
+  });
+
+  app.get('/api/ai/patient-intelligence/:patientId', async (req: any, reply: any) => {
+    try {
+      const result = await runAgent(deps, req, 'Cross-check this patient across all available modules. Tell me what is current, what changed, what remains unresolved, and what records should be reviewed. Reference the source modules and records when possible.', { purpose: 'patient-cross-check', patientId: req.params.patientId, mode: 'intelligence' });
+      return { data: { answer: result.answer, runId: result.runId, intelligence: result.structured, evidence: result.structured.evidence || [] } };
+    } catch (e: any) { return reply.code(e.statusCode || 502).send({ error: sanitizeClinAIResponse(e.message || 'ClinAI could not cross-check this patient.') }); }
   });
 
   app.get('/api/ai/security-model', async () => ({ data: { autonomousClinicalAction: false, humanApprovalRequiredForWrites: true, chainOfThoughtExposed: false, deterministicComputationsPreferred: true, tenantIsolation: true, auditTrail: true, researchUsesExternalSourcesOnlyWhenRequested: true } }));

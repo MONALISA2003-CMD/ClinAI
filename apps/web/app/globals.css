@@ -233,3 +233,21 @@ input,select,textarea,button{max-width:100%}
 @media(max-width:380px){.public-intro-card{padding:17px 14px}.public-intro-card h1{font-size:24px}.public-intro-card h2{font-size:19px}.public-intro-card p{font-size:11px}.public-intro-footer button{font-size:9px;padding:9px 10px}}
 .app-footer{margin:0 30px 24px;padding:16px 18px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:18px;color:var(--muted);font-size:9px}.app-footer>div{display:flex;flex-direction:column;gap:4px}.app-footer b{font-size:9px;color:var(--ink);letter-spacing:.04em}.app-footer-links{display:flex!important;flex-direction:row!important;gap:8px;flex-wrap:wrap;justify-content:flex-end}.app-footer a{color:var(--clinai-blue);text-decoration:none;font-weight:800;border:1px solid var(--border);background:#fff;border-radius:8px;padding:7px 9px}.app-footer a:hover{background:var(--clinai-blue-soft)}
 @media(max-width:700px){.app-footer{margin:0 12px 88px;padding:14px 4px;display:block;text-align:center}.app-footer>div{align-items:center}.app-footer-links{margin-top:9px;display:grid!important;grid-template-columns:1fr!important}.app-footer a{width:100%}}
+
+/* ClinAI intelligence + public interaction polish */
+.public-intro-footer{position:relative;z-index:20;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.intro-feedback{border:1px solid rgba(255,255,255,.22);background:rgba(255,255,255,.08);color:inherit;border-radius:999px;padding:8px 12px;font-size:11px;letter-spacing:.08em}
+.public-feedback-pop{position:absolute;right:16px;bottom:64px;width:min(360px,calc(100vw - 32px));background:#fff;color:#17201b;border:1px solid rgba(0,0,0,.08);border-radius:16px;padding:14px;box-shadow:0 18px 45px rgba(0,0,0,.2);z-index:30}
+.public-feedback-pop>div:first-child{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.public-feedback-pop textarea,.public-feedback-pop input,.public-feedback-pop select{width:100%;box-sizing:border-box;margin:7px 0;padding:10px;border:1px solid #d8ded9;border-radius:10px;font:inherit;background:#fff}
+.public-feedback-pop textarea{min-height:90px;resize:vertical}
+.public-feedback-pop .primary{margin-top:4px}
+.public-health-pop{right:120px}
+.public-health-answer{margin-top:10px;max-height:240px;overflow:auto;padding:10px;border-radius:12px;background:#f5f8f5}
+.ai-feedback{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 2px;font-size:12px;color:#66716b}
+.ai-feedback button{border:1px solid #d8ded9;background:#fff;border-radius:999px;padding:6px 10px;cursor:pointer}
+.ai-feedback-detail{display:flex;gap:7px;flex-wrap:wrap;width:100%}
+.ai-feedback-detail select,.ai-feedback-detail input{flex:1;min-width:150px;border:1px solid #d8ded9;border-radius:8px;padding:7px}
+.patient-ai-actions{display:flex;align-items:center;gap:10px;justify-content:space-between;flex-wrap:wrap;margin-bottom:10px}
+.patient-ai-actions span{font-size:12px;color:#68736d}
+@media(max-width:700px){.public-feedback-pop,.public-health-pop{position:fixed;right:12px;bottom:74px;width:calc(100vw - 24px)}.public-intro-footer{padding-bottom:8px}.patient-ai-actions{align-items:flex-start}}

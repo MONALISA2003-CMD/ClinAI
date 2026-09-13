@@ -6,7 +6,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { Pool } from 'pg';
-import { registerAI } from './ai/ai-orchestrator.js';
+import { registerAI, registerPublicAI } from './ai/ai-orchestrator.js';
 
 const app = Fastify({ logger: true });
 const pool = process.env.DATABASE_URL ? new Pool({ connectionString: process.env.DATABASE_URL, max: 10 }) : null;
@@ -376,7 +376,7 @@ app.get('/api/modules',async()=>modules);
 app.post('/api/auth/demo',async()=>{ if(!demoTenant) return {token:await app.jwt.sign({sub:'demo-user',role:'admin',organizationId:'demo-org'},{expiresIn:'8h'})}; return {token:await app.jwt.sign({sub:demoTenant.userId,role:'admin',organizationId:demoTenant.organizationId},{expiresIn:'8h'}),organizationId:demoTenant.organizationId,userId:demoTenant.userId}; });
 app.addHook('preHandler',async(req)=>{
   const publicPath=(req.raw.url||'/').split('?')[0];
-  if(publicPath==='/'||publicPath==='/health'||publicPath==='/api/auth/demo') return;
+  if(publicPath==='/'||publicPath==='/health'||publicPath==='/api/auth/demo'||publicPath.startsWith('/api/public/')) return;
   try{
     await req.jwtVerify();
     if((req.method==='POST'||req.method==='PATCH'||req.method==='DELETE') && !canWrite(req)) throw Object.assign(new Error('Insufficient role permissions'),{statusCode:403});
@@ -1487,11 +1487,32 @@ async function ensureV14Schema(){
     CREATE INDEX IF NOT EXISTS care_tasks_idx ON care_tasks(organization_id,status,due_at);
   `);
 }
+// --- ClinAI interaction feedback (additive, non-destructive) ---
+async function ensureAIInteractionSchema(){
+  if(!pool)return;
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ai_feedback (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      user_id uuid REFERENCES users(id) ON DELETE SET NULL, patient_id uuid REFERENCES patients(id) ON DELETE SET NULL,
+      run_id text NOT NULL, rating text NOT NULL, reason text, comment text, corrected_answer text, created_at timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS ai_feedback_org_created_idx ON ai_feedback(organization_id,created_at DESC);
+    CREATE INDEX IF NOT EXISTS ai_feedback_run_idx ON ai_feedback(run_id,created_at DESC);
+    CREATE TABLE IF NOT EXISTS public_feedback (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), type text NOT NULL, rating text, reason text, message text NOT NULL,
+      page text, anonymous boolean NOT NULL DEFAULT true, created_at timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS public_feedback_created_idx ON public_feedback(created_at DESC);
+  `);
+}
+
 // --- ClinAI Intelligence ---
+registerPublicAI({ app, pool, dbOrganizationId, dbUserId });
 registerAI({ app, pool, dbOrganizationId, dbUserId });
 
 await ensureV15Schema();
 await ensureV14Schema();
+await ensureAIInteractionSchema();
 
 function workflowEvent(client:any,req:any,eventType:string,payload:any,fromState?:string,toState?:string){
   return client.query(`INSERT INTO clinical_workflow_events(organization_id,patient_id,encounter_id,event_type,from_state,to_state,payload,actor_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,[dbOrganizationId(req),payload?.patientId||null,payload?.encounterId||null,eventType,fromState||null,toState||null,JSON.stringify(payload||{}),dbUserId(req)]);

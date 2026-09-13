@@ -217,13 +217,109 @@ def calculate(operation: str, inputs: dict[str, Any]) -> dict[str, Any]:
     raise ValueError(f"Unsupported operation: {operation}")
 
 
+def _require_nonempty(values: list[float]) -> list[float]:
+    cleaned = [finite(v) for v in values]
+    if not cleaned:
+        raise ValueError("At least one value is required")
+    return cleaned
+
+
+def advanced_calculate(operation: str, inputs: dict[str, Any]) -> dict[str, Any]:
+    """Additional deterministic operations for multi-problem healthcare analytics."""
+    op = operation.lower().strip()
+
+    if op == "delta":
+        previous, current = finite(inputs["previous"]), finite(inputs["current"])
+        return {"operation": op, "absoluteChange": round_value(current - previous), "direction": "increasing" if current > previous else "decreasing" if current < previous else "unchanged"}
+
+    if op == "rolling_mean":
+        values = _require_nonempty(inputs["values"])
+        window = int(inputs.get("window", 3))
+        if window < 1 or window > len(values):
+            raise ValueError("Window must be between 1 and the number of values")
+        means = [round_value(mean(values[i-window+1:i+1])) for i in range(window-1, len(values))]
+        return {"operation": op, "window": window, "values": means}
+
+    if op == "ewma":
+        values = _require_nonempty(inputs["values"])
+        alpha = float(inputs.get("alpha", 0.3))
+        if not 0 < alpha <= 1:
+            raise ValueError("Alpha must be greater than 0 and no greater than 1")
+        out = [values[0]]
+        for value in values[1:]:
+            out.append(alpha * value + (1 - alpha) * out[-1])
+        return {"operation": op, "alpha": alpha, "values": [round_value(x) for x in out], "latest": round_value(out[-1])}
+
+    if op == "reference_range_flags":
+        value = finite(inputs["value"])
+        low = inputs.get("low")
+        high = inputs.get("high")
+        if low is None and high is None:
+            raise ValueError("At least one reference boundary is required")
+        low_n = finite(low) if low is not None else None
+        high_n = finite(high) if high is not None else None
+        if low_n is not None and high_n is not None and low_n > high_n:
+            raise ValueError("Low reference boundary cannot exceed high boundary")
+        status = "within-range"
+        if low_n is not None and value < low_n: status = "below-range"
+        if high_n is not None and value > high_n: status = "above-range"
+        return {"operation": op, "value": value, "low": low_n, "high": high_n, "status": status}
+
+    if op == "fluid_balance":
+        intake = sum(_require_nonempty(inputs["intakeMl"]))
+        output = sum(_require_nonempty(inputs["outputMl"]))
+        return {"operation": op, "intakeMl": round_value(intake, 1), "outputMl": round_value(output, 1), "netMl": round_value(intake-output, 1)}
+
+    if op == "urine_output_rate":
+        urine_ml = finite(inputs["urineMl"])
+        weight_kg = finite(inputs["weightKg"])
+        hours = finite(inputs["hours"])
+        if weight_kg <= 0 or hours <= 0: raise ValueError("Weight and hours must be greater than zero")
+        return {"operation": op, "value": round_value(urine_ml/(weight_kg*hours), 3), "unit": "mL/kg/hour"}
+
+    if op == "time_to_event_minutes":
+        start = parse_date(inputs["startAt"])
+        end = parse_date(inputs["endAt"])
+        return {"operation": op, "value": round_value(max(0, (end-start).total_seconds()/60), 1), "unit": "minutes"}
+
+    if op == "coefficient_of_variation":
+        values = _require_nonempty(inputs["values"])
+        m = mean(values)
+        if m == 0: raise ValueError("Mean cannot be zero for coefficient of variation")
+        return {"operation": op, "value": round_value((pstdev(values)/abs(m))*100), "unit": "%"}
+
+    if op == "correlation":
+        a = _require_nonempty(inputs["firstValues"])
+        b = _require_nonempty(inputs["secondValues"])
+        if len(a) != len(b) or len(a) < 2: raise ValueError("Two equal-length series with at least two values are required")
+        ma, mb = mean(a), mean(b)
+        da, db = [x-ma for x in a], [x-mb for x in b]
+        denom = sqrt(sum(x*x for x in da) * sum(x*x for x in db))
+        if denom == 0: raise ValueError("Correlation is undefined for a constant series")
+        r = sum(x*y for x,y in zip(da,db))/denom
+        return {"operation": op, "correlation": round_value(r), "interpretation": "positive" if r > 0 else "negative" if r < 0 else "none"}
+
+    if op == "batch":
+        operations = inputs.get("operations")
+        if not isinstance(operations, list) or not operations:
+            raise ValueError("operations must be a non-empty list")
+        results = []
+        for item in operations[:50]:
+            if not isinstance(item, dict) or "operation" not in item:
+                raise ValueError("Each batch item needs an operation")
+            results.append(advanced_calculate(str(item["operation"]), dict(item.get("inputs") or {})) if str(item["operation"]).lower() not in {"bmi","bsa_mosteller","mean_arterial_pressure","pulse_pressure","shock_index","anion_gap","anion_gap_with_potassium","corrected_calcium","corrected_sodium","egfr_ckd_epi_2021","cockcroft_gault","percentage","percent_change","rate_per_1000","collection_rate","occupancy_rate","age_years","gestational_age","estimated_due_date","statistics","trend","forecast_linear","zscore_anomalies","waiting_time_minutes","stock_days"} else calculate(str(item["operation"]), dict(item.get("inputs") or {})))
+        return {"operation": op, "count": len(results), "results": results}
+
+    raise ValueError(f"Unsupported operation: {operation}")
+
+
 class ComputeRequest(BaseModel):
     operation: str = Field(min_length=2)
     inputs: dict[str, Any] = Field(default_factory=dict)
 
 
 class DatasetRequest(BaseModel):
-    operation: Literal["describe", "trend", "forecast", "anomalies", "compare"]
+    operation: Literal["describe", "trend", "forecast", "anomalies", "compare", "rolling", "ewma", "correlation"]
     values: list[float] = Field(min_length=1)
     second_values: list[float] | None = None
     horizon: int = 1
@@ -238,7 +334,14 @@ def health() -> dict[str, Any]:
 @app.post("/v1/compute")
 def compute(request: ComputeRequest) -> dict[str, Any]:
     try:
-        return {"ok": True, "result": calculate(request.operation, request.inputs)}
+        try:
+            result = calculate(request.operation, request.inputs)
+        except ValueError as exc:
+            if str(exc).startswith("Unsupported operation:"):
+                result = advanced_calculate(request.operation, request.inputs)
+            else:
+                raise
+        return {"ok": True, "result": result}
     except (KeyError, ValueError, TypeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -260,6 +363,33 @@ def dataset(request: DatasetRequest) -> dict[str, Any]:
             a = calculate("statistics", {"values": request.values})
             b = calculate("statistics", {"values": request.second_values})
             return {"ok": True, "result": {"first": a, "second": b, "meanChangePercent": calculate("percent_change", {"previous": a["mean"], "current": b["mean"]})["value"]}}
+        if request.operation == "rolling":
+            return {"ok": True, "result": advanced_calculate("rolling_mean", {"values": request.values, "window": request.horizon})}
+        if request.operation == "ewma":
+            return {"ok": True, "result": advanced_calculate("ewma", {"values": request.values, "alpha": request.threshold})}
+        if request.operation == "correlation":
+            if not request.second_values: raise ValueError("second_values is required for correlation")
+            return {"ok": True, "result": advanced_calculate("correlation", {"firstValues": request.values, "secondValues": request.second_values})}
         raise ValueError("Unsupported dataset operation")
     except (KeyError, ValueError, TypeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+class ScreenRequest(BaseModel):
+    values: dict[str, Any] = Field(default_factory=dict)
+
+
+@app.post("/v1/screen")
+def screen(request: ScreenRequest) -> dict[str, Any]:
+    """Non-diagnostic data-quality/clinical-review screen using supplied boundaries."""
+    values = request.values
+    flags: list[dict[str, Any]] = []
+    for name, item in list(values.items())[:100]:
+        if isinstance(item, dict) and "value" in item and ("low" in item or "high" in item):
+            try:
+                result = advanced_calculate("reference_range_flags", item)
+                if result["status"] != "within-range":
+                    flags.append({"field": name, **result})
+            except (KeyError, ValueError, TypeError):
+                flags.append({"field": name, "status": "needs-review", "reason": "Reference range could not be evaluated."})
+    return {"ok": True, "result": {"flags": flags, "flagCount": len(flags), "note": "Flags are screening signals only; confirm against the applicable clinical context and local protocol."}}
