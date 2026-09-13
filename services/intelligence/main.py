@@ -17,28 +17,26 @@ from pydantic import BaseModel, Field
 
 app = FastAPI(title="ClinAI Intelligence Engine", version="1.0.0")
 
-SUPPORTED_LANGUAGES = {
-    "English": "en",
-    "Kiswahili": "sw",
-    "Luganda": "lg",
-    "Runyankore": "nyn",
-}
+SUPPORTED_LANGUAGES = {"English":"en","Kiswahili":"sw","Kinyarwanda":"rw","Luganda":"lg","Runyankore":"nyn","Alur":"alz"}
+LANGUAGE_TIERS = {"en":"full","sw":"strong-controlled","rw":"strong-controlled","lg":"limited-supervised","nyn":"very-limited","alz":"translation-only"}
 
 LANGUAGE_TERMS = {
     "en": ["patient", "pain", "fever", "cough", "blood", "pressure", "pregnant", "medicine", "breathing", "diabetes"],
     "sw": ["mgonjwa", "maumivu", "homa", "kikohozi", "damu", "shinikizo", "mjamzito", "dawa", "kupumua", "kisukari"],
     "lg": ["omulwadde", "obulumi", "omusujja", "kikohola", "omusaayi", "pressure", "olubuto", "eddagala", "okussa", "sukaali"],
     "nyn": ["omurwayi", "oburumi", "omushwija", "okukorora", "eshagama", "pressure", "endembe", "omubazi", "okuhumeka", "sukaari"],
+    "rw": ["umurwayi", "ububabare", "umuriro", "inkorora", "amaraso", "umuvuduko", "umugore utwite", "umuti", "guhumeka", "diyabete"],
+    "alz": [],
 }
 
 CLINICAL_CONCEPTS = {
-    "fever": ["fever", "homa", "omusujja", "omushwija"],
-    "cough": ["cough", "kikohozi", "kikohola", "okukorora"],
-    "pain": ["pain", "maumivu", "obulumi", "oburumi"],
-    "difficulty_breathing": ["difficulty breathing", "shortness of breath", "kupumua kwa shida", "okussa obubi", "okuhumeka nabi"],
-    "hypertension": ["hypertension", "high blood pressure", "shinikizo la damu", "blood pressure", "bp", "pressure"],
-    "diabetes": ["diabetes", "kisukari", "sukaali", "sukaari"],
-    "pregnancy": ["pregnant", "pregnancy", "mjamzito", "olubuto", "endembe"],
+    "fever": ["fever", "homa", "omusujja", "omushwija", "umuriro"],
+    "cough": ["cough", "kikohozi", "kikohola", "okukorora", "inkorora"],
+    "pain": ["pain", "maumivu", "obulumi", "oburumi", "ububabare"],
+    "difficulty_breathing": ["difficulty breathing", "shortness of breath", "kupumua kwa shida", "okussa obubi", "okuhumeka nabi", "guhumeka bigoranye", "kubura umwuka"],
+    "hypertension": ["hypertension", "high blood pressure", "shinikizo la damu", "blood pressure", "bp", "pressure", "umuvuduko ukabije w'amaraso", "umuvuduko w'amaraso"],
+    "diabetes": ["diabetes", "kisukari", "sukaali", "sukaari", "diyabete"],
+    "pregnancy": ["pregnant", "pregnancy", "mjamzito", "olubuto", "endembe", "umugore utwite", "inda", "gutwita"],
 }
 
 def detect_language(text: str) -> dict[str, Any]:
@@ -57,24 +55,24 @@ def detect_language(text: str) -> dict[str, Any]:
 
 def extract_clinical_concepts(text: str) -> list[dict[str, Any]]:
     raw = str(text or "").lower()
+    code = detect_language(text)["code"]
+    negations = {"en":["no ","without ","denies ","not "],"sw":["hakuna ","hana ","sio ","si "],"lg":["tewali ","talina ","singa ","si "],"nyn":["tiine ","tarina ","ta "],"rw":["nta ","ntabwo ","nta na "],"alz":[]}
     found = []
     for concept, terms in CLINICAL_CONCEPTS.items():
         matched = [term for term in terms if term in raw]
         if matched:
-            found.append({"concept": concept, "matchedTerms": matched})
+            term = matched[0]
+            negated = any((n + term) in raw for n in negations.get(code, []))
+            found.append({"concept":concept,"matchedTerms":matched,"negated":negated,"confidence":"moderate" if negated else "high"})
     return found
 
 
 def language_analyze(text: str) -> dict[str, Any]:
     detected = detect_language(text)
     concepts = extract_clinical_concepts(text)
-    return {
-        "operation": "language_analyze",
-        "detected": detected,
-        "supportedLanguages": list(SUPPORTED_LANGUAGES.keys()),
-        "clinicalConcepts": concepts,
-        "safety": "Language analysis is an assistive signal only; clinical meaning must be verified against the record and professional context.",
-    }
+    tier = LANGUAGE_TIERS.get(detected["code"], "translation-only")
+    confidence = "insufficient" if tier == "translation-only" else ("low" if detected["confidence"] == "low" or detected.get("mixed") else ("high" if concepts and detected["confidence"] == "high" else "moderate"))
+    return {"operation":"language_analyze","detected":detected,"languageTier":tier,"supportedLanguages":list(SUPPORTED_LANGUAGES.keys()),"clinicalConcepts":concepts,"clinicalInterpretationConfidence":confidence,"requiresHumanReview":confidence in {"low","insufficient"} or detected.get("mixed",False),"safety":"Language analysis is an assistive signal only; clinical meaning must be verified against the record and professional context."}
 
 
 def sigmoid(x: float) -> float:

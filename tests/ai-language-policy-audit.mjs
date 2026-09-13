@@ -1,0 +1,17 @@
+import fs from 'node:fs';
+import assert from 'node:assert/strict';
+const policy = fs.readFileSync(new URL('../services/api/src/ai/language-policy.ts', import.meta.url), 'utf8');
+const orch = fs.readFileSync(new URL('../services/api/src/ai/ai-orchestrator.ts', import.meta.url), 'utf8');
+const py = fs.readFileSync(new URL('../services/intelligence/main.py', import.meta.url), 'utf8');
+const web = fs.readFileSync(new URL('../apps/web/app/page.tsx', import.meta.url), 'utf8');
+for (const language of ['English','Kiswahili','Kinyarwanda','Luganda','Runyankore','Alur']) assert.ok(policy.includes(language));
+assert.ok(policy.includes("tier: 'translation-only'"));
+assert.ok(orch.includes("languagePolicy.language === 'Alur'"));
+assert.ok(orch.includes("app.get('/api/ai/languages'"));
+assert.ok(orch.includes('languageInstruction(languagePolicy'));
+assert.ok(orch.includes('Never output JSON'));
+assert.ok(py.includes('LANGUAGE_TIERS'));
+assert.ok(py.includes('/v1/language/analyze'));
+assert.ok(py.includes('/v1/ml/logistic'));
+for (const language of ['English','Kiswahili','Kinyarwanda','Luganda','Runyankore','Alur']) assert.ok(web.includes(`<option>${language}</option>`));
+console.log('PASS AI language policy architecture audit');

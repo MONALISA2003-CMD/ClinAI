@@ -4,6 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { AI_MODELS, availableModels, configuredProviders, selectModel, callOpenAICompatible, stableRequestKey } from './ai-providers.js';
 import { buildPatientIntelligence, buildEvidenceIndex, buildQuestionIntent, compactIntelligenceForPrompt } from './clinical-intelligence.js';
+import { getLanguagePolicy, languageInstruction, SUPPORTED_CLINAI_LANGUAGES } from './language-policy.js';
 
 type Row = Record<string, any>;
 type Deps = {
@@ -115,7 +116,7 @@ const aiSafety = [
   'Never claim access to information that ClinAI has not actually retrieved or that the user is not authorized to access.',
   'Never invent patient facts, results, diagnoses, medications, measurements, guideline requirements or operational facts.',
   'When a response language is requested, answer in that language while preserving clinical meaning; if language understanding is uncertain, state the uncertainty and ask for clarification rather than guessing.',
-  'Supported response languages are English, Kiswahili, Luganda and Runyankore. Do not claim perfect translation; preserve standardized clinical terms where necessary.',
+  'Supported response languages are English, Kiswahili, Kinyarwanda, Luganda, Runyankore and Alur. Apply the language-specific safety tier; low-resource languages must be conservative and must not be used for unsupported clinical inference.',
   'Clinical decisions remain with qualified healthcare professionals.',
   'Never autonomously prescribe, diagnose, discharge, change medication, authorize payment or make irreversible clinical decisions.',
   'Use deterministic calculations when numbers need to be calculated.',
@@ -254,7 +255,7 @@ async function intelligenceDataset(operation: string, values: number[], options:
 }
 
 async function intelligenceLanguage(text: string) {
-  if (!INTELLIGENCE_SERVICE_URL) return { detected: { language: 'English', code: 'en', confidence: 'low', mixed: false }, clinicalConcepts: [], supportedLanguages: ['English','Kiswahili','Luganda','Runyankore'] };
+  if (!INTELLIGENCE_SERVICE_URL) return { detected: { language: 'English', code: 'en', confidence: 'low', mixed: false }, clinicalConcepts: [], supportedLanguages: SUPPORTED_CLINAI_LANGUAGES };
   const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), Math.min(AI_PROVIDER_TIMEOUT_MS, 5000));
   try {
     const r = await fetch(`${INTELLIGENCE_SERVICE_URL}/v1/language/analyze`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text}), signal:controller.signal });
@@ -454,6 +455,11 @@ async function runAgent(deps: Deps, req: any, input: string, options: { purpose:
     const blocked = polishClinAIAnswer({ directAnswer: safetyCheck.message, recordedFacts: [], calculations: [], reasoningSummary: '', suggestedReview: [], uncertainty: [], evidence: [], confidence: 'high' });
     return { runId: randomUUID(), answer: responseToPlain(blocked, blocked.directAnswer), structured: blocked, mode: options.mode || 'intelligence', toolsUsed: [], calculations: [], latencyMs: 0 };
   }
+  const languagePolicy = getLanguagePolicy(options.language);
+  if (languagePolicy.language === 'Alur' && options.purpose !== 'translation') {
+    const limited = polishClinAIAnswer({ directAnswer: 'Alur support in ClinAI is limited to communication and translation. For clinical reasoning or patient-specific analysis, please use English, Kiswahili, Kinyarwanda, Luganda or Runyankore, or have a qualified clinician confirm the meaning first.', recordedFacts: [], calculations: [], reasoningSummary: '', suggestedReview: ['Confirm the original Alur wording before relying on it for clinical interpretation.'], uncertainty: ['ClinAI does not currently have sufficient validated Alur clinical-language coverage for safe clinical reasoning.'], evidence: [], confidence: 'insufficient' });
+    return { runId: randomUUID(), answer: responseToPlain(limited, limited.directAnswer), structured: limited, mode: options.mode || 'intelligence', toolsUsed: [], calculations: [], latencyMs: 0, language: 'Alur', languageTier: 'translation-only' };
+  }
   const patientData = Boolean(options.patientId);
   const cacheKey = stableRequestKey({ mode: options.mode || 'intelligence', role: options.role || '', patientId: options.patientId || '', input, preferredModel: options.preferredModel || '', publicMode: Boolean(options.publicMode), language: options.language || 'English' });
   const cached = multiModelCache.get(cacheKey);
@@ -491,7 +497,7 @@ async function runAgent(deps: Deps, req: any, input: string, options: { purpose:
 Requested mode: ${options.mode || 'intelligence'}
 Patient-specific request: ${patientData ? 'yes' : 'no'}
 Public-safe mode: ${options.publicMode ? 'yes — do not access or infer patient/facility records' : 'no'}
-Response language: ${options.language || 'English'}\nLanguage analysis signal: ${languageAnalysis ? aiText(languageAnalysis, 2500) : 'Not required for English request'}\n\nQuestion intent: ${questionIntent.join(', ') || 'general'}
+${languageInstruction(languagePolicy, languageAnalysis?.detected)}\nLanguage analysis signal: ${languageAnalysis ? aiText(languageAnalysis, 2500) : 'Not required for English request'}\n\nQuestion intent: ${questionIntent.join(', ') || 'general'}
 
 ClinAI context:
 ${aiText(safeContext, contextLimit)}${patientIntelligence ? `
@@ -536,7 +542,7 @@ ${input}`;
       result.fallbackChain = candidates.slice(0, AI_FALLBACK_ATTEMPTS).map(x => x.label);
       result.patientDataPolicy = patientData && !ALLOW_PUBLIC_AI_WITH_PATIENT_DATA ? 'public-models-receive-redacted context' : 'configured';
       multiModelCache.set(cacheKey, { expiresAt: Date.now() + MULTI_MODEL_CACHE_MS, result });
-      return result;
+      return { ...result, language: languagePolicy.language, languageTier: languagePolicy.tier };
     } catch (e:any) {
       lastError = e;
       try { await recordProviderUsage(deps.pool, req, model, { latencyMs: Date.now() - started }, 'failed', e?.code || String(e?.statusCode || 'PROVIDER_ERROR')); } catch {}
@@ -649,7 +655,7 @@ export function registerPublicAI(deps: Deps) {
   });
 
   app.post('/api/public/health-assistant', async (req: any, reply: any) => {
-    const body = z.object({ question: z.string().min(3).max(4000), language: z.enum(['English','Kiswahili','Luganda','Runyankore']).default('English') }).parse(req.body || {});
+    const body = z.object({ question: z.string().min(3).max(4000), language: z.enum(SUPPORTED_CLINAI_LANGUAGES as [string, ...string[]]).default('English') }).parse(req.body || {});
     const safety = classifyRequestSafety(body.question);
     if (safety.blocked) return reply.code(400).send({ error: safety.message });
     try {
@@ -695,7 +701,7 @@ export function registerAI(deps: Deps) {
   });
 
   app.post('/api/ai/assist', async (req: any, reply: any) => {
-    const body = z.object({ patientId: z.string().uuid().nullable().optional(), question: z.string().min(1), purpose: z.string().default('ask-clinai'), role: z.string().optional(), mode: z.enum(['quick','intelligence','analysis','research']).default('intelligence'), language: z.enum(['English','Kiswahili','Luganda','Runyankore']).default('English') }).parse(req.body || {});
+    const body = z.object({ patientId: z.string().uuid().nullable().optional(), question: z.string().min(1), purpose: z.string().default('ask-clinai'), role: z.string().optional(), mode: z.enum(['quick','intelligence','analysis','research']).default('intelligence'), language: z.enum(SUPPORTED_CLINAI_LANGUAGES as [string, ...string[]]).default('English') }).parse(req.body || {});
     try {
       const result = await runAgent(deps, req, body.question, { purpose: body.purpose, role: body.role, patientId: body.patientId || null, mode: body.mode, language: body.language, allowResearch: body.mode === 'research', allowCodeExecution: body.mode === 'analysis' });
       await registerWorkAudit(pool, req, body.patientId || null, body.purpose, result);
@@ -704,7 +710,7 @@ export function registerAI(deps: Deps) {
   });
 
   app.post('/api/ai/patient-intelligence', async (req: any, reply: any) => {
-    const body = z.object({ patientId: z.string().uuid(), question: z.string().default('What needs my attention about this patient?'), language: z.enum(['English','Kiswahili','Luganda','Runyankore']).default('English') }).parse(req.body || {});
+    const body = z.object({ patientId: z.string().uuid(), question: z.string().default('What needs my attention about this patient?'), language: z.enum(SUPPORTED_CLINAI_LANGUAGES as [string, ...string[]]).default('English') }).parse(req.body || {});
     try { const result=await runAgent(deps, req, body.question, { purpose: 'patient-intelligence', patientId: body.patientId, mode: 'intelligence', language: body.language }); return { data: { answer: result.answer, runId: result.runId } }; } catch (e: any) { return reply.code(e.statusCode || 502).send({ error: sanitizeClinAIResponse(e.message || 'ClinAI could not complete that request.') }); }
   });
 
@@ -766,7 +772,7 @@ export function registerAI(deps: Deps) {
   });
 
   app.post('/api/ai/translate', async (req: any, reply: any) => {
-    const body = z.object({ text: z.string().min(1), targetLanguage: z.enum(['English','Kiswahili','Luganda','Runyankore']), patientId: z.string().uuid().optional() }).parse(req.body || {});
+    const body = z.object({ text: z.string().min(1), targetLanguage: z.enum(SUPPORTED_CLINAI_LANGUAGES as [string, ...string[]]), patientId: z.string().uuid().optional() }).parse(req.body || {});
     try {
       const result = await runAgent(deps, req, `Translate this healthcare communication into ${body.targetLanguage}. Preserve the meaning exactly. Do not add facts, diagnosis, treatment or advice. Preserve medication names, numbers, units, dates and safety warnings exactly. If a phrase is ambiguous, mark it for human review instead of guessing. Return only the user-facing translation. Text:
 ${body.text}`, { purpose: 'translate', patientId: body.patientId, mode: 'quick', language: body.targetLanguage });
@@ -783,6 +789,8 @@ ${body.text}`, { purpose: 'translate', patientId: body.patientId, mode: 'quick',
     const body = z.object({ text: z.string().min(1).max(10000) }).parse(req.body || {});
     try { return { data: await intelligenceLanguage(body.text) }; } catch (e:any) { return reply.code(400).send({ error: sanitizeClinAIResponse(e.message || 'Language analysis failed.') }); }
   });
+
+  app.get('/api/ai/languages', async () => ({ data: SUPPORTED_CLINAI_LANGUAGES.map(name => getLanguagePolicy(name)) }));
 
   app.post('/api/ai/ml/signal', async (req: any, reply: any) => {
     const body = z.object({ rows: z.array(z.record(z.any())).min(4).max(5000), features: z.array(z.string()).min(1).max(50), target: z.string().default('label'), predict: z.record(z.any()).optional(), learningRate: z.number().positive().max(0.5).default(0.05), epochs: z.number().int().min(20).max(2000).default(300) }).parse(req.body || {});
