@@ -54,8 +54,12 @@ export function selectModel(opts: { mode?: string; patientData?: boolean; prefer
     const speedRank: Record<string, number> = { groq: 0, cerebras: 1, openrouter: 2, gemini: 3 };
     return candidates.sort((a,b) => (speedRank[a.provider] ?? 9) - (speedRank[b.provider] ?? 9) || a.priority - b.priority)[0] || null;
   }
-  const role = opts.mode === 'research' ? 'research' : opts.mode === 'analysis' ? 'reasoning' : opts.mode === 'medical' ? 'medical-reasoning' : 'general';
-  const ranked = candidates.filter(m => m.roles.includes(role) || m.roles.includes('reasoning')).sort((a,b) => a.priority - b.priority);
+  const role = opts.mode === 'research' ? 'research' : opts.mode === 'analysis' ? 'reasoning' : (opts.patientData ? 'medical-reasoning' : 'general');
+  const ranked = candidates.filter(m => m.roles.includes(role) || m.roles.includes('reasoning')).sort((a,b) => {
+    const aRole = a.roles.includes(role) ? 0 : 1;
+    const bRole = b.roles.includes(role) ? 0 : 1;
+    return aRole - bRole || a.priority - b.priority;
+  });
   return (ranked[0] || candidates.sort((a,b)=>a.priority-b.priority)[0]) || null;
 }
 

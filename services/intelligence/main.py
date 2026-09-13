@@ -14,6 +14,7 @@ from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
+from clinical_reasoning import analyze_clinical_context
 
 app = FastAPI(title="ClinAI Intelligence Engine", version="1.0.0")
 
@@ -435,6 +436,20 @@ class DatasetRequest(BaseModel):
     horizon: int = 1
     threshold: float = 2.5
 
+
+
+
+class ClinicalReasonRequest(BaseModel):
+    context: dict[str, Any] = Field(default_factory=dict)
+    question: str = ""
+
+
+@app.post("/v1/clinical/reason")
+def clinical_reason(body: ClinicalReasonRequest):
+    try:
+        return {"result": analyze_clinical_context(body.context, body.question)}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 @app.get("/health")
 def health() -> dict[str, Any]:
