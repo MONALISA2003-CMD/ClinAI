@@ -114,6 +114,8 @@ const aiSafety = [
   'Never provide instructions to hack, exploit, bypass authentication or authorization, evade tenant isolation, disable security controls, extract secrets or attack ClinAI.',
   'Never claim access to information that ClinAI has not actually retrieved or that the user is not authorized to access.',
   'Never invent patient facts, results, diagnoses, medications, measurements, guideline requirements or operational facts.',
+  'When a response language is requested, answer in that language while preserving clinical meaning; if language understanding is uncertain, state the uncertainty and ask for clarification rather than guessing.',
+  'Supported response languages are English, Kiswahili, Luganda and Runyankore. Do not claim perfect translation; preserve standardized clinical terms where necessary.',
   'Clinical decisions remain with qualified healthcare professionals.',
   'Never autonomously prescribe, diagnose, discharge, change medication, authorize payment or make irreversible clinical decisions.',
   'Use deterministic calculations when numbers need to be calculated.',
@@ -249,6 +251,28 @@ async function intelligenceDataset(operation: string, values: number[], options:
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data?.detail || 'Dataset analysis failed');
   return data.result;
+}
+
+async function intelligenceLanguage(text: string) {
+  if (!INTELLIGENCE_SERVICE_URL) return { detected: { language: 'English', code: 'en', confidence: 'low', mixed: false }, clinicalConcepts: [], supportedLanguages: ['English','Kiswahili','Luganda','Runyankore'] };
+  const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), Math.min(AI_PROVIDER_TIMEOUT_MS, 5000));
+  try {
+    const r = await fetch(`${INTELLIGENCE_SERVICE_URL}/v1/language/analyze`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text}), signal:controller.signal });
+    const d:any = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Language analysis failed');
+    return d.result || d;
+  } finally { clearTimeout(timeout); }
+}
+
+async function intelligenceML(body: Row) {
+  if (!INTELLIGENCE_SERVICE_URL) throw new Error('The intelligence engine is not configured.');
+  const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), Math.min(AI_PROVIDER_TIMEOUT_MS, 10000));
+  try {
+    const r = await fetch(`${INTELLIGENCE_SERVICE_URL}/v1/ml/logistic`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body), signal:controller.signal });
+    const d:any = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Machine-learning analysis failed');
+    return d.result || d;
+  } finally { clearTimeout(timeout); }
 }
 
 async function proactiveAttention(pool: Pool | null, organizationId: string | null) {
@@ -424,14 +448,14 @@ async function recordProviderUsage(pool: Pool | null, req: any, model: any, resu
   } catch {}
 }
 
-async function runAgent(deps: Deps, req: any, input: string, options: { purpose: string; role?: string; patientId?: string | null; mode?: string; allowResearch?: boolean; allowCodeExecution?: boolean; preferredModel?: string; publicMode?: boolean }) {
+async function runAgent(deps: Deps, req: any, input: string, options: { purpose: string; role?: string; patientId?: string | null; mode?: string; allowResearch?: boolean; allowCodeExecution?: boolean; preferredModel?: string; publicMode?: boolean; language?: string }) {
   const safetyCheck = classifyRequestSafety(input);
   if (safetyCheck.blocked) {
     const blocked = polishClinAIAnswer({ directAnswer: safetyCheck.message, recordedFacts: [], calculations: [], reasoningSummary: '', suggestedReview: [], uncertainty: [], evidence: [], confidence: 'high' });
     return { runId: randomUUID(), answer: responseToPlain(blocked, blocked.directAnswer), structured: blocked, mode: options.mode || 'intelligence', toolsUsed: [], calculations: [], latencyMs: 0 };
   }
   const patientData = Boolean(options.patientId);
-  const cacheKey = stableRequestKey({ mode: options.mode || 'intelligence', role: options.role || '', patientId: options.patientId || '', input, preferredModel: options.preferredModel || '', publicMode: Boolean(options.publicMode) });
+  const cacheKey = stableRequestKey({ mode: options.mode || 'intelligence', role: options.role || '', patientId: options.patientId || '', input, preferredModel: options.preferredModel || '', publicMode: Boolean(options.publicMode), language: options.language || 'English' });
   const cached = multiModelCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return { ...cached.result, cached: true };
   if (cached) multiModelCache.delete(cacheKey);
@@ -450,6 +474,7 @@ async function runAgent(deps: Deps, req: any, input: string, options: { purpose:
   }
   const patientIntelligence = !options.publicMode && options.patientId ? compactIntelligenceForPrompt(context.intelligence || buildPatientIntelligence(context)) : null;
   const questionIntent = buildQuestionIntent(input);
+  const languageAnalysisPromise = options.language && options.language !== 'English' ? intelligenceLanguage(input).catch(() => null) : Promise.resolve(null);
   let evidence: any[] = [];
   // Evidence is useful for intelligence/research, but loading it for every quick request only adds latency.
   if (!options.publicMode && options.mode !== 'quick') {
@@ -458,6 +483,7 @@ async function runAgent(deps: Deps, req: any, input: string, options: { purpose:
     if (cachedEvidence && cachedEvidence.expiresAt > Date.now()) evidence = cachedEvidence.value;
     else { evidence = await approvedKnowledge(deps.pool, organizationId); contextCache.set(evidenceKey, { expiresAt: Date.now() + AI_CONTEXT_CACHE_MS, value: evidence }); }
   }
+  const languageAnalysis = await languageAnalysisPromise;
   const safeContext = patientData && !ALLOW_PUBLIC_AI_WITH_PATIENT_DATA ? redactForPublicModel(context) : context;
   const contextLimit = options.mode === 'quick' ? 7000 : (patientData && !ALLOW_PUBLIC_AI_WITH_PATIENT_DATA ? 14000 : 22000);
   const evidenceLimit = options.mode === 'quick' ? 0 : 9000;
@@ -465,7 +491,7 @@ async function runAgent(deps: Deps, req: any, input: string, options: { purpose:
 Requested mode: ${options.mode || 'intelligence'}
 Patient-specific request: ${patientData ? 'yes' : 'no'}
 Public-safe mode: ${options.publicMode ? 'yes — do not access or infer patient/facility records' : 'no'}
-Question intent: ${questionIntent.join(', ') || 'general'}
+Response language: ${options.language || 'English'}\nLanguage analysis signal: ${languageAnalysis ? aiText(languageAnalysis, 2500) : 'Not required for English request'}\n\nQuestion intent: ${questionIntent.join(', ') || 'general'}
 
 ClinAI context:
 ${aiText(safeContext, contextLimit)}${patientIntelligence ? `
@@ -623,11 +649,11 @@ export function registerPublicAI(deps: Deps) {
   });
 
   app.post('/api/public/health-assistant', async (req: any, reply: any) => {
-    const body = z.object({ question: z.string().min(3).max(4000), language: z.string().max(60).default('English') }).parse(req.body || {});
+    const body = z.object({ question: z.string().min(3).max(4000), language: z.enum(['English','Kiswahili','Luganda','Runyankore']).default('English') }).parse(req.body || {});
     const safety = classifyRequestSafety(body.question);
     if (safety.blocked) return reply.code(400).send({ error: safety.message });
     try {
-      const result = await runAgent(deps, req, body.question, { purpose: 'public-health-assistant', role: 'public user', mode: 'quick', publicMode: true });
+      const result = await runAgent(deps, req, body.question, { purpose: 'public-health-assistant', role: 'public user', mode: 'quick', publicMode: true, language: body.language });
       return { data: { answer: result.answer, runId: result.runId } };
     } catch (e: any) {
       return reply.code(e.statusCode || 502).send({ error: sanitizeClinAIResponse(e.message || 'The public health assistant is temporarily unavailable.') });
@@ -669,17 +695,17 @@ export function registerAI(deps: Deps) {
   });
 
   app.post('/api/ai/assist', async (req: any, reply: any) => {
-    const body = z.object({ patientId: z.string().uuid().nullable().optional(), question: z.string().min(1), purpose: z.string().default('ask-clinai'), role: z.string().optional(), mode: z.enum(['quick','intelligence','analysis','research']).default('intelligence') }).parse(req.body || {});
+    const body = z.object({ patientId: z.string().uuid().nullable().optional(), question: z.string().min(1), purpose: z.string().default('ask-clinai'), role: z.string().optional(), mode: z.enum(['quick','intelligence','analysis','research']).default('intelligence'), language: z.enum(['English','Kiswahili','Luganda','Runyankore']).default('English') }).parse(req.body || {});
     try {
-      const result = await runAgent(deps, req, body.question, { purpose: body.purpose, role: body.role, patientId: body.patientId || null, mode: body.mode, allowResearch: body.mode === 'research', allowCodeExecution: body.mode === 'analysis' });
+      const result = await runAgent(deps, req, body.question, { purpose: body.purpose, role: body.role, patientId: body.patientId || null, mode: body.mode, language: body.language, allowResearch: body.mode === 'research', allowCodeExecution: body.mode === 'analysis' });
       await registerWorkAudit(pool, req, body.patientId || null, body.purpose, result);
       return { data: { answer: result.answer, runId: result.runId } };
     } catch (e: any) { return reply.code(e.statusCode || 502).send({ error: sanitizeClinAIResponse(e.message || 'ClinAI could not complete that request.') }); }
   });
 
   app.post('/api/ai/patient-intelligence', async (req: any, reply: any) => {
-    const body = z.object({ patientId: z.string().uuid(), question: z.string().default('What needs my attention about this patient?') }).parse(req.body || {});
-    try { const result=await runAgent(deps, req, body.question, { purpose: 'patient-intelligence', patientId: body.patientId, mode: 'intelligence' }); return { data: { answer: result.answer, runId: result.runId } }; } catch (e: any) { return reply.code(e.statusCode || 502).send({ error: sanitizeClinAIResponse(e.message || 'ClinAI could not complete that request.') }); }
+    const body = z.object({ patientId: z.string().uuid(), question: z.string().default('What needs my attention about this patient?'), language: z.enum(['English','Kiswahili','Luganda','Runyankore']).default('English') }).parse(req.body || {});
+    try { const result=await runAgent(deps, req, body.question, { purpose: 'patient-intelligence', patientId: body.patientId, mode: 'intelligence', language: body.language }); return { data: { answer: result.answer, runId: result.runId } }; } catch (e: any) { return reply.code(e.statusCode || 502).send({ error: sanitizeClinAIResponse(e.message || 'ClinAI could not complete that request.') }); }
   });
 
   app.post('/api/ai/compute', async (req: any, reply: any) => {
@@ -740,11 +766,27 @@ export function registerAI(deps: Deps) {
   });
 
   app.post('/api/ai/translate', async (req: any, reply: any) => {
-    const body = z.object({ text: z.string().min(1), targetLanguage: z.string().min(2), patientId: z.string().uuid().optional() }).parse(req.body || {});
+    const body = z.object({ text: z.string().min(1), targetLanguage: z.enum(['English','Kiswahili','Luganda','Runyankore']), patientId: z.string().uuid().optional() }).parse(req.body || {});
     try {
-      const result = await runAgent(deps, req, `Translate this healthcare communication into ${body.targetLanguage}. Preserve the meaning exactly. Do not add facts or advice. Return the translation in the direct answer field. Text:\n${body.text}`, { purpose: 'translate', patientId: body.patientId, mode: 'quick' });
-      return { data: { text: result.structured.directAnswer, targetLanguage: body.targetLanguage, safety: aiSafety } };
+      const result = await runAgent(deps, req, `Translate this healthcare communication into ${body.targetLanguage}. Preserve the meaning exactly. Do not add facts, diagnosis, treatment or advice. Preserve medication names, numbers, units, dates and safety warnings exactly. If a phrase is ambiguous, mark it for human review instead of guessing. Return only the user-facing translation. Text:
+${body.text}`, { purpose: 'translate', patientId: body.patientId, mode: 'quick', language: body.targetLanguage });
+      const sourceSignals = await intelligenceLanguage(body.text).catch(() => null);
+      const targetSignals = await intelligenceLanguage(result.structured.directAnswer).catch(() => null);
+      const sourceConcepts = new Set((sourceSignals?.clinicalConcepts || []).map((x:any) => x.concept));
+      const targetConcepts = new Set((targetSignals?.clinicalConcepts || []).map((x:any) => x.concept));
+      const missingConcepts = [...sourceConcepts].filter(x => !targetConcepts.has(x));
+      return { data: { text: result.structured.directAnswer, targetLanguage: body.targetLanguage, safety: aiSafety, translationReview: { status: missingConcepts.length ? 'human-review-recommended' : 'screened', missingConcepts } } };
     } catch (e: any) { return reply.code(e.statusCode || 502).send({ error: e.message }); }
+  });
+
+  app.post('/api/ai/language/analyze', async (req: any, reply: any) => {
+    const body = z.object({ text: z.string().min(1).max(10000) }).parse(req.body || {});
+    try { return { data: await intelligenceLanguage(body.text) }; } catch (e:any) { return reply.code(400).send({ error: sanitizeClinAIResponse(e.message || 'Language analysis failed.') }); }
+  });
+
+  app.post('/api/ai/ml/signal', async (req: any, reply: any) => {
+    const body = z.object({ rows: z.array(z.record(z.any())).min(4).max(5000), features: z.array(z.string()).min(1).max(50), target: z.string().default('label'), predict: z.record(z.any()).optional(), learningRate: z.number().positive().max(0.5).default(0.05), epochs: z.number().int().min(20).max(2000).default(300) }).parse(req.body || {});
+    try { return { data: await intelligenceML(body) }; } catch (e:any) { return reply.code(400).send({ error: sanitizeClinAIResponse(e.message || 'Machine-learning analysis failed.') }); }
   });
 
   app.get('/api/ai/work-runs', async (req: any) => {

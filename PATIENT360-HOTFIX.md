@@ -41,3 +41,6 @@ No patient data was changed.
 - Added additive `ai_feedback` and `public_feedback` persistence only; no patient rows were deleted or reset.
 - Updated the 10 QA patients with the generic phone `0703000000` and synthetic region/district addresses spanning Central, Eastern, Western, Northern, West Nile, Teso and Karamoja. Original non-QA patients were not modified.
 - Footer/contact information was intentionally left unchanged.
+
+## QA multilingual testing cohort
+The QA cohort remains synthetic and cross-module. QA patient records use the agreed generic test phone number 0703000000 for testing only. Existing non-QA patient records were not modified by the multilingual implementation.

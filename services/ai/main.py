@@ -8,13 +8,16 @@ from fastapi import FastAPI
 from pydantic import BaseModel, Field
 from typing import Any
 
-app = FastAPI(title="ClinAI AI Service", version="0.2.0")
+SUPPORTED_LANGUAGES = {"English", "Kiswahili", "Luganda", "Runyankore"}
+
+app = FastAPI(title="ClinAI AI Service", version="0.3.0")
 
 class Context(BaseModel):
     patient_id: str | None = None
     purpose: str = Field(min_length=1)
     question: str = Field(min_length=1)
     clinical_context: dict[str, Any] = Field(default_factory=dict)
+    language: str = "English"
 
 @app.get("/health")
 def health():
@@ -22,6 +25,7 @@ def health():
 
 @app.post("/v1/assist")
 def assist(c: Context):
+    language = c.language if c.language in SUPPORTED_LANGUAGES else "English"
     return {
         "status": "review_required",
         "purpose": c.purpose,
@@ -33,6 +37,8 @@ def assist(c: Context):
         ],
         "provenance": [],
         "model": "clinai-ai-service-boundary",
-        "model_version": "0.2.0",
+        "model_version": "0.3.0",
+        "response_language": language,
+        "language_safety": "Translation and clinical meaning require verification; this boundary never performs autonomous clinical decisions.",
         "prompt_version": "v1",
     }

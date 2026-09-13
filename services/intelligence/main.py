@@ -8,7 +8,7 @@ deterministic results.
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
-from math import sqrt, isnan
+from math import sqrt, isnan, exp
 from statistics import mean, median, pstdev
 from typing import Any, Literal
 
@@ -16,6 +16,118 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 app = FastAPI(title="ClinAI Intelligence Engine", version="1.0.0")
+
+SUPPORTED_LANGUAGES = {
+    "English": "en",
+    "Kiswahili": "sw",
+    "Luganda": "lg",
+    "Runyankore": "nyn",
+}
+
+LANGUAGE_TERMS = {
+    "en": ["patient", "pain", "fever", "cough", "blood", "pressure", "pregnant", "medicine", "breathing", "diabetes"],
+    "sw": ["mgonjwa", "maumivu", "homa", "kikohozi", "damu", "shinikizo", "mjamzito", "dawa", "kupumua", "kisukari"],
+    "lg": ["omulwadde", "obulumi", "omusujja", "kikohola", "omusaayi", "pressure", "olubuto", "eddagala", "okussa", "sukaali"],
+    "nyn": ["omurwayi", "oburumi", "omushwija", "okukorora", "eshagama", "pressure", "endembe", "omubazi", "okuhumeka", "sukaari"],
+}
+
+CLINICAL_CONCEPTS = {
+    "fever": ["fever", "homa", "omusujja", "omushwija"],
+    "cough": ["cough", "kikohozi", "kikohola", "okukorora"],
+    "pain": ["pain", "maumivu", "obulumi", "oburumi"],
+    "difficulty_breathing": ["difficulty breathing", "shortness of breath", "kupumua kwa shida", "okussa obubi", "okuhumeka nabi"],
+    "hypertension": ["hypertension", "high blood pressure", "shinikizo la damu", "blood pressure", "bp", "pressure"],
+    "diabetes": ["diabetes", "kisukari", "sukaali", "sukaari"],
+    "pregnancy": ["pregnant", "pregnancy", "mjamzito", "olubuto", "endembe"],
+}
+
+def detect_language(text: str) -> dict[str, Any]:
+    raw = str(text or "").lower()
+    scores = {code: sum(1 for term in terms if term in raw) for code, terms in LANGUAGE_TERMS.items()}
+    # Mixed-language input is common in Uganda; preserve that signal rather than forcing a false single-language label.
+    ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    best_code, best_score = ranked[0]
+    second_score = ranked[1][1] if len(ranked) > 1 else 0
+    if best_score == 0:
+        return {"language": "English", "code": "en", "confidence": "low", "mixed": False, "scores": scores}
+    mixed = sum(1 for _, score in ranked if score > 0) > 1 and second_score >= max(1, best_score // 2)
+    confidence = "high" if best_score >= 2 and best_score > second_score else "moderate" if best_score > 0 else "low"
+    return {"language": {v:k for k,v in SUPPORTED_LANGUAGES.items()}.get(best_code, "English"), "code": best_code, "confidence": confidence, "mixed": mixed, "scores": scores}
+
+
+def extract_clinical_concepts(text: str) -> list[dict[str, Any]]:
+    raw = str(text or "").lower()
+    found = []
+    for concept, terms in CLINICAL_CONCEPTS.items():
+        matched = [term for term in terms if term in raw]
+        if matched:
+            found.append({"concept": concept, "matchedTerms": matched})
+    return found
+
+
+def language_analyze(text: str) -> dict[str, Any]:
+    detected = detect_language(text)
+    concepts = extract_clinical_concepts(text)
+    return {
+        "operation": "language_analyze",
+        "detected": detected,
+        "supportedLanguages": list(SUPPORTED_LANGUAGES.keys()),
+        "clinicalConcepts": concepts,
+        "safety": "Language analysis is an assistive signal only; clinical meaning must be verified against the record and professional context.",
+    }
+
+
+def sigmoid(x: float) -> float:
+    if x >= 0:
+        z = exp(-x)
+        return 1.0 / (1.0 + z)
+    z = exp(x)
+    return z / (1.0 + z)
+
+
+def ml_logistic(request: dict[str, Any]) -> dict[str, Any]:
+    """Small, auditable logistic-regression learner for non-diagnostic pattern scoring.
+    Training data must be supplied by the caller. This is intentionally not a clinical
+    diagnostic model and returns a review signal, not a medical decision.
+    """
+    rows = request.get("rows") or []
+    features = request.get("features") or []
+    target = str(request.get("target") or "label")
+    if len(rows) < 4 or not features:
+        raise ValueError("At least four training rows and one feature are required")
+    if any(f not in rows[0] for f in features):
+        raise ValueError("Every requested feature must exist in the training rows")
+    x = [[finite(float(r[f])) for f in features] for r in rows]
+    y = [1.0 if bool(r.get(target)) and str(r.get(target)).lower() not in {"0", "false", "no"} else 0.0 for r in rows]
+    if len(set(y)) < 2:
+        raise ValueError("Training labels must contain both classes")
+    means = [mean(col) for col in zip(*x)]
+    stds = [pstdev(col) or 1.0 for col in zip(*x)]
+    z = [[(row[i]-means[i])/stds[i] for i in range(len(features))] for row in x]
+    w = [0.0] * len(features)
+    b = 0.0
+    lr = min(0.5, max(0.001, float(request.get("learningRate", 0.05))))
+    epochs = min(2000, max(20, int(request.get("epochs", 300))))
+    for _ in range(epochs):
+        grad_w = [0.0] * len(features); grad_b = 0.0
+        for row, label in zip(z, y):
+            p = sigmoid(b + sum(a*c for a,c in zip(w,row)))
+            err = p - label
+            grad_b += err
+            for i, value in enumerate(row): grad_w[i] += err * value
+        scale = 1.0 / len(z)
+        b -= lr * grad_b * scale
+        for i in range(len(w)): w[i] -= lr * grad_w[i] * scale
+    predictions = [sigmoid(b + sum(a*c for a,c in zip(w,row))) for row in z]
+    accuracy = sum((p >= 0.5) == bool(label) for p,label in zip(predictions,y)) / len(y)
+    prediction = None
+    new_row = request.get("predict")
+    if new_row is not None:
+        zr = [(finite(float(new_row[f]))-means[i])/stds[i] for i,f in enumerate(features)]
+        probability = sigmoid(b + sum(a*c for a,c in zip(w,zr)))
+        prediction = {"probability": round_value(probability, 4), "class": "positive-review-signal" if probability >= 0.5 else "negative-review-signal"}
+    return {"operation":"ml_logistic_review_signal", "features":features, "trainingRows":len(rows), "trainingAccuracy":round_value(accuracy,4), "weights":[round_value(v,6) for v in w], "intercept":round_value(b,6), "prediction":prediction, "note":"Non-diagnostic machine-learning review signal. Do not use this output alone for diagnosis, treatment, triage or other irreversible clinical decisions."}
+
 
 
 def finite(x: float) -> float:
@@ -371,6 +483,35 @@ def dataset(request: DatasetRequest) -> dict[str, Any]:
             if not request.second_values: raise ValueError("second_values is required for correlation")
             return {"ok": True, "result": advanced_calculate("correlation", {"firstValues": request.values, "secondValues": request.second_values})}
         raise ValueError("Unsupported dataset operation")
+    except (KeyError, ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+class LanguageRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=10000)
+
+
+class MLRequest(BaseModel):
+    rows: list[dict[str, Any]] = Field(min_length=4, max_length=5000)
+    features: list[str] = Field(min_length=1, max_length=50)
+    target: str = "label"
+    predict: dict[str, Any] | None = None
+    learningRate: float = 0.05
+    epochs: int = 300
+
+
+@app.post("/v1/language/analyze")
+def language_endpoint(request: LanguageRequest) -> dict[str, Any]:
+    try:
+        return {"ok": True, "result": language_analyze(request.text)}
+    except (KeyError, ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/v1/ml/logistic")
+def ml_endpoint(request: MLRequest) -> dict[str, Any]:
+    try:
+        return {"ok": True, "result": ml_logistic(request.model_dump())}
     except (KeyError, ValueError, TypeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

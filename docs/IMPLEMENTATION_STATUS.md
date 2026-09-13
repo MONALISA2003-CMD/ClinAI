@@ -26,3 +26,10 @@ This release moves ClinAI from a catalog/scaffold toward a runnable, interconnec
 The code intentionally does not pretend that third-party integrations are live. Production requires actual credentials/configuration and clinical validation for FHIR/HL7/DICOM, SMS/WhatsApp, payment gateways, analyzers/PACS, cloud storage, Gemini/Vertex AI, identity federation and institutional policies.
 
 Clinical safety, privacy, regulatory, security, disaster recovery and interoperability validation must be completed before real patient use.
+
+## Multilingual intelligence expansion — 2026-09-13
+- English, Kiswahili, Luganda and Runyankore response-language selection added to ClinAI AI requests.
+- Public health assistant supports the same four languages without patient-record access.
+- Python intelligence service adds language analysis and an auditable non-diagnostic ML review-signal endpoint.
+- Healthcare translation now includes a concept-preservation safety screen and can recommend human review.
+- Multilingual Python safety audit passes.
