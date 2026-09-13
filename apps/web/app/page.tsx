@@ -212,15 +212,39 @@ function RowActions({module,row,token,done,openPatient,openEncounter}:{module:st
 function humanError(value:any){const s=String(value||'').trim();if(!s)return 'We could not complete that request. Please try again.';try{const j=JSON.parse(s);if(j&&typeof j==='object')return humanError(j.error||j.message||j.detail||'We could not complete that request. Please try again.')}catch{}return s.replace(/\s+/g,' ').replace(/\b(uuid|JSON|schema|payload|request body|validation)\b/gi,'information').trim();}
 function humanizeAI(value:any){
  const language=typeof value==='object'&&value?.language?String(value.language):'English';
- let s=typeof value==='string'?value.trim():typeof value==='object'?JSON.stringify(value):String(value||'').trim();
- const headings:any={English:['ANSWER','KEY POINTS','WHAT NEEDS ATTENTION','IMPORTANT'],Kiswahili:['JIBU','MAMBO MUHIMU','KINACHOHITAJI UMakini','MUHIMU'],Kinyarwanda:['IGISUBIZO','INGINGO Z’INGENZI','IBIKENEYE KWITABWAHO','INGENZI'],Luganda:['EBYANUKUDDE','EBY’OKUMANYA','EBYETAAGA OKWETEGEREZA','KIKULU'],Runyankore:['ENSHUBUZO','EBY’OKUMANYA','EBYETAAGA OKWETEGEREZWA','KIKURU'],Alur:['ANSWER','KEY POINTS','WHAT NEEDS ATTENTION','IMPORTANT']}[language]||['ANSWER','KEY POINTS','WHAT NEEDS ATTENTION','IMPORTANT'];
- const format=(j:any)=>{if(!j||typeof j!=='object')return '';const lines:string[]=[];const add=(h:string,v:any)=>{const a=Array.isArray(v)?v.filter(Boolean):v?[v]:[];if(!a.length)return;lines.push(`**${h}**`);a.forEach(x=>lines.push(Array.isArray(v)?`• ${String(x)}`:String(x)))};add(headings[0],j.directAnswer);add(headings[1],j.recordedFacts);add(headings[2],j.suggestedReview);add(headings[3],j.uncertainty);return lines.join('\n\n')};
- try{const j=JSON.parse(s);const formatted=format(j);if(formatted)return formatted;}catch{}
- const fenced=s.match(/```(?:json|text|markdown)?\s*([\s\S]*?)```/i);if(fenced){try{const j=JSON.parse(fenced[1].trim());const formatted=format(j);if(formatted)return formatted;}catch{}}
- const start=s.indexOf('{'),end=s.lastIndexOf('}');if(start>=0&&end>start){try{const j=JSON.parse(s.slice(start,end+1));const formatted=format(j);if(formatted)return formatted;}catch{}}
- return s.replace(/```[\s\S]*?```/g,'').replace(/(?:^|\n)\s*(?:provider|model|api version|tools used|reasoning summary|response schema|raw response|implementation|technical details?)\s*[:：].*/gi,'').trim()||'ClinAI could not find enough information to answer that clearly.';
+ const headings:any={English:['ANSWER','KEY POINTS','WHAT NEEDS ATTENTION','IMPORTANT'],Kiswahili:['JIBU','MAMBO MUHIMU','KINACHOHITAJI UMAKINI','MUHIMU'],Kinyarwanda:['IGISUBIZO','INGINGO Z’INGENZI','IBIKENEYE KWITABWAHO','INGENZI'],Luganda:['EBYANUKUDDE','EBY’OKUMANYA','EBYETAAGA OKWETEGEREZA','KIKULU'],Runyankore:['ENSHUBUZO','EBY’OKUMANYA','EBYETAAGA OKWETEGEREZWA','KIKURU'],Alur:['ANSWER','KEY POINTS','WHAT NEEDS ATTENTION','IMPORTANT']}[language]||['ANSWER','KEY POINTS','WHAT NEEDS ATTENTION','IMPORTANT'];
+ const unwrap=(input:any):any=>{
+   let cur=input;
+   for(let i=0;i<6;i++){
+     if(cur&&typeof cur==='object'&&!Array.isArray(cur)){
+       if(cur.directAnswer!==undefined||cur.recordedFacts!==undefined||cur.suggestedReview!==undefined||cur.uncertainty!==undefined)return cur;
+       if(cur.answer!==undefined){cur=cur.answer;continue}
+       if(cur.data!==undefined){cur=cur.data;continue}
+       if(cur.result!==undefined){cur=cur.result;continue}
+       return null;
+     }
+     if(typeof cur==='string'){
+       const t=cur.trim().replace(/^```(?:json|text|markdown)?\s*/i,'').replace(/\s*```$/i,'').trim();
+       if(!t)return null;
+       try{cur=JSON.parse(t);continue}catch{}
+       const a=t.indexOf('{'),b=t.lastIndexOf('}');
+       if(a>=0&&b>a){try{cur=JSON.parse(t.slice(a,b+1));continue}catch{}}
+       return {directAnswer:t,recordedFacts:[],suggestedReview:[],uncertainty:[]};
+     }
+     return null;
+   }
+   return null;
+ };
+ const j=unwrap(value);
+ if(!j)return 'ClinAI could not find enough information to answer that clearly.';
+ const lines:string[]=[];
+ const add=(h:string,v:any)=>{const a=Array.isArray(v)?v.filter(Boolean):v?[v]:[];if(!a.length)return;lines.push(`**${h}**`);a.forEach(x=>lines.push(Array.isArray(v)?`• ${String(x)}`:String(x)))};
+ // If the model nested another structured answer in directAnswer, unwrap it before rendering.
+ const nested=unwrap(j.directAnswer); if(nested&&nested!==j&&nested.directAnswer) Object.assign(j,nested);
+ add(headings[0],j.directAnswer);add(headings[1],j.recordedFacts);add(headings[2],j.suggestedReview);add(headings[3],j.uncertainty);
+ if(lines.length)return lines.join('\n\n');
+ return typeof j.directAnswer==='string'?j.directAnswer:'ClinAI could not find enough information to answer that clearly.';
 }
-
 function AIResponse({text}:{text:string}){
  const lines=text.replace(/\r/g,'').replace(/```(?:text|markdown)?/gi,'').split('\n');
  const headingNames=['Answer','Key points','What needs attention','Important','Direct answer','Recorded facts','Reasoning/context','Reasoning and context','Why these items matter','Suggested next review','Suggested review','Uncertainty','Missing or conflicting information','Evidence from record','Sources or records used','JIBU','MAMBO MUHIMU','KINACHOHITAJI UMakini','MUHIMU','IGISUBIZO','INGINGO Z’INGENZI','IBIKENEYE KWITABWAHO','INGENZI','EBYANUKUDDE','EBY’OKUMANYA','EBYETAAGA OKWETEGEREZA','KIKULU','ENSHUBUZO','EBYETAAGA OKWETEGEREZWA','KIKURU'];

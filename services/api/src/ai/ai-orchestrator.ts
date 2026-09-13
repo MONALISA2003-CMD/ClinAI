@@ -175,6 +175,7 @@ async function query(pool: Pool | null, sql: string, params: any[] = []) {
 
 function fastIntent(input: string, patientId?: string | null) {
   const q = String(input || '').toLowerCase().trim();
+  if (/^(hi|hello|hey|hiya|good morning|good afternoon|good evening|habari|mambo|jambo|muraho|bite|wasuze otya|osiibye otya|agandi|oraire|agwiro|apwoyo|apwoyo matek|apwoyo ber)$/.test(q)) return 'greeting';
   if (!q || /\b(why|which|compare|trend|changed|attention|review|summari[sz]e|briefing|analy[sz]e|forecast|predict|explain|recommend|what should|what may|risk|concern|problem|unresolved)\b/.test(q)) return null;
   if (/\b(how many|number of|count|how much)\b.*\b(appointment|appointments|miadi|gahunda)\b|\b(appointment|appointments|miadi|gahunda)\b.*\b(today|leo|uyu)\b/.test(q)) return 'appointmentsToday';
   if (/\b(how many|number of|count)\b.*\b(patient|patients|wagonjwa|abarwayi|balwadde)\b/.test(q)) return 'patients';
@@ -196,7 +197,14 @@ function localizedFast(policy: ReturnType<typeof getLanguagePolicy>, kind: strin
     lang === 'Runyankore' ? {a:'ENSHUBUZO',k:'EBY’OKUMANYA',w:'EBYETAAGA OKWETEGEREZWA',i:'KIKURU'} :
     {a:'ANSWER',k:'KEY POINTS',w:'WHAT NEEDS ATTENTION',i:'IMPORTANT'};
   let answer=''; const points:string[]=[]; const attention:string[]=[];
-  if (kind==='appointmentsToday') {
+  if (kind==='greeting') {
+    if(lang==='Kiswahili') answer='Habari. Niko tayari kukusaidia.';
+    else if(lang==='Kinyarwanda') answer='Muraho. Niteguye kugufasha.';
+    else if(lang==='Luganda') answer='Wasuze otya. Ntegefu okukuyamba.';
+    else if(lang==='Runyankore') answer='Agandi. Ninteekateeka kukuyamba.';
+    else if(lang==='Alur') answer='Apwoyo. Ntye maber konyi.';
+    else answer='Hello. I’m ready to help.';
+  } else if (kind==='appointmentsToday') {
     if(lang==='Kiswahili') answer=`Kuna ${n} ${n===1?'miadi':'miadi'} leo.`; else if(lang==='Kinyarwanda') answer=`Uyu munsi hari gahunda ${n} z’abarwayi.`; else if(lang==='Luganda') answer=`Leero waliwo appointments ${n}.`; else if(lang==='Runyankore') answer=`Eizooba hariho appointments ${n}.`; else answer=`There ${n===1?'is':'are'} ${n} appointment${n===1?'':'s'} today.`;
     if(extra?.statuses?.length) points.push(...extra.statuses.map((x:any)=>`${x.count} ${String(x.status).replaceAll('-',' ')}`));
   } else if(kind==='patients') {
@@ -438,17 +446,39 @@ function responseHeadings(language = 'English') {
   return map[language] || map.English;
 }
 
+function unwrapStructuredAnswer(value: any): Row | null {
+  let current: any = value;
+  for (let i = 0; i < 5; i += 1) {
+    if (current && typeof current === 'object' && !Array.isArray(current)) {
+      if (current.directAnswer || current.recordedFacts || current.suggestedReview || current.uncertainty || current.evidence) return current;
+      if (current.answer !== undefined) { current = current.answer; continue; }
+      if (current.data !== undefined) { current = current.data; continue; }
+      if (current.result !== undefined) { current = current.result; continue; }
+      return null;
+    }
+    if (typeof current === 'string') {
+      const text = current.trim().replace(/^```(?:json|text|markdown)?\s*/i, '').replace(/\s*```$/i, '').trim();
+      if (!text) return null;
+      try { current = JSON.parse(text); continue; } catch {}
+      const first = text.indexOf('{');
+      const last = text.lastIndexOf('}');
+      if (first >= 0 && last > first) {
+        try { current = JSON.parse(text.slice(first, last + 1)); continue; } catch {}
+      }
+      return { directAnswer: text, recordedFacts: [], calculations: [], reasoningSummary: '', suggestedReview: [], uncertainty: [], evidence: [], confidence: 'moderate' };
+    }
+    return null;
+  }
+  return null;
+}
+
 function responseToPlain(answer: Row | null, fallback: string, language = 'English') {
   if (!answer) return sanitizeClinAIResponse(fallback);
-  let normalized: Row = answer;
-  const direct = typeof answer.directAnswer === 'string' ? answer.directAnswer.trim() : '';
-  if (direct.startsWith('{') && direct.endsWith('}')) {
-    try {
-      const embedded = JSON.parse(direct);
-      if (embedded && typeof embedded === 'object' && (embedded.directAnswer || embedded.recordedFacts || embedded.suggestedReview)) {
-        normalized = { ...answer, ...embedded, reasoningSummary: '' };
-      }
-    } catch {}
+  const normalized = unwrapStructuredAnswer(answer) || { directAnswer: fallback, recordedFacts: [], calculations: [], reasoningSummary: '', suggestedReview: [], uncertainty: [], evidence: [], confidence: 'low' };
+  // Never allow a nested structured object to become clinician-visible text.
+  if (typeof normalized.directAnswer === 'object') {
+    const nested = unwrapStructuredAnswer(normalized.directAnswer);
+    if (nested) Object.assign(normalized, nested);
   }
   const cleanAnswer = polishClinAIAnswer(normalized, fallback);
   const lines: string[] = [];
