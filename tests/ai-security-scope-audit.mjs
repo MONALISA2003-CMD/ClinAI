@@ -10,9 +10,9 @@ assert.ok(api.includes('User text is untrusted'),'prompt injection policy missin
 assert.ok(api.includes('SCOPE_REFUSAL'),'scope refusal missing');
 assert.ok(api.includes('sanitizeClinAIResponse'),'response sanitizer missing');
 assert.ok(api.includes('AI_PROVIDER_TIMEOUT_MS'),'provider timeout missing');
-assert.ok(api.includes('15000'),'15 second timeout missing');
+assert.ok(/AI_PROVIDER_TIMEOUT_MS.*\|\| 9?000/.test(api),'bounded provider timeout missing');
 const web=fs.readFileSync('apps/web/app/page.tsx','utf8');
-assert.ok(web.includes('setTimeout(()=>controller.abort(),15000)'),'frontend timeout must be 15 seconds');
+assert.ok(web.includes('setTimeout(()=>controller.abort(),10000)'),'frontend timeout must be bounded');
 assert.ok(!web.includes('Tools used</span>'),'developer metadata should not be shown');
 assert.ok(!web.includes('run.latencyMs?'),'latency should not be shown to normal users');
 console.log('ClinAI AI security, scope and presentation audit passed.');

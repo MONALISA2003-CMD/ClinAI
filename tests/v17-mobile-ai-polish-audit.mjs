@@ -9,7 +9,7 @@ assert.ok(layout.includes("export const viewport={width:'device-width',initialSc
 assert.ok(web.includes('function AIResponse'),'human-readable AI response renderer missing');
 assert.ok(web.includes('AI ready') && web.includes('Intelligence is available'),'AI status copy missing');
 assert.ok(!web.includes('status.model') && !web.includes('status.apiVersion'),'model/version should not be exposed in the UI');
-assert.ok(web.includes('Working through the request…'),'AI loading state missing');
+assert.ok(web.includes('Working…') || web.includes('Finding the answer…'),'AI loading state missing');
 assert.ok(css.includes('overflow-x:hidden') && css.includes('-webkit-text-size-adjust:100%'),'mobile overflow/text scaling guard missing');
 assert.ok(css.includes('.ai-response h3') && css.includes('.ai-response ul'),'AI response typography/list styles missing');
 assert.ok(intelligence.includes('UPPERCASE BOLD HEADINGS') && intelligence.includes('Never output JSON'),'AI human formatting instruction missing');

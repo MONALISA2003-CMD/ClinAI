@@ -25,7 +25,7 @@ const ENABLE_GEMINI_CODE_EXECUTION = process.env.GEMINI_ENABLE_CODE_EXECUTION ==
 const FREE_TIER_MODE = process.env.GEMINI_FREE_TIER_MODE !== 'false';
 const GEMINI_MAX_TOOL_ROUNDS = FREE_TIER_MODE ? 0 : Math.min(4, Math.max(0, Number(process.env.GEMINI_MAX_TOOL_ROUNDS || 2)));
 const GEMINI_FREE_DAILY_LIMIT = Math.max(1, Number(process.env.GEMINI_FREE_DAILY_LIMIT || 4));
-const GEMINI_FREE_MIN_INTERVAL_MS = Math.max(0, Number(process.env.GEMINI_FREE_MIN_INTERVAL_MS || 15000));
+const GEMINI_FREE_MIN_INTERVAL_MS = Math.max(0, Number(process.env.GEMINI_FREE_MIN_INTERVAL_MS || 0));
 const GEMINI_FREE_MAX_INPUT_CHARS = Math.max(4000, Number(process.env.GEMINI_FREE_MAX_INPUT_CHARS || 18000));
 let freeTierLastRequestAt = 0;
 let freeTierRequestsToday = 0;
@@ -37,9 +37,9 @@ const ALLOW_PUBLIC_AI_WITH_PATIENT_DATA = process.env.CLINAI_ALLOW_PUBLIC_AI_WIT
 const MULTI_MODEL_MODE = process.env.CLINAI_MULTI_MODEL_MODE !== 'false';
 const AI_FALLBACK_ATTEMPTS = Math.max(1, Math.min(5, Number(process.env.CLINAI_AI_FALLBACK_ATTEMPTS || 3)));
 const multiModelCache = new Map<string, { expiresAt: number; result: any }>();
-const MULTI_MODEL_CACHE_MS = Math.max(30000, Number(process.env.CLINAI_MULTI_MODEL_CACHE_MS || 300000));
-const AI_PROVIDER_TIMEOUT_MS = Math.max(3000, Number(process.env.CLINAI_PROVIDER_TIMEOUT_MS || 15000));
-const AI_QUICK_MAX_TOKENS = Math.max(300, Number(process.env.CLINAI_QUICK_MAX_TOKENS || 700));
+const MULTI_MODEL_CACHE_MS = Math.max(5000, Number(process.env.CLINAI_MULTI_MODEL_CACHE_MS || 60000));
+const AI_PROVIDER_TIMEOUT_MS = Math.max(2500, Number(process.env.CLINAI_PROVIDER_TIMEOUT_MS || 9000));
+const AI_QUICK_MAX_TOKENS = Math.max(180, Number(process.env.CLINAI_QUICK_MAX_TOKENS || 450));
 const AI_STANDARD_MAX_TOKENS = Math.max(500, Number(process.env.CLINAI_STANDARD_MAX_TOKENS || 1800));
 const AI_CONTEXT_CACHE_MS = Math.max(5000, Number(process.env.CLINAI_CONTEXT_CACHE_MS || 30000));
 const AI_FREE_TOOL_ROUNDS = Math.max(0, Math.min(1, Number(process.env.CLINAI_FREE_TOOL_ROUNDS || 1)));
@@ -171,6 +171,68 @@ function aiText(value: any, max = 14000) {
 async function query(pool: Pool | null, sql: string, params: any[] = []) {
   if (!pool) return [] as Row[];
   try { return (await pool.query(sql, params)).rows; } catch { return [] as Row[]; }
+}
+
+function fastIntent(input: string, patientId?: string | null) {
+  const q = String(input || '').toLowerCase().trim();
+  if (!q || /\b(why|which|compare|trend|changed|attention|review|summari[sz]e|briefing|analy[sz]e|forecast|predict|explain|recommend|what should|what may|risk|concern|problem|unresolved)\b/.test(q)) return null;
+  if (/\b(how many|number of|count|how much)\b.*\b(appointment|appointments|miadi|gahunda)\b|\b(appointment|appointments|miadi|gahunda)\b.*\b(today|leo|uyu)\b/.test(q)) return 'appointmentsToday';
+  if (/\b(how many|number of|count)\b.*\b(patient|patients|wagonjwa|abarwayi|balwadde)\b/.test(q)) return 'patients';
+  if (/\b(how many|number of|count)\b.*\b(active )?encounter|\b(active )?encounters\b/.test(q)) return 'activeEncounters';
+  if (/\b(how many|number of|count)\b.*\b(open )?(task|tasks|kazi|imirimo)\b/.test(q)) return 'openTasks';
+  if (/\b(what'?s|what is|show|how many|number of|count)\b.*\b(queue|waiting|wait|foleni)\b|\b(queue|foleni)\b.*\b(waiting|wait|wako)\b/.test(q)) return 'queue';
+  if (patientId && /\b(latest|last|most recent|current)\b.*\b(bp|blood pressure|pressure|shinikizo|umuvuduko)\b/.test(q)) return 'latestBP';
+  if (patientId && /\b(latest|last|most recent)\b.*\b(lab|laboratory|result|results|kipimo|ibisubizo)\b/.test(q)) return 'latestLab';
+  return null;
+}
+
+function localizedFast(policy: ReturnType<typeof getLanguagePolicy>, kind: string, value: any, extra?: any): Row {
+  const n = Number(value || 0);
+  const lang = policy.language;
+  const h = lang === 'English' ? {a:'ANSWER',k:'KEY POINTS',w:'WHAT NEEDS ATTENTION',i:'IMPORTANT'} :
+    lang === 'Kiswahili' ? {a:'JIBU',k:'MAMBO MUHIMU',w:'KINACHOHITAJI UMakini',i:'MUHIMU'} :
+    lang === 'Kinyarwanda' ? {a:'IGISUBIZO',k:'INGINGO Z’INGENZI',w:'IBIKENEYE KWITABWAHO',i:'INGENZI'} :
+    lang === 'Luganda' ? {a:'EBYANUKUDDE',k:'EBY’OKUMANYA',w:'EBYETAAGA OKWETEGEREZA',i:'KIKULU'} :
+    lang === 'Runyankore' ? {a:'ENSHUBUZO',k:'EBY’OKUMANYA',w:'EBYETAAGA OKWETEGEREZWA',i:'KIKURU'} :
+    {a:'ANSWER',k:'KEY POINTS',w:'WHAT NEEDS ATTENTION',i:'IMPORTANT'};
+  let answer=''; const points:string[]=[]; const attention:string[]=[];
+  if (kind==='appointmentsToday') {
+    if(lang==='Kiswahili') answer=`Kuna ${n} ${n===1?'miadi':'miadi'} leo.`; else if(lang==='Kinyarwanda') answer=`Uyu munsi hari gahunda ${n} z’abarwayi.`; else if(lang==='Luganda') answer=`Leero waliwo appointments ${n}.`; else if(lang==='Runyankore') answer=`Eizooba hariho appointments ${n}.`; else answer=`There ${n===1?'is':'are'} ${n} appointment${n===1?'':'s'} today.`;
+    if(extra?.statuses?.length) points.push(...extra.statuses.map((x:any)=>`${x.count} ${String(x.status).replaceAll('-',' ')}`));
+  } else if(kind==='patients') {
+    if(lang==='Kiswahili') answer=`Kuna wagonjwa ${n} katika mfumo kwa sasa.`; else if(lang==='Kinyarwanda') answer=`Muri sisitemu harimo abarwayi ${n} ubu.`; else if(lang==='Luganda') answer=`Kati sisitemu mulimu abalwadde ${n}.`; else if(lang==='Runyankore') answer=`Omuri sisitemu harimu abarwayi ${n}.`; else answer=`There ${n===1?'is':'are'} ${n} patient${n===1?'':'s'} in the system.`;
+  } else if(kind==='activeEncounters') {
+    answer=lang==='Kiswahili'?`Kuna ${n} encounters zinazoendelea kwa sasa.`:lang==='Kinyarwanda'?`Hari encounters ${n} zikomeje ubu.`:lang==='Luganda'?`Waliwo encounters ${n} ezigenda mu maaso.`:lang==='Runyankore'?`Hariho encounters ${n} eziri kugyenda omu maisho.`:`There ${n===1?'is':'are'} ${n} active encounter${n===1?'':'s'}.`;
+  } else if(kind==='openTasks') {
+    answer=lang==='Kiswahili'?`Kuna kazi ${n} zilizo wazi.`:lang==='Kinyarwanda'?`Hari imirimo ${n} itararangira.`:lang==='Luganda'?`Waliwo tasks ${n} ezikyaliwo.`:lang==='Runyankore'?`Hariho tasks ${n} ezikiriho.`:`There ${n===1?'is':'are'} ${n} open task${n===1?'':'s'}.`;
+  } else if(kind==='queue') {
+    const waiting=Number(extra?.waiting||0), urgent=Number(extra?.urgent||0), oldest=Number(extra?.oldest||0);
+    if(lang==='Kiswahili') answer=`Kwa sasa kuna ${waiting} wagonjwa wanaosubiri kwenye foleni.`; else if(lang==='Kinyarwanda') answer=`Kuri ubu hari abarwayi ${waiting} bategereje mu murongo.`; else if(lang==='Luganda') answer=`Kati queue mulimu abalwadde ${waiting} abakyali balindirira.`; else if(lang==='Runyankore') answer=`Omurongo guriho abarwayi ${waiting} abarikuteerereza.`; else answer=`There ${waiting===1?'is':'are'} ${waiting} patient${waiting===1?'':'s'} currently waiting.`;
+    if(urgent) attention.push(lang==='Kiswahili'?`${urgent} wagonjwa wenye kipaumbele cha haraka wanahitaji mapitio.`:lang==='Kinyarwanda'?`Abarwayi ${urgent} b’ihutirwa bakeneye kwitabwaho.`:lang==='Luganda'?`Abalwadde ${urgent} aba urgent betaaga okwetegereza.`:lang==='Runyankore'?`Abarwayi ${urgent} abari urgent betaaga okwetegerezwa.`:`${urgent} urgent patient${urgent===1?'':'s'} may need prompt review.`);
+    if(oldest>0) attention.push(lang==='Kiswahili'?`Muda mrefu zaidi wa kusubiri ni takriban dakika ${oldest}.`:lang==='Kinyarwanda'?`Igihe kirekire cyo gutegereza ni hafi iminota ${oldest}.`:lang==='Luganda'?`Omulwadde alindiridde okumala nga ddakiika ${oldest}.`:lang==='Runyankore'?`Okuteerereza kusinga obwire ni edakiika ${oldest}.`:`The longest recorded wait is approximately ${oldest} minutes.`);
+  } else if(kind==='latestBP' || kind==='latestLab') {
+    answer=kind==='latestBP' ? (lang==='Kiswahili'?`Kipimo cha mwisho cha shinikizo la damu ni ${extra?.value}.`:lang==='Kinyarwanda'?`Igipimo giheruka cy’umuvuduko w’amaraso ni ${extra?.value}.`:lang==='Luganda'?`BP eyasembayo eri ${extra?.value}.`:lang==='Runyankore'?`BP yareebwa aharizo eri ${extra?.value}.`:`The latest recorded blood pressure is ${extra?.value}.`) : (lang==='Kiswahili'?`Matokeo ya mwisho ya maabara yaliyorekodiwa ni ${extra?.name || 'result'}: ${extra?.value}.`:lang==='Kinyarwanda'?`Ibisubizo bya laboratoire biheruka ni ${extra?.name || 'result'}: ${extra?.value}.`:lang==='Luganda'?`Lab result esembayo ye ${extra?.name || 'result'}: ${extra?.value}.`:lang==='Runyankore'?`Lab result yareebwa aharizo ni ${extra?.name || 'result'}: ${extra?.value}.`:`The latest recorded laboratory result is ${extra?.name || 'result'}: ${extra?.value}.`);
+  }
+  return { directAnswer: answer, recordedFacts: points, calculations: [], reasoningSummary:'', suggestedReview: attention, uncertainty:[], evidence:[], confidence:'high' };
+}
+
+async function tryFastPath(deps: Deps, req: any, input: string, options: any, policy: ReturnType<typeof getLanguagePolicy>) {
+  if (options.publicMode || options.mode === 'research' || options.mode === 'analysis') return null;
+  const intent = fastIntent(input, options.patientId); if (!intent) return null;
+  const organizationId = deps.dbOrganizationId(req);
+  if (!organizationId) return null;
+  const started=Date.now();
+  let structured:Row|null=null;
+  if(intent==='appointmentsToday'){ const [r,s]=await Promise.all([query(deps.pool,`SELECT count(*)::int AS count FROM appointments WHERE organization_id=$1 AND start_at::date=current_date`,[organizationId]),query(deps.pool,`SELECT status,count(*)::int AS count FROM appointments WHERE organization_id=$1 AND start_at::date=current_date GROUP BY status`,[organizationId])]); structured=localizedFast(policy,intent,r[0]?.count||0,{statuses:s}); }
+  if(intent==='patients'){ const r=await query(deps.pool,`SELECT count(*)::int AS count FROM patients WHERE organization_id=$1`,[organizationId]); structured=localizedFast(policy,intent,r[0]?.count||0); }
+  if(intent==='activeEncounters'){ const r=await query(deps.pool,`SELECT count(*)::int AS count FROM encounters WHERE organization_id=$1 AND status IN ('active','in-progress')`,[organizationId]); structured=localizedFast(policy,intent,r[0]?.count||0); }
+  if(intent==='openTasks'){ const r=await query(deps.pool,`SELECT count(*)::int AS count FROM care_tasks WHERE organization_id=$1 AND status='open'`,[organizationId]); structured=localizedFast(policy,intent,r[0]?.count||0); }
+  if(intent==='queue'){ const r=await query(deps.pool,`SELECT count(*)::int AS waiting,count(*) FILTER (WHERE priority IN ('urgent','emergency','stat'))::int AS urgent,round(extract(epoch from (now()-min(joined_at)))/60)::int AS oldest FROM queue_entries qe JOIN queues q ON q.id=qe.queue_id WHERE q.organization_id=$1 AND qe.status NOT IN ('completed','cancelled','no-show')`,[organizationId]); structured=localizedFast(policy,intent,0,{waiting:r[0]?.waiting||0,urgent:r[0]?.urgent||0,oldest:r[0]?.oldest||0}); }
+  if(intent==='latestBP'){ const r=await query(deps.pool,`SELECT value_numeric AS value,unit,observed_at FROM observations o JOIN patients p ON p.id=o.patient_id WHERE o.patient_id=$1 AND p.organization_id=$2 AND lower(coalesce(code,'')) IN ('bp','blood-pressure','systolic','blood_pressure') ORDER BY observed_at DESC LIMIT 1`,[options.patientId,organizationId]); if(r[0]) structured=localizedFast(policy,intent,0,{value:`${r[0].value}${r[0].unit?' '+r[0].unit:''}`}); else return null; }
+  if(intent==='latestLab'){ const r=await query(deps.pool,`SELECT lt.name AS name,lr.value_numeric AS value,lr.value_text AS text,lr.unit FROM lab_results lr JOIN lab_samples ls ON ls.id=lr.sample_id JOIN clinical_orders co ON co.id=ls.order_id JOIN lab_tests lt ON lt.id=lr.test_id WHERE co.patient_id=$1 AND co.organization_id=$2 ORDER BY ls.received_at DESC NULLS LAST, lr.id DESC LIMIT 1`,[options.patientId,organizationId]); if(r[0]) structured=localizedFast(policy,intent,0,{name:r[0].name,value:r[0].value!=null?`${r[0].value}${r[0].unit?' '+r[0].unit:''}`:r[0].text}); else return null; }
+  if(!structured) return null;
+  const clean=polishClinAIAnswer(structured);
+  return {runId:randomUUID(),answer:responseToPlain(clean,clean.directAnswer,policy.language),structured:clean,mode:'quick',toolsUsed:[],calculations:[],latencyMs:Date.now()-started,usage:{inputTokens:0,outputTokens:0},provider:'deterministic',model:'clinai-fast-path',language:policy.language,languageTier:policy.tier,cached:false,fastPath:true};
 }
 
 async function patientContext(pool: Pool | null, organizationId: string | null, patientId: string) {
@@ -364,7 +426,19 @@ function parseStructured(text: string): Row | null {
   try { const x = JSON.parse(text); return x && typeof x === 'object' ? x : null; } catch { return null; }
 }
 
-function responseToPlain(answer: Row | null, fallback: string) {
+function responseHeadings(language = 'English') {
+  const map: Record<string, {answer:string; points:string; attention:string; important:string}> = {
+    English:{answer:'ANSWER',points:'KEY POINTS',attention:'WHAT NEEDS ATTENTION',important:'IMPORTANT'},
+    Kiswahili:{answer:'JIBU',points:'MAMBO MUHIMU',attention:'KINACHOHITAJI UMakini',important:'MUHIMU'},
+    Kinyarwanda:{answer:'IGISUBIZO',points:'INGINGO Z’INGENZI',attention:'IBIKENEYE KWITABWAHO',important:'INGENZI'},
+    Luganda:{answer:'EBYANUKUDDE',points:'EBY’OKUMANYA',attention:'EBYETAAGA OKWETEGEREZA',important:'KIKULU'},
+    Runyankore:{answer:'ENSHUBUZO',points:'EBY’OKUMANYA',attention:'EBYETAAGA OKWETEGEREZWA',important:'KIKURU'},
+    Alur:{answer:'ANSWER',points:'KEY POINTS',attention:'WHAT NEEDS ATTENTION',important:'IMPORTANT'}
+  };
+  return map[language] || map.English;
+}
+
+function responseToPlain(answer: Row | null, fallback: string, language = 'English') {
   if (!answer) return sanitizeClinAIResponse(fallback);
   let normalized: Row = answer;
   const direct = typeof answer.directAnswer === 'string' ? answer.directAnswer.trim() : '';
@@ -384,10 +458,11 @@ function responseToPlain(answer: Row | null, fallback: string) {
     lines.push(`**${heading}**`);
     for (const item of values) lines.push(Array.isArray(value) ? `• ${String(item)}` : String(item));
   };
-  addParagraph('ANSWER', cleanAnswer.directAnswer);
-  addParagraph('KEY POINTS', cleanAnswer.recordedFacts);
-  addParagraph('WHAT NEEDS ATTENTION', cleanAnswer.suggestedReview);
-  addParagraph('IMPORTANT', cleanAnswer.uncertainty);
+  const headings = responseHeadings(language);
+  addParagraph(headings.answer, cleanAnswer.directAnswer);
+  addParagraph(headings.points, cleanAnswer.recordedFacts);
+  addParagraph(headings.attention, cleanAnswer.suggestedReview);
+  addParagraph(headings.important, cleanAnswer.uncertainty);
   return sanitizeClinAIResponse(lines.join('\n\n'));
 }
 
@@ -439,7 +514,7 @@ async function runOpenAICompatibleAgent(deps: Deps, req: any, model: any, input:
     break;
   }
   const structured = parseStructured(finalText) || normalizeLooseAnswer(finalText);
-  return buildAgentResult(randomUUID(), structured, model.id, model.provider, options.mode || 'intelligence', started, toolsUsed, calculations, usage);
+  return buildAgentResult(randomUUID(), structured, model.id, model.provider, options.mode || 'intelligence', started, toolsUsed, calculations, usage, options.language || 'English');
 }
 
 async function recordProviderUsage(pool: Pool | null, req: any, model: any, result: any, status: string, errorCode?: string) {
@@ -450,16 +525,18 @@ async function recordProviderUsage(pool: Pool | null, req: any, model: any, resu
 }
 
 async function runAgent(deps: Deps, req: any, input: string, options: { purpose: string; role?: string; patientId?: string | null; mode?: string; allowResearch?: boolean; allowCodeExecution?: boolean; preferredModel?: string; publicMode?: boolean; language?: string }) {
+  const languagePolicy = getLanguagePolicy(options.language);
   const safetyCheck = classifyRequestSafety(input);
   if (safetyCheck.blocked) {
     const blocked = polishClinAIAnswer({ directAnswer: safetyCheck.message, recordedFacts: [], calculations: [], reasoningSummary: '', suggestedReview: [], uncertainty: [], evidence: [], confidence: 'high' });
-    return { runId: randomUUID(), answer: responseToPlain(blocked, blocked.directAnswer), structured: blocked, mode: options.mode || 'intelligence', toolsUsed: [], calculations: [], latencyMs: 0 };
+    return { runId: randomUUID(), answer: responseToPlain(blocked, blocked.directAnswer, languagePolicy.language), structured: blocked, mode: options.mode || 'intelligence', toolsUsed: [], calculations: [], latencyMs: 0 };
   }
-  const languagePolicy = getLanguagePolicy(options.language);
   if (languagePolicy.language === 'Alur' && options.purpose !== 'translation') {
     const limited = polishClinAIAnswer({ directAnswer: 'Alur support in ClinAI is limited to communication and translation. For clinical reasoning or patient-specific analysis, please use English, Kiswahili, Kinyarwanda, Luganda or Runyankore, or have a qualified clinician confirm the meaning first.', recordedFacts: [], calculations: [], reasoningSummary: '', suggestedReview: ['Confirm the original Alur wording before relying on it for clinical interpretation.'], uncertainty: ['ClinAI does not currently have sufficient validated Alur clinical-language coverage for safe clinical reasoning.'], evidence: [], confidence: 'insufficient' });
-    return { runId: randomUUID(), answer: responseToPlain(limited, limited.directAnswer), structured: limited, mode: options.mode || 'intelligence', toolsUsed: [], calculations: [], latencyMs: 0, language: 'Alur', languageTier: 'translation-only' };
+    return { runId: randomUUID(), answer: responseToPlain(limited, limited.directAnswer, 'Alur'), structured: limited, mode: options.mode || 'intelligence', toolsUsed: [], calculations: [], latencyMs: 0, language: 'Alur', languageTier: 'translation-only' };
   }
+  const fast = await tryFastPath(deps, req, input, options, languagePolicy);
+  if (fast) return fast;
   const patientData = Boolean(options.patientId);
   const cacheKey = stableRequestKey({ mode: options.mode || 'intelligence', role: options.role || '', patientId: options.patientId || '', input, preferredModel: options.preferredModel || '', publicMode: Boolean(options.publicMode), language: options.language || 'English' });
   const cached = multiModelCache.get(cacheKey);
@@ -570,9 +647,9 @@ function normalizeLooseAnswer(text: string): Row {
   return polishClinAIAnswer({ directAnswer: cleaned, recordedFacts: [], calculations: [], reasoningSummary: '', suggestedReview: [], uncertainty: [], evidence: [], confidence: 'moderate' });
 }
 
-function buildAgentResult(runId: string, structured: Row, model: string, provider: string, mode: string, started: number, toolsUsed: any[], calculations: any[], usage?: any) {
+function buildAgentResult(runId: string, structured: Row, model: string, provider: string, mode: string, started: number, toolsUsed: any[], calculations: any[], usage?: any, language = 'English') {
   const polished = polishClinAIAnswer(structured, 'ClinAI could not complete that request from the information currently available.');
-  return { runId, answer: responseToPlain(polished, polished.directAnswer), structured: polished, model, provider, mode, toolsUsed, calculations, latencyMs: Date.now() - started, usage: { inputTokens: usage?.prompt_tokens, outputTokens: usage?.completion_tokens } };
+  return { runId, answer: responseToPlain(polished, polished.directAnswer, language), structured: polished, model, provider, mode, toolsUsed, calculations, latencyMs: Date.now() - started, usage: { inputTokens: usage?.prompt_tokens, outputTokens: usage?.completion_tokens } };
 }
 
 async function runGeminiAgent(deps: Deps, req: any, input: string, options: any, prompt: string, context: any, evidence: any, cacheKey: string, selectedModel?: string) {
@@ -609,7 +686,7 @@ async function runGeminiAgent(deps: Deps, req: any, input: string, options: any,
   }
   const raw = extractText(interaction.data);
   const structured = parseStructured(raw) || normalizeLooseAnswer(raw);
-  const result = buildAgentResult(runId, structured, model, 'gemini', options.mode || 'intelligence', started, toolsUsed, calculations);
+  const result = buildAgentResult(runId, structured, model, 'gemini', options.mode || 'intelligence', started, toolsUsed, calculations, undefined, options.language || 'English');
   await recordWork(deps.pool, req, deps.dbOrganizationId(req), options.patientId || null, { ...result, purpose: options.purpose, status: 'completed', question: input, evidenceCount: (structured.evidence || []).length, confidence: structured.confidence, resultSummary: { directAnswer: structured.directAnswer } });
   return result;
 }
@@ -669,7 +746,7 @@ export function registerPublicAI(deps: Deps) {
 
 export function registerAI(deps: Deps) {
   const { app, pool } = deps;
-  app.get('/api/ai/status', async () => ({ configured: Boolean(GEMINI_API_KEY), intelligenceEngineConfigured: Boolean(INTELLIGENCE_SERVICE_URL), codeExecutionEnabled: ENABLE_GEMINI_CODE_EXECUTION, model: GEMINI_MODEL, apiVersion: GEMINI_API_VERSION, promptVersion: AI_PROMPT_VERSION, mode: FREE_TIER_MODE ? 'free-tier single-call human-reviewed intelligence' : 'tool-using human-reviewed intelligence' }));
+  app.get('/api/ai/status', async () => ({ configured: Object.values(configuredProviders()).some(Boolean), intelligenceEngineConfigured: Boolean(INTELLIGENCE_SERVICE_URL), codeExecutionEnabled: ENABLE_GEMINI_CODE_EXECUTION, model: GEMINI_MODEL, apiVersion: GEMINI_API_VERSION, promptVersion: AI_PROMPT_VERSION, mode: FREE_TIER_MODE ? 'free-tier single-call human-reviewed intelligence' : 'tool-using human-reviewed intelligence' }));
   app.get('/api/ai/providers', async () => ({ data: { multiModelEnabled: MULTI_MODEL_MODE, publicPatientDataAllowed: ALLOW_PUBLIC_AI_WITH_PATIENT_DATA, providers: configuredProviders(), models: availableModels() } }));
   app.post('/api/ai/router', async (req:any, reply:any) => { const body=z.object({ mode:z.string().optional(), patientData:z.boolean().default(false), preferredModel:z.string().optional() }).parse(req.body||{}); const model=selectModel(body); return model ? { data:model } : reply.code(503).send({error:'No configured AI provider is available for this request.'}); });
 
