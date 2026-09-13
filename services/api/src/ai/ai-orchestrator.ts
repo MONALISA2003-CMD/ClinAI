@@ -500,7 +500,7 @@ function stripStructuredDisplayLeak(text: string): string {
     }
   }
   // If a provider emitted a quoted directAnswer field without valid JSON, extract that field rather than showing the object.
-  const match = value.match(/"directAnswer"\s*:\s*"((?:\\.|[^"\\])*)"/s);
+  const match = value.match(/"directAnswer"\s*:\s*"((?:\\.|[^"\\])*)"/);
   if (match) {
     try { return stripStructuredDisplayLeak(JSON.parse(`"${match[1]}"`)); } catch { return match[1]; }
   }

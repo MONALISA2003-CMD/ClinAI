@@ -230,7 +230,7 @@ function humanizeAI(value:any){
        try{cur=JSON.parse(t);continue}catch{}
        const a=t.indexOf('{'),b=t.lastIndexOf('}');
        if(a>=0&&b>a){try{cur=JSON.parse(t.slice(a,b+1));continue}catch{}}
-       const m=t.match(/"directAnswer"\s*:\s*"((?:\\.|[^"\\])*)"/s);
+       const m=t.match(/"directAnswer"\s*:\s*"((?:\\.|[^"\\])*)"/);
        if(m){try{return {directAnswer:JSON.parse(`"${m[1]}"`),recordedFacts:[],suggestedReview:[],uncertainty:[]}}catch{return {directAnswer:m[1],recordedFacts:[],suggestedReview:[],uncertainty:[]}}}
        return {directAnswer:t,recordedFacts:[],suggestedReview:[],uncertainty:[]};
      }
