@@ -431,7 +431,18 @@ function extractText(data: any) {
 }
 
 function parseStructured(text: string): Row | null {
-  try { const x = JSON.parse(text); return x && typeof x === 'object' ? x : null; } catch { return null; }
+  const raw = String(text || '').trim();
+  if (!raw) return null;
+  const candidates = [raw, raw.replace(/^```(?:json|text|markdown)?\s*/i, '').replace(/\s*```$/i, '').trim()];
+  for (const candidate of candidates) {
+    try { const x = JSON.parse(candidate); if (x && typeof x === 'object') return x; } catch {}
+    const first = candidate.indexOf('{');
+    const last = candidate.lastIndexOf('}');
+    if (first >= 0 && last > first) {
+      try { const x = JSON.parse(candidate.slice(first, last + 1)); if (x && typeof x === 'object') return x; } catch {}
+    }
+  }
+  return null;
 }
 
 function responseHeadings(language = 'English') {
@@ -448,9 +459,9 @@ function responseHeadings(language = 'English') {
 
 function unwrapStructuredAnswer(value: any): Row | null {
   let current: any = value;
-  for (let i = 0; i < 5; i += 1) {
+  for (let i = 0; i < 8; i += 1) {
     if (current && typeof current === 'object' && !Array.isArray(current)) {
-      if (current.directAnswer || current.recordedFacts || current.suggestedReview || current.uncertainty || current.evidence) return current;
+      if (current.directAnswer !== undefined || current.recordedFacts !== undefined || current.suggestedReview !== undefined || current.uncertainty !== undefined || current.evidence !== undefined) return current;
       if (current.answer !== undefined) { current = current.answer; continue; }
       if (current.data !== undefined) { current = current.data; continue; }
       if (current.result !== undefined) { current = current.result; continue; }
@@ -459,12 +470,8 @@ function unwrapStructuredAnswer(value: any): Row | null {
     if (typeof current === 'string') {
       const text = current.trim().replace(/^```(?:json|text|markdown)?\s*/i, '').replace(/\s*```$/i, '').trim();
       if (!text) return null;
-      try { current = JSON.parse(text); continue; } catch {}
-      const first = text.indexOf('{');
-      const last = text.lastIndexOf('}');
-      if (first >= 0 && last > first) {
-        try { current = JSON.parse(text.slice(first, last + 1)); continue; } catch {}
-      }
+      const parsed = parseStructured(text);
+      if (parsed) { current = parsed; continue; }
       return { directAnswer: text, recordedFacts: [], calculations: [], reasoningSummary: '', suggestedReview: [], uncertainty: [], evidence: [], confidence: 'moderate' };
     }
     return null;
@@ -472,28 +479,65 @@ function unwrapStructuredAnswer(value: any): Row | null {
   return null;
 }
 
-function responseToPlain(answer: Row | null, fallback: string, language = 'English') {
-  if (!answer) return sanitizeClinAIResponse(fallback);
-  const normalized = unwrapStructuredAnswer(answer) || { directAnswer: fallback, recordedFacts: [], calculations: [], reasoningSummary: '', suggestedReview: [], uncertainty: [], evidence: [], confidence: 'low' };
-  // Never allow a nested structured object to become clinician-visible text.
-  if (typeof normalized.directAnswer === 'object') {
-    const nested = unwrapStructuredAnswer(normalized.directAnswer);
-    if (nested) Object.assign(normalized, nested);
+function stripStructuredDisplayLeak(text: string): string {
+  let value = String(text || '').trim();
+  if (!value) return '';
+  // Remove markdown fences only; never expose raw structured payloads to clinicians.
+  value = value.replace(/^```(?:json|text|markdown)?\s*/i, '').replace(/\s*```$/i, '').trim();
+  const parsed = parseStructured(value);
+  if (parsed) {
+    const normalized = unwrapStructuredAnswer(parsed);
+    if (normalized) return stripStructuredDisplayLeak(String(normalized.directAnswer || ''));
   }
-  const cleanAnswer = polishClinAIAnswer(normalized, fallback);
+  // Also handle a JSON object embedded after a model preamble.
+  const first = value.indexOf('{');
+  const last = value.lastIndexOf('}');
+  if (first >= 0 && last > first) {
+    const embedded = parseStructured(value.slice(first, last + 1));
+    if (embedded) {
+      const normalized = unwrapStructuredAnswer(embedded);
+      if (normalized) return stripStructuredDisplayLeak(String(normalized.directAnswer || ''));
+    }
+  }
+  // If a provider emitted a quoted directAnswer field without valid JSON, extract that field rather than showing the object.
+  const match = value.match(/"directAnswer"\s*:\s*"((?:\\.|[^"\\])*)"/s);
+  if (match) {
+    try { return stripStructuredDisplayLeak(JSON.parse(`"${match[1]}"`)); } catch { return match[1]; }
+  }
+  // Never render internal field names as a fallback.
+  if (/\b(?:directAnswer|recordedFacts|reasoningSummary|suggestedReview|uncertainty|responseSchema|toolsUsed|calculations)\b/.test(value) && /^[{\[]/.test(value)) {
+    return 'I could not prepare that response reliably. Please try the request again.';
+  }
+  return value;
+}
+
+function responseToPlain(answer: any, fallback: string, language = 'English') {
+  const normalized = unwrapStructuredAnswer(answer) || { directAnswer: fallback, recordedFacts: [], calculations: [], reasoningSummary: '', suggestedReview: [], uncertainty: [], evidence: [], confidence: 'low' };
+  let direct = stripStructuredDisplayLeak(String(normalized.directAnswer ?? fallback));
+  if (!direct) direct = stripStructuredDisplayLeak(fallback);
+  const cleanAnswer = polishClinAIAnswer({ ...normalized, directAnswer: direct }, fallback);
+  cleanAnswer.directAnswer = stripStructuredDisplayLeak(cleanAnswer.directAnswer) || stripStructuredDisplayLeak(fallback);
   const lines: string[] = [];
   const addParagraph = (heading: string, value: any) => {
     const values = Array.isArray(value) ? value.filter(Boolean) : value ? [value] : [];
     if (!values.length) return;
     lines.push(`**${heading}**`);
-    for (const item of values) lines.push(Array.isArray(value) ? `• ${String(item)}` : String(item));
+    for (const item of values) {
+      const safe = stripStructuredDisplayLeak(String(item));
+      if (safe) lines.push(Array.isArray(value) ? `• ${safe}` : safe);
+    }
   };
   const headings = responseHeadings(language);
   addParagraph(headings.answer, cleanAnswer.directAnswer);
   addParagraph(headings.points, cleanAnswer.recordedFacts);
   addParagraph(headings.attention, cleanAnswer.suggestedReview);
   addParagraph(headings.important, cleanAnswer.uncertainty);
-  return sanitizeClinAIResponse(lines.join('\n\n'));
+  const result = sanitizeClinAIResponse(lines.join('\n\n'));
+  return result || `**${headings.answer}**\n\n${stripStructuredDisplayLeak(fallback)}`;
+}
+
+function clinicianResponse(result: any, language = 'English') {
+  return responseToPlain(result?.structured ?? result, result?.answer || 'I could not complete that request from the information currently available.', language);
 }
 
 async function recordWork(pool: Pool | null, req: any, organizationId: string | null, patientId: string | null, run: Row) {
@@ -767,7 +811,7 @@ export function registerPublicAI(deps: Deps) {
     if (safety.blocked) return reply.code(400).send({ error: safety.message });
     try {
       const result = await runAgent(deps, req, body.question, { purpose: 'public-health-assistant', role: 'public user', mode: 'quick', publicMode: true, language: body.language });
-      return { data: { answer: result.answer, runId: result.runId } };
+      return { data: { answer: clinicianResponse(result, body.language), runId: result.runId } };
     } catch (e: any) {
       return reply.code(e.statusCode || 502).send({ error: sanitizeClinAIResponse(e.message || 'The public health assistant is temporarily unavailable.') });
     }
@@ -812,13 +856,13 @@ export function registerAI(deps: Deps) {
     try {
       const result = await runAgent(deps, req, body.question, { purpose: body.purpose, role: body.role, patientId: body.patientId || null, mode: body.mode, language: body.language, allowResearch: body.mode === 'research', allowCodeExecution: body.mode === 'analysis' });
       await registerWorkAudit(pool, req, body.patientId || null, body.purpose, result);
-      return { data: { answer: result.answer, runId: result.runId } };
+      return { data: { answer: clinicianResponse(result, body.language), runId: result.runId } };
     } catch (e: any) { return reply.code(e.statusCode || 502).send({ error: sanitizeClinAIResponse(e.message || 'ClinAI could not complete that request.') }); }
   });
 
   app.post('/api/ai/patient-intelligence', async (req: any, reply: any) => {
     const body = z.object({ patientId: z.string().uuid(), question: z.string().default('What needs my attention about this patient?'), language: z.enum(SUPPORTED_CLINAI_LANGUAGES as [string, ...string[]]).default('English') }).parse(req.body || {});
-    try { const result=await runAgent(deps, req, body.question, { purpose: 'patient-intelligence', patientId: body.patientId, mode: 'intelligence', language: body.language }); return { data: { answer: result.answer, runId: result.runId } }; } catch (e: any) { return reply.code(e.statusCode || 502).send({ error: sanitizeClinAIResponse(e.message || 'ClinAI could not complete that request.') }); }
+    try { const result=await runAgent(deps, req, body.question, { purpose: 'patient-intelligence', patientId: body.patientId, mode: 'intelligence', language: body.language }); return { data: { answer: clinicianResponse(result, body.language), runId: result.runId } }; } catch (e: any) { return reply.code(e.statusCode || 502).send({ error: sanitizeClinAIResponse(e.message || 'ClinAI could not complete that request.') }); }
   });
 
   app.post('/api/ai/compute', async (req: any, reply: any) => {

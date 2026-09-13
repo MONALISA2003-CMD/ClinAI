@@ -211,13 +211,14 @@ function RowActions({module,row,token,done,openPatient,openEncounter}:{module:st
 
 function humanError(value:any){const s=String(value||'').trim();if(!s)return 'We could not complete that request. Please try again.';try{const j=JSON.parse(s);if(j&&typeof j==='object')return humanError(j.error||j.message||j.detail||'We could not complete that request. Please try again.')}catch{}return s.replace(/\s+/g,' ').replace(/\b(uuid|JSON|schema|payload|request body|validation)\b/gi,'information').trim();}
 function humanizeAI(value:any){
- const language=typeof value==='object'&&value?.language?String(value.language):'English';
- const headings:any={English:['ANSWER','KEY POINTS','WHAT NEEDS ATTENTION','IMPORTANT'],Kiswahili:['JIBU','MAMBO MUHIMU','KINACHOHITAJI UMAKINI','MUHIMU'],Kinyarwanda:['IGISUBIZO','INGINGO Z’INGENZI','IBIKENEYE KWITABWAHO','INGENZI'],Luganda:['EBYANUKUDDE','EBY’OKUMANYA','EBYETAAGA OKWETEGEREZA','KIKULU'],Runyankore:['ENSHUBUZO','EBY’OKUMANYA','EBYETAAGA OKWETEGEREZWA','KIKURU'],Alur:['ANSWER','KEY POINTS','WHAT NEEDS ATTENTION','IMPORTANT']}[language]||['ANSWER','KEY POINTS','WHAT NEEDS ATTENTION','IMPORTANT'];
+ const headings:any={English:['ANSWER','KEY POINTS','WHAT NEEDS ATTENTION','IMPORTANT'],Kiswahili:['JIBU','MAMBO MUHIMU','KINACHOHITAJI UMAKINI','MUHIMU'],Kinyarwanda:['IGISUBIZO','INGINGO Z’INGENZI','IBIKENEYE KWITABWAHO','INGENZI'],Luganda:['EBYANUKUDDE','EBY’OKUMANYA','EBYETAAGA OKWETEGEREZA','KIKULU'],Runyankore:['ENSHUBUZO','EBY’OKUMANYA','EBYETAAGA OKWETEGEREZWA','KIKURU'],Alur:['ANSWER','KEY POINTS','WHAT NEEDS ATTENTION','IMPORTANT']};
+ const lang=typeof value==='object'&&value?.language?String(value.language):'English';
+ const hs=headings[lang]||headings.English;
  const unwrap=(input:any):any=>{
    let cur=input;
-   for(let i=0;i<6;i++){
+   for(let i=0;i<10;i++){
      if(cur&&typeof cur==='object'&&!Array.isArray(cur)){
-       if(cur.directAnswer!==undefined||cur.recordedFacts!==undefined||cur.suggestedReview!==undefined||cur.uncertainty!==undefined)return cur;
+       if(Object.prototype.hasOwnProperty.call(cur,'directAnswer')||Object.prototype.hasOwnProperty.call(cur,'recordedFacts')||Object.prototype.hasOwnProperty.call(cur,'suggestedReview')||Object.prototype.hasOwnProperty.call(cur,'uncertainty')) return cur;
        if(cur.answer!==undefined){cur=cur.answer;continue}
        if(cur.data!==undefined){cur=cur.data;continue}
        if(cur.result!==undefined){cur=cur.result;continue}
@@ -229,6 +230,8 @@ function humanizeAI(value:any){
        try{cur=JSON.parse(t);continue}catch{}
        const a=t.indexOf('{'),b=t.lastIndexOf('}');
        if(a>=0&&b>a){try{cur=JSON.parse(t.slice(a,b+1));continue}catch{}}
+       const m=t.match(/"directAnswer"\s*:\s*"((?:\\.|[^"\\])*)"/s);
+       if(m){try{return {directAnswer:JSON.parse(`"${m[1]}"`),recordedFacts:[],suggestedReview:[],uncertainty:[]}}catch{return {directAnswer:m[1],recordedFacts:[],suggestedReview:[],uncertainty:[]}}}
        return {directAnswer:t,recordedFacts:[],suggestedReview:[],uncertainty:[]};
      }
      return null;
@@ -236,14 +239,19 @@ function humanizeAI(value:any){
    return null;
  };
  const j=unwrap(value);
- if(!j)return 'ClinAI could not find enough information to answer that clearly.';
+ if(!j)return '**'+hs[0]+'**\n\nClinAI could not prepare that response reliably. Please try again.';
+ const nested=unwrap(j.directAnswer);
+ if(nested&&nested.directAnswer&&typeof nested.directAnswer==='string') Object.assign(j,nested);
+ const cleanText=(v:any)=>String(v??'').replace(/^\s*```(?:json|text|markdown)?\s*/i,'').replace(/\s*```\s*$/i,'').trim();
+ const looksLikeInternal=(v:string)=>/\b(?:directAnswer|recordedFacts|reasoningSummary|suggestedReview|uncertainty|responseSchema|toolsUsed|calculations)\b/.test(v)&&(/^[{\[]/.test(v)||/"\s*:/.test(v));
+ let direct=cleanText(j.directAnswer);
+ if(looksLikeInternal(direct)){
+   const again=unwrap(direct); direct=again?.directAnswer?cleanText(again.directAnswer):'ClinAI could not prepare that response reliably. Please try again.';
+ }
  const lines:string[]=[];
- const add=(h:string,v:any)=>{const a=Array.isArray(v)?v.filter(Boolean):v?[v]:[];if(!a.length)return;lines.push(`**${h}**`);a.forEach(x=>lines.push(Array.isArray(v)?`• ${String(x)}`:String(x)))};
- // If the model nested another structured answer in directAnswer, unwrap it before rendering.
- const nested=unwrap(j.directAnswer); if(nested&&nested!==j&&nested.directAnswer) Object.assign(j,nested);
- add(headings[0],j.directAnswer);add(headings[1],j.recordedFacts);add(headings[2],j.suggestedReview);add(headings[3],j.uncertainty);
- if(lines.length)return lines.join('\n\n');
- return typeof j.directAnswer==='string'?j.directAnswer:'ClinAI could not find enough information to answer that clearly.';
+ const add=(h:string,v:any)=>{const a=Array.isArray(v)?v.filter(Boolean):v?[v]:[];const safe=a.map(cleanText).filter(x=>x&&!looksLikeInternal(x));if(!safe.length)return;lines.push(`**${h}**`);safe.forEach(x=>lines.push(Array.isArray(v)?`• ${x}`:x))};
+ add(hs[0],direct);add(hs[1],j.recordedFacts);add(hs[2],j.suggestedReview);add(hs[3],j.uncertainty);
+ return lines.length?lines.join('\n\n'):`**${hs[0]}**\n\nClinAI could not prepare that response reliably. Please try again.`;
 }
 function AIResponse({text}:{text:string}){
  const lines=text.replace(/\r/g,'').replace(/```(?:text|markdown)?/gi,'').split('\n');
@@ -262,7 +270,7 @@ function AIWorkspace({token,patientId}:{token:string;patientId?:string}){
    fetch(`${API}/api/ai/status`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json()),
    fetch(`${API}/api/ai/brief`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json()).catch(()=>({data:{}}))
  ]).then(([a,b])=>{setStatus(a);setBrief(b.data||{})}).catch(()=>{})},[token]);
- async function ask(q=question){if(!q.trim()||busy)return;setBusy(true);setAnswer('');setRun({});const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),10000);try{const r=await fetch(`${API}/api/ai/assist`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`,'Idempotency-Key':crypto.randomUUID()},body:JSON.stringify({patientId:patientId||null,question:q,role,purpose:patientId?'patient-intelligence':'ask-clinai',mode,language}),signal:controller.signal});const d=await r.json();if(!r.ok)throw new Error(humanError(d.error||'ClinAI could not respond'));setAnswer(humanizeAI(d.data?.answer||'No answer was returned.'));setRun(d.data||{});setQuestion('')}catch(e:any){setAnswer(e?.name==='AbortError'?'ClinAI is taking longer than expected. Please try the request again.':(e.message||'ClinAI could not respond.'))}finally{clearTimeout(timeout);setBusy(false)}}
+ async function ask(q=question){if(!q.trim()||busy)return;setBusy(true);setAnswer('');setRun({});const controller=new AbortController();const timeoutMs=mode==='quick'?5000:mode==='analysis'?20000:15000;const timeout=setTimeout(()=>controller.abort(),timeoutMs);try{const r=await fetch(`${API}/api/ai/assist`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`,'Idempotency-Key':crypto.randomUUID()},body:JSON.stringify({patientId:patientId||null,question:q,role,purpose:patientId?'patient-intelligence':'ask-clinai',mode,language}),signal:controller.signal});const d=await r.json();if(!r.ok)throw new Error(humanError(d.error||'ClinAI could not respond'));setAnswer(humanizeAI(d.data?.answer||'No answer was returned.'));setRun(d.data||{});setQuestion('')}catch(e:any){setAnswer(e?.name==='AbortError'?'ClinAI is taking longer than expected. Please try the request again.':(e.message||'ClinAI could not respond.'))}finally{clearTimeout(timeout);setBusy(false)}}
  const prompts=patientId?['What needs my attention about this patient?','Summarize this patient before the visit.','What has changed recently?','What follow-up is outstanding?','Explain the important recent results.']:mode==='analysis'?['Compare this week with the previous week.','What trends are unusual?','Where is the biggest operational pressure?','Calculate the most important service indicators.']:mode==='research'?['Research the latest guidance relevant to today.','Compare approved guidance with our configured pathway.','Find evidence that could improve this workflow.']:['What needs attention across the facility today?','Prepare a leadership briefing for today.','What are the biggest operational pressures?','Summarize clinical attention items.'];
  const roleLabels:Record<string,string>={leadership:'Leadership',doctor:'Doctor',nurse:'Nurse',pharmacist:'Pharmacist',laboratory:'Laboratory',manager:'Manager',district:'District'};
  const modes=[['quick','Quick','Fast lookups and simple questions'],['intelligence','Intelligence','Cross-module reasoning and attention'],['analysis','Analytics','Calculations, trends and complex analysis'],['research','Research','External evidence and approved sources']];
