@@ -35,6 +35,7 @@ let freeTierLock: Promise<void> = Promise.resolve();
 const freeTierCache = new Map<string, { expiresAt: number; result: any }>();
 const GEMINI_FREE_CACHE_MS = Math.max(30000, Number(process.env.GEMINI_FREE_CACHE_MS || 300000));
 const ALLOW_PUBLIC_AI_WITH_PATIENT_DATA = process.env.CLINAI_ALLOW_PUBLIC_AI_WITH_PATIENT_DATA === 'true';
+const STRICT_CAPABILITY_ROUTING = process.env.CLINAI_STRICT_CAPABILITY_ROUTING !== 'false';
 const MULTI_MODEL_MODE = process.env.CLINAI_MULTI_MODEL_MODE !== 'false';
 const AI_FALLBACK_ATTEMPTS = Math.max(1, Math.min(5, Number(process.env.CLINAI_AI_FALLBACK_ATTEMPTS || 3)));
 const multiModelCache = new Map<string, { expiresAt: number; result: any }>();
@@ -661,8 +662,9 @@ async function runAgent(deps: Deps, req: any, input: string, options: { purpose:
     else { evidence = await approvedKnowledge(deps.pool, organizationId); contextCache.set(evidenceKey, { expiresAt: Date.now() + AI_CONTEXT_CACHE_MS, value: evidence }); }
   }
   const languageAnalysis = await languageAnalysisPromise;
-  const safeContext = patientData && !ALLOW_PUBLIC_AI_WITH_PATIENT_DATA ? redactForPublicModel(context) : context;
-  const contextLimit = options.mode === 'quick' ? 7000 : (patientData && !ALLOW_PUBLIC_AI_WITH_PATIENT_DATA ? 14000 : 22000);
+  const publicPatientContext = patientData && ALLOW_PUBLIC_AI_WITH_PATIENT_DATA ? buildPublicPatientContext(context) : null;
+  const safeContext = patientData && ALLOW_PUBLIC_AI_WITH_PATIENT_DATA ? publicPatientContext : context;
+  const contextLimit = options.mode === 'quick' ? 7000 : (patientData && ALLOW_PUBLIC_AI_WITH_PATIENT_DATA ? 6000 : 22000);
   const evidenceLimit = options.mode === 'quick' ? 0 : 9000;
   const prompt = `User role: ${options.role || 'healthcare professional'}
 Requested mode: ${options.mode || 'intelligence'}
@@ -692,10 +694,20 @@ ${input}`;
 
   const candidates: any[] = [];
   const configured = configuredProviders();
-  const first = selectModel({ mode: options.mode, patientData, preferredModel: options.preferredModel, allowPublic: ALLOW_PUBLIC_AI_WITH_PATIENT_DATA, capability: options.capability });
+  const selectionCapability = options.capability;
+  const first = selectModel({ mode: options.mode, patientData, preferredModel: options.preferredModel, allowPublic: ALLOW_PUBLIC_AI_WITH_PATIENT_DATA, capability: selectionCapability });
+  if (!first && selectionCapability && STRICT_CAPABILITY_ROUTING) {
+    throw Object.assign(new Error(`No configured AI model supports the requested ${selectionCapability} capability under the current patient-data policy.`), { statusCode: 503, code: 'AI_CAPABILITY_UNAVAILABLE' });
+  }
   if (first) candidates.push(first);
-  for (const m of AI_MODELS.filter(x => x.enabled && configured[x.provider] && modelSupportsCapability(x, options.capability) && (!patientData || (!x.noPersonalData && (!x.publicEndpoint || ALLOW_PUBLIC_AI_WITH_PATIENT_DATA)))).sort((a,b)=>a.priority-b.priority)) {
-    if (!candidates.some(x => x.id === m.id)) candidates.push(m);
+  const eligible = AI_MODELS.filter(x => {
+    const dataEligible = !patientData || (x.patientDataEligible && !x.noPersonalData && (!x.publicEndpoint || ALLOW_PUBLIC_AI_WITH_PATIENT_DATA));
+    const capabilityEligible = !selectionCapability || modelSupportsCapability(x, selectionCapability);
+    return x.enabled && configured[x.provider] && dataEligible && capabilityEligible;
+  }).sort((a,b)=>a.priority-b.priority);
+  for (const m of eligible) if (!candidates.some(x => x.id === m.id)) candidates.push(m);
+  if (!candidates.length) {
+    throw Object.assign(new Error(patientData ? 'No AI provider currently meets the patient-data policy for this request.' : 'No configured AI provider is available for this request.'), { statusCode: 503, code: 'AI_PROVIDER_POLICY_BLOCKED' });
   }
 
   // Gemini is kept as a provider, but its Interactions API remains the native path because it supports ClinAI's existing tool protocol.
@@ -707,14 +719,14 @@ ${input}`;
       if (model.provider === 'gemini') {
         result = await runGeminiAgent(deps, req, input, options, prompt, context, evidence, cacheKey, model.id);
       } else {
-        const allowTools = model.toolCalling && options.mode !== 'quick' && (!patientData || ALLOW_PUBLIC_AI_WITH_PATIENT_DATA);
+        const allowTools = model.toolCalling && options.mode !== 'quick' && (!patientData || (!model.publicEndpoint && model.patientDataEligible));
         result = await runOpenAICompatibleAgent(deps, req, model, input, prompt, options, allowTools);
         await recordProviderUsage(deps.pool, req, model, result, 'completed');
         await recordWork(deps.pool, req, deps.dbOrganizationId(req), options.patientId || null, { ...result, purpose: options.purpose, status: 'completed', question: input, evidenceCount: (result.structured.evidence || []).length, confidence: result.structured.confidence, resultSummary: { directAnswer: result.structured.directAnswer } });
       }
       result.provider = model.provider;
       result.fallbackChain = candidates.slice(0, AI_FALLBACK_ATTEMPTS).map(x => x.label);
-      result.patientDataPolicy = patientData && !ALLOW_PUBLIC_AI_WITH_PATIENT_DATA ? 'public-models-receive-redacted context' : 'configured';
+      result.patientDataPolicy = patientData ? (model.publicEndpoint ? 'public-model-receives-no-patient-clinical-context' : 'direct-provider-allowed') : 'not-applicable';
       multiModelCache.set(cacheKey, { expiresAt: Date.now() + MULTI_MODEL_CACHE_MS, result });
       return { ...result, language: languagePolicy.language, languageTier: languagePolicy.tier };
     } catch (e:any) {
@@ -726,13 +738,16 @@ ${input}`;
   throw Object.assign(new Error(lastError?.message || 'No configured AI provider was able to complete this request.'), { statusCode: lastError?.statusCode || 503, code: 'AI_PROVIDER_EXHAUSTED', providerMessage: lastError?.providerMessage });
 }
 
-function redactForPublicModel(value: any): any {
-  if (Array.isArray(value)) return value.map(redactForPublicModel);
-  if (!value || typeof value !== 'object') return value;
-  const sensitive = new Set(['firstName','middleName','lastName','phone','address','patientNumber','dateOfBirth','id','patientId','userId','organizationId','facilityId']);
-  const out:any = {};
-  for (const [k,v] of Object.entries(value)) out[k] = sensitive.has(k) ? '[redacted]' : redactForPublicModel(v);
-  return out;
+function buildPublicPatientContext(value: any) {
+  // Public/free endpoints are never given record-level patient context. The opt-in flag
+  // only permits a minimal, non-identifying workload descriptor so the model can answer
+  // general workflow questions without receiving diagnoses, labs, medications, notes, IDs,
+  // dates, contacts, or longitudinal clinical records.
+  return {
+    publicPatientContext: true,
+    clinicalRecordsProvided: false,
+    note: 'Patient-specific clinical records are intentionally withheld from public/free AI endpoints. Use the direct-provider clinical route for patient context.'
+  };
 }
 
 function runUuid() { return randomUUID(); }
@@ -844,7 +859,7 @@ export function registerPublicAI(deps: Deps) {
 export function registerAI(deps: Deps) {
   const { app, pool } = deps;
   app.get('/api/ai/status', async () => ({ configured: Object.values(configuredProviders()).some(Boolean), intelligenceEngineConfigured: Boolean(INTELLIGENCE_SERVICE_URL), codeExecutionEnabled: ENABLE_GEMINI_CODE_EXECUTION, model: GEMINI_MODEL, apiVersion: GEMINI_API_VERSION, promptVersion: AI_PROMPT_VERSION, mode: FREE_TIER_MODE ? 'free-tier single-call human-reviewed intelligence' : 'tool-using human-reviewed intelligence' }));
-  app.get('/api/ai/providers', async () => ({ data: { multiModelEnabled: MULTI_MODEL_MODE, publicPatientDataAllowed: ALLOW_PUBLIC_AI_WITH_PATIENT_DATA, providers: configuredProviders(), models: availableModels() } }));
+  app.get('/api/ai/providers', async () => ({ data: { multiModelEnabled: MULTI_MODEL_MODE, strictCapabilityRouting: STRICT_CAPABILITY_ROUTING, publicPatientDataAllowed: ALLOW_PUBLIC_AI_WITH_PATIENT_DATA, providers: configuredProviders(), models: availableModels() } }));
   app.post('/api/ai/router', async (req:any, reply:any) => { const body=z.object({ mode:z.string().optional(), patientData:z.boolean().default(false), preferredModel:z.string().optional(), capability:z.enum(['text','multimodal','image','audio','video','agentic','medical','coding','research','fast']).optional() }).parse(req.body||{}); const model=selectModel(body); return model ? { data:model } : reply.code(503).send({error:'No configured AI provider is available for this request.'}); });
 
   app.get('/api/ai/usage', async (req: any) => {
