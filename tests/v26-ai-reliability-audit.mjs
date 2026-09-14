@@ -1,0 +1,13 @@
+import fs from 'node:fs';
+import assert from 'node:assert/strict';
+const p=fs.readFileSync(new URL('../services/api/src/ai/ai-orchestrator.ts',import.meta.url),'utf8');
+const providers=fs.readFileSync(new URL('../services/api/src/ai/ai-providers.ts',import.meta.url),'utf8');
+assert.ok(p.includes('function isUsableAgentResponse'));
+assert.ok(p.includes('PROVIDER_EMPTY_OR_INVALID_RESPONSE'));
+assert.ok(p.includes('did not return a usable final answer'));
+assert.ok(p.includes('Gemini returned an unusable response'));
+assert.ok(p.includes('for (const model of candidates.slice(0, AI_FALLBACK_ATTEMPTS))'));
+assert.ok(providers.includes("body.response_format = { type: 'json_schema'"));
+assert.ok(p.includes('additionalProperties: false'));
+assert.ok(providers.includes("model.id === 'gpt-oss-120b'"));
+console.log('V26 AI reliability audit passed.');

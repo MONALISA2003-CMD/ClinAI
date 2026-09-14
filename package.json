@@ -15,7 +15,9 @@
     "build:web": "npm --workspace @clinai/web run build",
     "test": "vitest run",
     "smoke": "node scripts/smoke.mjs",
-    "test:smoke": "node scripts/smoke.mjs"
+    "test:smoke": "node scripts/smoke.mjs",
+    "test:v26:modules": "node tests/v26-module-contract-audit.mjs",
+    "test:v26:ai": "node tests/v26-ai-reliability-audit.mjs"
   },
   "devDependencies": {
     "@types/node": "latest",

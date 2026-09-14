@@ -574,6 +574,21 @@ function openAIToolDeclarations() {
   return toolDeclarations.map((t:any) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.parameters } }));
 }
 
+function isUsableAgentResponse(text: any, message: any) {
+  const value = String(text || '').trim();
+  if (!value) return false;
+  if (message?.tool_calls?.length) return false;
+  const lower = value.toLowerCase();
+  if (lower === 'no answer was returned.' || lower === 'i could not complete that request from the information currently available.') return false;
+  const parsed = parseStructured(value);
+  if (parsed) {
+    const direct = String(parsed.directAnswer ?? parsed.answer ?? '').trim();
+    if (!direct) return false;
+    if (/^(no answer was returned|i could not complete that request)/i.test(direct)) return false;
+  }
+  return true;
+}
+
 async function runOpenAICompatibleAgent(deps: Deps, req: any, model: any, input: string, prompt: string, options: any, allowTools: boolean) {
   const started = Date.now();
   const messages:any[] = [{ role: 'system', content: baseSystem }, { role: 'user', content: prompt }];
@@ -606,9 +621,19 @@ async function runOpenAICompatibleAgent(deps: Deps, req: any, model: any, input:
       continue;
     }
     finalText = response.text || message.content || '';
+    if (!isUsableAgentResponse(finalText, message)) {
+      throw Object.assign(new Error(`${model.label} returned an unusable response.`), { code: 'PROVIDER_EMPTY_OR_INVALID_RESPONSE', statusCode: 502, provider: model.provider });
+    }
     break;
   }
+  if (!isUsableAgentResponse(finalText, {})) {
+    throw Object.assign(new Error(`${model.label} did not return a usable final answer.`), { code: 'PROVIDER_EMPTY_OR_INVALID_RESPONSE', statusCode: 502, provider: model.provider });
+  }
   const structured = parseStructured(finalText) || normalizeLooseAnswer(finalText);
+  const directAnswer = String(structured?.directAnswer || '').trim();
+  if (!directAnswer || /^(no answer was returned|i could not complete that request)/i.test(directAnswer)) {
+    throw Object.assign(new Error(`${model.label} returned an incomplete final answer.`), { code: 'PROVIDER_EMPTY_OR_INVALID_RESPONSE', statusCode: 502, provider: model.provider });
+  }
   return buildAgentResult(randomUUID(), structured, model.id, model.provider, options.mode || 'intelligence', started, toolsUsed, calculations, usage, options.language || 'English');
 }
 
@@ -803,7 +828,9 @@ async function runGeminiAgent(deps: Deps, req: any, input: string, options: any,
     loop += 1;
   }
   const raw = extractText(interaction.data);
+  if (!isUsableAgentResponse(raw, {})) throw Object.assign(new Error('Gemini returned an unusable response.'), { code: 'PROVIDER_EMPTY_OR_INVALID_RESPONSE', statusCode: 502, provider: 'gemini' });
   const structured = parseStructured(raw) || normalizeLooseAnswer(raw);
+  if (!String(structured?.directAnswer || '').trim()) throw Object.assign(new Error('Gemini returned an incomplete final answer.'), { code: 'PROVIDER_EMPTY_OR_INVALID_RESPONSE', statusCode: 502, provider: 'gemini' });
   const result = buildAgentResult(runId, structured, model, 'gemini', options.mode || 'intelligence', started, toolsUsed, calculations, undefined, options.language || 'English');
   await recordWork(deps.pool, req, deps.dbOrganizationId(req), options.patientId || null, { ...result, purpose: options.purpose, status: 'completed', question: input, evidenceCount: (structured.evidence || []).length, confidence: structured.confidence, resultSummary: { directAnswer: structured.directAnswer } });
   return result;
