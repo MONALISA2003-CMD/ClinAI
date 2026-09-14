@@ -139,6 +139,7 @@ const responseSchema = {
     confidence: { type: 'string', enum: ['high', 'moderate', 'low', 'insufficient'] },
   },
   required: ['directAnswer', 'recordedFacts', 'calculations', 'reasoningSummary', 'suggestedReview', 'uncertainty', 'evidence', 'confidence'],
+  additionalProperties: false,
 };
 
 const baseSystem = `You are ClinAI, a highly capable healthcare information assistant for authorized care and facility teams.
@@ -585,7 +586,7 @@ async function runOpenAICompatibleAgent(deps: Deps, req: any, model: any, input:
     const response:any = await callOpenAICompatible(model, prompt, baseSystem, responseSchema, {
       reasoning: options.mode !== 'quick' && model.provider !== 'groq',
       maxTokens: options.mode === 'quick' ? AI_QUICK_MAX_TOKENS : AI_STANDARD_MAX_TOKENS,
-      tools: allowTools ? openAIToolDeclarations() : undefined,
+      tools: allowTools && round < maxRounds ? openAIToolDeclarations() : undefined,
       messages,
     });
     usage = response.usage || usage;
@@ -735,7 +736,12 @@ ${input}`;
       continue;
     }
   }
-  throw Object.assign(new Error(lastError?.message || 'No configured AI provider was able to complete this request.'), { statusCode: lastError?.statusCode || 503, code: 'AI_PROVIDER_EXHAUSTED', providerMessage: lastError?.providerMessage });
+  throw Object.assign(new Error('ClinAI could not complete the AI request with the currently available providers. Please try again.'), {
+    statusCode: lastError?.statusCode || 503,
+    code: 'AI_PROVIDER_EXHAUSTED',
+    providerMessage: lastError?.providerMessage,
+    lastProvider: lastError?.provider,
+  });
 }
 
 function buildPublicPatientContext(value: any) {

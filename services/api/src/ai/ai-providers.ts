@@ -126,8 +126,16 @@ export async function callOpenAICompatible(model: AIModel, prompt: string, syste
   if (!key || !configured[model.provider]) throw Object.assign(new Error(`${model.label} is not configured.`), { code: 'PROVIDER_NOT_CONFIGURED', statusCode: 503 });
   const messages = opts.messages || [{ role: 'system', content: system }, { role: 'user', content: prompt }];
   const body: any = { model: model.id, messages, temperature: 0.2, max_tokens: opts.maxTokens || 4096 };
-  if (opts.tools?.length && model.toolCalling) { body.tools = opts.tools; body.tool_choice = 'auto'; }
-  if (model.structuredOutput) body.response_format = { type: 'json_schema', json_schema: { name: 'clinai_answer', strict: true, schema } };
+  const toolsEnabled = Boolean(opts.tools?.length && model.toolCalling);
+  if (toolsEnabled) { body.tools = opts.tools; body.tool_choice = 'auto'; }
+  // Some OpenAI-compatible providers reject combining tool calls with response_format.
+  // The ClinAI agent sends tools only during tool rounds, then requests strict JSON on the final no-tool round.
+  if (model.structuredOutput && !toolsEnabled) {
+    body.response_format = { type: 'json_schema', json_schema: { name: 'clinai_answer', strict: true, schema } };
+  }
+  if (model.provider === 'cerebras' && model.id === 'gpt-oss-120b') {
+    body.reasoning_effort = opts.reasoning ? 'high' : 'low';
+  }
   const controller = new AbortController();
   const timeoutMs = Math.max(3000, Number(process.env.CLINAI_PROVIDER_TIMEOUT_MS || 15000));
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
