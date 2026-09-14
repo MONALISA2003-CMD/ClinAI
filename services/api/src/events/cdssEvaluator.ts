@@ -85,8 +85,8 @@ async function evaluateRule(client: PoolClient, rule: RuleVersion, event: EventR
 
   if (rule.ruleKey === 'clinai.low-spo2' || rule.ruleKey === 'clinai.severe-bp') {
     const r = await client.query(`
-      SELECT id, code, display, value_numeric AS "valueNumeric", unit, observed_at AS "observedAt"
-      FROM observations WHERE organization_id=$1 AND patient_id=$2
+      SELECT o.id, o.code, o.display, o.value_numeric AS "valueNumeric", o.unit, o.observed_at AS "observedAt"
+      FROM observations o JOIN patients p ON p.id=o.patient_id WHERE p.organization_id=$1 AND o.patient_id=$2
       ORDER BY observed_at DESC LIMIT 80
     `, [orgId, patientId]);
     for (const x of r.rows) {
@@ -104,8 +104,8 @@ async function evaluateRule(client: PoolClient, rule: RuleVersion, event: EventR
 
   if (rule.ruleKey === 'clinai.medication-allergy-conflict') {
     const [meds, allergies] = await Promise.all([
-      client.query(`SELECT mo.id, m.name AS "medicationName", m.code AS "medicationCode" FROM medication_orders mo JOIN medications m ON m.id=mo.medication_id WHERE mo.organization_id=$1 AND mo.patient_id=$2 AND mo.status NOT IN ('discontinued','completed') ORDER BY mo.id DESC LIMIT 100`, [orgId, patientId]),
-      client.query(`SELECT id, allergen, reaction, status FROM allergies WHERE organization_id=$1 AND patient_id=$2 AND COALESCE(status,'active')='active' ORDER BY id DESC LIMIT 100`, [orgId, patientId]),
+      client.query(`SELECT mo.id, m.name AS "medicationName", m.code AS "medicationCode" FROM medication_orders mo JOIN medications m ON m.id=mo.medication_id JOIN patients p ON p.id=mo.patient_id WHERE p.organization_id=$1 AND mo.patient_id=$2 AND mo.status NOT IN ('discontinued','completed') ORDER BY mo.id DESC LIMIT 100`, [orgId, patientId]),
+      client.query(`SELECT a.id, a.substance AS allergen, a.reaction, a.status FROM allergies a JOIN patients p ON p.id=a.patient_id WHERE p.organization_id=$1 AND a.patient_id=$2 AND COALESCE(a.status,'active')='active' ORDER BY a.id DESC LIMIT 100`, [orgId, patientId]),
     ]);
     for (const m of meds.rows) {
       const name = text(m.medicationName).toLowerCase();
@@ -120,7 +120,7 @@ async function evaluateRule(client: PoolClient, rule: RuleVersion, event: EventR
   }
 
   if (rule.ruleKey === 'clinai.unresolved-order') {
-    const r = await client.query(`SELECT id, order_type AS "orderType", status, details FROM clinical_orders WHERE organization_id=$1 AND patient_id=$2 AND status IN ('ordered','pending','in-progress','in_progress') ORDER BY created_at DESC LIMIT 1`, [orgId, patientId]);
+    const r = await client.query(`SELECT co.id, co.order_type AS "orderType", co.status, co.details FROM clinical_orders co JOIN patients p ON p.id=co.patient_id WHERE p.organization_id=$1 AND co.patient_id=$2 AND co.status IN ('ordered','pending','in-progress','in_progress') ORDER BY co.created_at DESC LIMIT 1`, [orgId, patientId]);
     if (!r.rowCount) return null;
     const x = r.rows[0];
     return { ruleVersionId: rule.id, signalType: 'workflow', severity: 'moderate', title: 'Clinical order remains unresolved', summary: `${x.orderType || 'Clinical order'} remains ${x.status} in the patient record.`, evidence: { orderId: x.id, orderType: x.orderType, status: x.status, details: x.details || {} }, recommendation: 'Review whether the order needs completion, result follow-up, or documented cancellation.', actionUrl: `/patients/${patientId}` };

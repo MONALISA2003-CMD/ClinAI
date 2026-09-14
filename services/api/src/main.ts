@@ -411,7 +411,7 @@ app.get('/api/analytics/command-center',async(req:any)=>{
       (SELECT count(*) FROM encounters WHERE organization_id=$1 AND status IN ('in-progress','active')) AS active_encounters,
       (SELECT count(*) FROM facility_beds WHERE organization_id=$1 AND status='occupied') AS occupied_beds,
       (SELECT count(*) FROM facility_beds WHERE organization_id=$1 AND status='available') AS available_beds,
-      (SELECT count(*) FROM referrals WHERE organization_id=$1 AND status NOT IN ('completed','cancelled')) AS open_referrals,
+      (SELECT count(*) FROM referrals r JOIN patients p ON p.id=r.patient_id WHERE p.organization_id=$1 AND r.status NOT IN ('completed','cancelled')) AS open_referrals,
       (SELECT count(*) FROM care_tasks WHERE organization_id=$1 AND status='open') AS open_tasks,
       (SELECT COALESCE(sum(total-paid),0) FROM (SELECT i.total,COALESCE((SELECT sum(p.amount) FROM payments p WHERE p.invoice_id=i.id AND p.status='completed'),0) paid FROM invoices i WHERE i.organization_id=$1 AND i.status<>'paid') x) AS outstanding_balance`,[o]),
     pool.query(`SELECT qe.status,qe.priority,count(*)::int AS count FROM queue_entries qe JOIN queues q ON q.id=qe.queue_id WHERE q.organization_id=$1 AND qe.status NOT IN ('completed','cancelled','no-show') GROUP BY qe.status,qe.priority ORDER BY count DESC`,[o]),
@@ -422,8 +422,8 @@ app.get('/api/analytics/command-center',async(req:any)=>{
       (SELECT count(*) FROM payments py JOIN invoices i ON i.id=py.invoice_id WHERE i.organization_id=$1 AND py.status='completed' AND py.paid_at::date=d) payments
       FROM days ORDER BY d`,[o]),
     pool.query(`SELECT * FROM (VALUES
-      ('Critical laboratory results',(SELECT count(*) FROM lab_results lr JOIN lab_samples ls ON ls.id=lr.sample_id JOIN clinical_orders co ON co.id=ls.order_id WHERE co.organization_id=$1 AND lr.critical=true AND lr.status<>'released')),
-      ('Pending lab verification',(SELECT count(*) FROM lab_results lr JOIN lab_samples ls ON ls.id=lr.sample_id JOIN clinical_orders co ON co.id=ls.order_id WHERE co.organization_id=$1 AND lr.status='preliminary')),
+      ('Critical laboratory results',(SELECT count(*) FROM lab_results lr JOIN lab_samples ls ON ls.id=lr.sample_id JOIN clinical_orders co ON co.id=ls.order_id JOIN patients p ON p.id=co.patient_id WHERE p.organization_id=$1 AND lr.critical=true AND lr.status<>'released')),
+      ('Pending lab verification',(SELECT count(*) FROM lab_results lr JOIN lab_samples ls ON ls.id=lr.sample_id JOIN clinical_orders co ON co.id=ls.order_id JOIN patients p ON p.id=co.patient_id WHERE p.organization_id=$1 AND lr.status='preliminary')),
       ('Open care tasks',(SELECT count(*) FROM care_tasks WHERE organization_id=$1 AND status='open')),
       ('Medication reviews',(SELECT count(*) FROM medication_reconciliation WHERE organization_id=$1 AND status='in-review')),
       ('Open facility incidents',(SELECT count(*) FROM facility_operational_incidents WHERE organization_id=$1 AND status NOT IN ('resolved','closed')))
@@ -527,7 +527,7 @@ app.post('/api/triage',async(req:any,reply)=>{
     const tr=await client.query(`INSERT INTO module_records(organization_id,module,status,payload,created_by) VALUES($1,'triage','completed',$2,$3) RETURNING id,created_at AS "createdAt"`,[dbOrganizationId(req),JSON.stringify(record),dbUserId(req)]);
     const vitals:[string,number|undefined,string][]=[['temperature',t.temperature,'Cel'],['heart-rate',t.heartRate,'/min'],['respiratory-rate',t.respiratoryRate,'/min'],['systolic-blood-pressure',t.systolic,'mmHg'],['diastolic-blood-pressure',t.diastolic,'mmHg'],['oxygen-saturation',t.spo2,'%'],['pain-score',t.pain,'/10']];
     for(const [code,value,unit] of vitals) if(value!==undefined) await client.query(`INSERT INTO observations(patient_id,encounter_id,code_system,code,display,value_numeric,unit,performer_user_id) VALUES($1,$2,'LOINC',$3,$4,$5,$6,$7)`,[t.patientId,t.encounterId||null,code,code,value,unit,dbUserId(req)]);
-    let q=await client.query('SELECT id FROM queues WHERE organization_id=$1 ORDER BY created_at LIMIT 1',[dbOrganizationId(req)]); if(!q.rowCount) q=await client.query("INSERT INTO queues(organization_id,code,name) VALUES($1,'GENERAL','General Queue') RETURNING id",[dbOrganizationId(req)]);
+    let q=await client.query("SELECT id FROM queues WHERE organization_id=$1 AND code='GENERAL' LIMIT 1",[dbOrganizationId(req)]); if(!q.rowCount) q=await client.query("INSERT INTO queues(organization_id,code,name) VALUES($1,'GENERAL','General Queue') RETURNING id",[dbOrganizationId(req)]);
     const status=t.acuity==='emergency'?'emergency':'waiting-doctor';
     const qe=await client.query('INSERT INTO queue_entries(queue_id,patient_id,priority,status) VALUES($1,$2,$3,$4) RETURNING id',[q.rows[0].id,t.patientId,t.acuity,status]);
     await dbAudit(client,req,'CREATE','triage',tr.rows[0].id,{patientId:t.patientId,acuity:t.acuity}); await enqueueClinicalEvent(client,{organizationId:dbOrganizationId(req),eventType:CLINICAL_EVENT_TYPES.VITAL_RECORDED,aggregateType:'triage',aggregateId:tr.rows[0].id,patientId:t.patientId,encounterId:t.encounterId||null,payload:{triageId:tr.rows[0].id,patientId:t.patientId,encounterId:t.encounterId||null,acuity:t.acuity}}); await client.query('COMMIT'); return reply.code(201).send({id:tr.rows[0].id,...record,queueEntryId:qe.rows[0].id});
@@ -564,7 +564,7 @@ app.post('/api/queue',async(req:any,reply)=>{
   const client=await pool.connect(); try{await client.query('BEGIN');
     const patient=await client.query('SELECT id FROM patients WHERE id=$1 AND organization_id=$2',[b.patientId,dbOrganizationId(req)]);
     if(!patient.rowCount){await client.query('ROLLBACK');return reply.code(404).send({error:'Patient not found'});}
-    let q=await client.query('SELECT id FROM queues WHERE organization_id=$1 AND facility_id IS NOT DISTINCT FROM $2 ORDER BY created_at LIMIT 1',[dbOrganizationId(req),b.facilityId||null]);
+    let q=await client.query("SELECT id FROM queues WHERE organization_id=$1 AND facility_id IS NOT DISTINCT FROM $2 AND code='GENERAL' LIMIT 1",[dbOrganizationId(req),b.facilityId||null]);
     if(!q.rowCount) q=await client.query('INSERT INTO queues(organization_id,facility_id,code,name) VALUES($1,$2,$3,$4) RETURNING id',[dbOrganizationId(req),b.facilityId||null,'GENERAL','General Queue']);
     const dup=await client.query("SELECT id FROM queue_entries WHERE queue_id=$1 AND patient_id=$2 AND status NOT IN ('completed','cancelled','no-show') LIMIT 1",[q.rows[0].id,b.patientId]);
     if(dup.rowCount){await client.query('ROLLBACK');return reply.code(409).send({error:'Patient already has an active queue entry',queueEntryId:dup.rows[0].id});}
@@ -639,7 +639,7 @@ app.post('/api/workflows/:name',async(req:any,reply)=>{
     } else if(name==='triage'){
       const p=await client.query(`SELECT id FROM patients WHERE id=$1 AND organization_id=$2`,[b.patientId,oid]);if(!p.rowCount)return reply.code(404).send({error:'Patient not found'});
       const tr=await client.query(`INSERT INTO module_records(organization_id,module,status,payload,created_by) VALUES($1,'triage','completed',$2,$3) RETURNING id,payload,status,created_at AS "createdAt"`,[oid,JSON.stringify({...b,status:'completed',completedAt:now()}),dbUserId(req)]);
-      let q=await client.query(`SELECT id FROM queues WHERE organization_id=$1 ORDER BY created_at LIMIT 1`,[oid]);if(!q.rowCount)q=await client.query(`INSERT INTO queues(organization_id,code,name) VALUES($1,'GENERAL','General Queue') RETURNING id`,[oid]);
+      let q=await client.query(`SELECT id FROM queues WHERE organization_id=$1 AND code='GENERAL' LIMIT 1`,[oid]);if(!q.rowCount)q=await client.query(`INSERT INTO queues(organization_id,code,name) VALUES($1,'GENERAL','General Queue') RETURNING id`,[oid]);
       const qe=await client.query(`INSERT INTO queue_entries(queue_id,patient_id,priority,status) VALUES($1,$2,$3,$4) RETURNING id`,[q.rows[0].id,b.patientId,b.acuity||'routine',b.acuity==='emergency'?'emergency':'waiting-doctor']);result={triage:{id:tr.rows[0].id,...b,status:'completed'},queueEntryId:qe.rows[0].id};
       await dbAudit(client,req,'TRIAGE_COMPLETE','triage',tr.rows[0].id,{patientId:b.patientId,acuity:b.acuity||'routine'});
     } else if(name==='lab_result'){
@@ -745,7 +745,7 @@ app.post('/api/actions/:module/:id/:action',async(req:any,reply)=>{
       if(!a.rowCount){await client.query('ROLLBACK');return reply.code(404).send({error:'Appointment not found'});}
       if(['cancelled','completed','no-show'].includes(a.rows[0].status)){await client.query('ROLLBACK');return reply.code(409).send({error:`Appointment is ${a.rows[0].status}`});}
       await client.query(`UPDATE appointments SET status='checked-in' WHERE id=$1`,[id]);
-      let q=await client.query(`SELECT id FROM queues WHERE organization_id=$1 AND facility_id IS NOT DISTINCT FROM $2 ORDER BY created_at LIMIT 1`,[dbOrganizationId(req),a.rows[0].facilityId]);
+      let q=await client.query(`SELECT id FROM queues WHERE organization_id=$1 AND facility_id IS NOT DISTINCT FROM $2 AND code='GENERAL' LIMIT 1`,[dbOrganizationId(req),a.rows[0].facilityId]);
       if(!q.rowCount) q=await client.query(`INSERT INTO queues(organization_id,facility_id,code,name) VALUES($1,$2,'GENERAL','General Queue') RETURNING id`,[dbOrganizationId(req),a.rows[0].facilityId]);
       const existing=await client.query(`SELECT id,status FROM queue_entries WHERE queue_id=$1 AND patient_id=$2 AND status NOT IN ('completed','cancelled','no-show') LIMIT 1`,[q.rows[0].id,a.rows[0].patientId]);
       let qe=existing.rows[0];
@@ -1087,14 +1087,14 @@ for (const resource of FHIR_R4_RESOURCES) {
   if (resource === 'Patient') continue;
   app.all(`/api/fhir/R4/${resource}/:id`,async(req:any,reply)=>{
     const target = `/api/fhir/${resource}/${encodeURIComponent(req.params.id)}`;
-    return reply.redirect(307,target);
+    return reply.redirect(target,307);
   });
 }
-app.all('/api/fhir/R4/Patient/:id',async(req:any,reply)=>reply.redirect(307,`/api/fhir/Patient/${encodeURIComponent(req.params.id)}`));
+app.all('/api/fhir/R4/Patient/:id',async(req:any,reply)=>reply.redirect(`/api/fhir/Patient/${encodeURIComponent(req.params.id)}`,307));
 app.all('/api/fhir/R4/Patient',async(req:any,reply)=>{
   const qs = new URLSearchParams(req.query as Record<string,string>);
   const suffix = qs.toString() ? `?${qs.toString()}` : '';
-  return reply.redirect(307,`/api/fhir/Patient${suffix}`);
+  return reply.redirect(`/api/fhir/Patient${suffix}`,307);
 });
 
 app.get('/api/fhir/Patient/:id',async(req:any,reply)=>{
@@ -1612,11 +1612,11 @@ app.get('/api/patients/:id/timeline',async(req:any,reply)=>{
   const o=dbOrganizationId(req),p=req.params.id;
   const q=await pool.query(`
     SELECT id,started_at AS at,'visit' AS kind,concat('Care visit · ',COALESCE(type,'visit')) AS title,status,patient_id AS "patientId" FROM encounters WHERE organization_id=$1 AND patient_id=$2
-    UNION ALL SELECT id,observed_at,'observation',COALESCE(display,code),COALESCE(value_text,value_numeric::text),patient_id FROM observations WHERE organization_id=$1 AND patient_id=$2
-    UNION ALL SELECT d.id,COALESCE(e.started_at,d.created_at),'diagnosis',COALESCE(d.display,d.code),d.status,d.patient_id FROM diagnoses d LEFT JOIN encounters e ON e.id=d.encounter_id WHERE d.organization_id=$1 AND d.patient_id=$2
-    UNION ALL SELECT id,created_at,'order',COALESCE(details->>'description',order_type),status,patient_id FROM clinical_orders WHERE organization_id=$1 AND patient_id=$2
-    UNION ALL SELECT mo.id,COALESCE(mo.created_at,now()),'medication',m.name,mo.status,mo.patient_id FROM medication_orders mo JOIN medications m ON m.id=mo.medication_id JOIN patients p ON p.id=mo.patient_id WHERE p.organization_id=$1 AND mo.patient_id=$2
-    UNION ALL SELECT r.id,r.created_at,'referral',COALESCE(r.destination,'Referral'),r.status,r.patient_id FROM referrals r WHERE r.organization_id=$1 AND r.patient_id=$2
+    UNION ALL SELECT o.id,o.observed_at,'observation',COALESCE(o.display,o.code),COALESCE(o.value_text,o.value_numeric::text),o.patient_id FROM observations o JOIN patients op ON op.id=o.patient_id WHERE op.organization_id=$1 AND o.patient_id=$2
+    UNION ALL SELECT d.id,e.started_at,'diagnosis',COALESCE(d.display,d.code),d.status,d.patient_id FROM diagnoses d JOIN patients dp ON dp.id=d.patient_id LEFT JOIN encounters e ON e.id=d.encounter_id WHERE dp.organization_id=$1 AND d.patient_id=$2
+    UNION ALL SELECT co.id,co.created_at,'order',COALESCE(co.details->>'description',co.order_type),co.status,co.patient_id FROM clinical_orders co JOIN patients cop ON cop.id=co.patient_id WHERE cop.organization_id=$1 AND co.patient_id=$2
+    UNION ALL SELECT mo.id,e.started_at,'medication',m.name,mo.status,mo.patient_id FROM medication_orders mo JOIN medications m ON m.id=mo.medication_id JOIN patients p ON p.id=mo.patient_id LEFT JOIN encounters e ON e.id=mo.encounter_id WHERE p.organization_id=$1 AND mo.patient_id=$2
+    UNION ALL SELECT r.id,r.created_at,'referral',COALESCE(r.destination,'Referral'),r.status,r.patient_id FROM referrals r JOIN patients rp ON rp.id=r.patient_id WHERE rp.organization_id=$1 AND r.patient_id=$2
     UNION ALL SELECT mr.id,mr.created_at,'follow-up',COALESCE(mr.payload->>'reason','Follow-up'),mr.status,$2::uuid FROM module_records mr WHERE mr.organization_id=$1 AND mr.module IN ('follow-up','followup') AND mr.payload->>'patientId'=$2
     UNION ALL SELECT id,created_at,'workflow',event_type,COALESCE(to_state,from_state,'recorded'),patient_id FROM clinical_workflow_events WHERE organization_id=$1 AND patient_id=$2
     ORDER BY at DESC LIMIT 150`,[o,p]);
@@ -1631,8 +1631,8 @@ app.get('/api/patients/:id/flow',async(req:any)=>{
     pool.query(`SELECT qe.id,qe.status,qe.priority,qe.joined_at AS "createdAt" FROM queue_entries qe JOIN queues q ON q.id=qe.queue_id WHERE q.organization_id=$1 AND qe.patient_id=$2 ORDER BY qe.joined_at DESC LIMIT 5`,[o,p]),
     pool.query(`SELECT id,created_at AS "createdAt",acuity,chief_complaint AS "chiefComplaint" FROM triage_assessments WHERE organization_id=$1 AND patient_id=$2 ORDER BY created_at DESC LIMIT 5`,[o,p]),
     pool.query(`SELECT id,status,started_at AS "startedAt" FROM encounters WHERE organization_id=$1 AND patient_id=$2 ORDER BY started_at DESC LIMIT 5`,[o,p]),
-    pool.query(`SELECT id,status,order_type AS "orderType",created_at AS "createdAt" FROM clinical_orders WHERE organization_id=$1 AND patient_id=$2 ORDER BY created_at DESC LIMIT 10`,[o,p]),
-    pool.query(`SELECT id,status,reason,destination,created_at AS "createdAt" FROM referrals WHERE organization_id=$1 AND patient_id=$2 ORDER BY created_at DESC LIMIT 10`,[o,p]),
+    pool.query(`SELECT co.id,co.status,co.order_type AS "orderType",co.created_at AS "createdAt" FROM clinical_orders co JOIN patients cp ON cp.id=co.patient_id WHERE cp.organization_id=$1 AND co.patient_id=$2 ORDER BY co.created_at DESC LIMIT 10`,[o,p]),
+    pool.query(`SELECT r.id,r.status,r.reason,r.destination,r.created_at AS "createdAt" FROM referrals r JOIN patients rp ON rp.id=r.patient_id WHERE rp.organization_id=$1 AND r.patient_id=$2 ORDER BY r.created_at DESC LIMIT 10`,[o,p]),
     pool.query(`SELECT id,status,admitted_at AS "admittedAt",discharged_at AS "dischargedAt" FROM admissions WHERE organization_id=$1 AND patient_id=$2 ORDER BY admitted_at DESC LIMIT 5`,[o,p]),
     pool.query(`SELECT id,status,due_at AS "dueAt",payload FROM module_records WHERE organization_id=$1 AND module='follow-up' AND payload->>'patientId'=$2 ORDER BY created_at DESC LIMIT 10`,[o,p])
   ]);
@@ -1673,12 +1673,12 @@ app.post('/api/patients/:id/merge',async(req:any,reply)=>{
 
 app.post('/api/check-in/walk-in',async(req:any,reply)=>{
   if(!pool)return reply.code(501).send({error:'PostgreSQL required'}); const b=z.object({patientId:z.string().uuid(),priority:z.enum(['routine','urgent','emergency','stat']).default('routine'),service:z.string().default('general')}).parse(req.body||{});
-  const client=await pool.connect();try{await client.query('BEGIN');const q=await client.query(`SELECT id FROM queues WHERE organization_id=$1 ORDER BY created_at LIMIT 1`,[dbOrganizationId(req)]);const queue=q.rowCount?q.rows[0].id:(await client.query(`INSERT INTO queues(organization_id,code,name) VALUES($1,'WALKIN','Walk-in Queue') RETURNING id`,[dbOrganizationId(req)])).rows[0].id;const qe=await client.query(`INSERT INTO queue_entries(queue_id,patient_id,status,priority,joined_at) VALUES($1,$2,'waiting',$3,now()) RETURNING id,status,priority,joined_at AS "createdAt"`,[queue,b.patientId,b.priority]);await workflowEvent(client,req,'patient.checked_in',{patientId:b.patientId});await dbAudit(client,req,'CHECK_IN','patient',b.patientId,{priority:b.priority,walkIn:true,queueId:queue});await client.query('COMMIT');return reply.code(201).send({data:qe.rows[0]})}catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
+  const client=await pool.connect();try{await client.query('BEGIN');const q=await client.query(`SELECT id FROM queues WHERE organization_id=$1 AND code='GENERAL' LIMIT 1`,[dbOrganizationId(req)]);const queue=q.rowCount?q.rows[0].id:(await client.query(`INSERT INTO queues(organization_id,code,name) VALUES($1,'GENERAL','General Queue') RETURNING id`,[dbOrganizationId(req)])).rows[0].id;const qe=await client.query(`INSERT INTO queue_entries(queue_id,patient_id,status,priority,joined_at) VALUES($1,$2,'waiting',$3,now()) RETURNING id,status,priority,joined_at AS "createdAt"`,[queue,b.patientId,b.priority]);await workflowEvent(client,req,'patient.checked_in',{patientId:b.patientId});await dbAudit(client,req,'CHECK_IN','patient',b.patientId,{priority:b.priority,walkIn:true,queueId:queue});await client.query('COMMIT');return reply.code(201).send({data:qe.rows[0]})}catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
 });
 
 app.post('/api/triage/:id/route',async(req:any,reply)=>{if(!pool)return reply.code(501).send({error:'PostgreSQL required'});const b=z.object({destination:z.enum(['emergency','urgent-care','doctor','observation','other']),reason:z.string().optional()}).parse(req.body||{});const client=await pool.connect();try{await client.query('BEGIN');const r=await client.query(`SELECT patient_id AS "patientId",encounter_id AS "encounterId",acuity FROM triage_assessments WHERE id=$1 AND organization_id=$2`,[req.params.id,dbOrganizationId(req)]);if(!r.rowCount){await client.query('ROLLBACK');return reply.code(404).send({error:'Triage assessment not found'})}await workflowEvent(client,req,'triage.routed',{patientId:r.rows[0].patientId,encounterId:r.rows[0].encounterId,destination:b.destination,reason:b.reason},r.rows[0].acuity,b.destination);await dbAudit(client,req,'TRIAGE_ROUTE','patient',r.rows[0].patientId,b);await client.query('COMMIT');return {data:{patientId:r.rows[0].patientId,destination:b.destination}}}catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}});
 
-app.get('/api/laboratory/workflow/:patientId',async(req:any)=>{if(!pool)return {data:[]};const r=await pool.query(`SELECT id,status,order_type AS "orderType",details,created_at AS "createdAt" FROM clinical_orders WHERE organization_id=$1 AND patient_id=$2 AND order_type='laboratory' ORDER BY created_at DESC`,[dbOrganizationId(req),req.params.patientId]);return {data:r.rows}});
+app.get('/api/laboratory/workflow/:patientId',async(req:any)=>{if(!pool)return {data:[]};const r=await pool.query(`SELECT co.id,co.status,co.order_type AS "orderType",co.details,co.created_at AS "createdAt" FROM clinical_orders co JOIN patients p ON p.id=co.patient_id WHERE p.organization_id=$1 AND co.patient_id=$2 AND co.order_type='laboratory' ORDER BY co.created_at DESC`,[dbOrganizationId(req),req.params.patientId]);return {data:r.rows}});
 app.post('/api/laboratory/specimens/:id/status',async(req:any,reply)=>{if(!pool)return reply.code(501).send({error:'PostgreSQL required'});const b=z.object({status:z.enum(['collected','received','rejected','processing','preliminary','verified','released']),reason:z.string().optional()}).parse(req.body||{});const client=await pool.connect();try{await client.query('BEGIN');const r=await client.query(`UPDATE specimens s SET status=$1 WHERE s.id=$2 AND EXISTS (SELECT 1 FROM patients p WHERE p.id=s.patient_id AND p.organization_id=$3) RETURNING s.id,s.status`,[b.status,req.params.id,dbOrganizationId(req)]);if(!r.rowCount){await client.query('ROLLBACK');return reply.code(404).send({error:'Specimen not found'})}await workflowEvent(client,req,'laboratory.specimen.status',{patientId:null,specimenId:req.params.id,status:b.status,reason:b.reason});await client.query('COMMIT');return {data:r.rows[0]}}catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}});
 
 app.post('/api/imaging/studies',async(req:any,reply)=>{if(!pool)return reply.code(501).send({error:'PostgreSQL required'});const b=z.object({patientId:z.string().uuid(),encounterId:z.string().uuid().optional(),orderId:z.string().uuid().optional(),studyName:z.string(),modality:z.string().optional(),bodySite:z.string().optional(),priority:z.string().default('routine')}).parse(req.body||{});const r=await pool.query(`INSERT INTO imaging_studies(organization_id,patient_id,encounter_id,order_id,study_name,modality,body_site,priority,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,[dbOrganizationId(req),b.patientId,b.encounterId||null,b.orderId||null,b.studyName,b.modality||null,b.bodySite||null,b.priority,dbUserId(req)]);return reply.code(201).send(r.rows[0])});
