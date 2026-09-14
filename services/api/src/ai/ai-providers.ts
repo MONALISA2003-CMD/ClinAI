@@ -12,6 +12,7 @@ export type AIModel = {
   toolCalling: boolean;
   structuredOutput: boolean;
   publicEndpoint: boolean;
+  noPersonalData: boolean;
   enabled: boolean;
   priority: number;
 };
@@ -19,15 +20,23 @@ export type AIModel = {
 const envBool = (key: string, fallback = false) => process.env[key] ? process.env[key] === 'true' : fallback;
 
 export const AI_MODELS: AIModel[] = [
-  { id: 'gemini-3.8-flash', provider: 'gemini', label: 'Gemini 3.8 Flash', tier: 'free', roles: ['general','reasoning','multimodal'], context: 1048576, multimodal: true, toolCalling: true, structuredOutput: true, publicEndpoint: true, enabled: true, priority: 40 },
-  { id: 'nvidia/nemotron-3-ultra:free', provider: 'openrouter', label: 'Nemotron 3 Ultra', tier: 'free', roles: ['reasoning','agentic','research','long-context'], context: 1048576, multimodal: false, toolCalling: true, structuredOutput: true, publicEndpoint: true, enabled: true, priority: 20 },
-  { id: 'nvidia/nemotron-3-super-120b-a12b:free', provider: 'openrouter', label: 'Nemotron 3 Super', tier: 'free', roles: ['reasoning','agentic','research','long-context'], context: 262144, multimodal: false, toolCalling: true, structuredOutput: true, publicEndpoint: true, enabled: true, priority: 21 },
-  { id: 'inclusionai/ling-3.0-flash-sante:free', provider: 'openrouter', label: 'Ling 3.0 Flash Sante', tier: 'free', roles: ['medical-reasoning','clinical-safety','evidence'], context: 262144, multimodal: false, toolCalling: true, structuredOutput: false, publicEndpoint: true, enabled: true, priority: 22 },
-  { id: 'thinkingmachines/inkling:free', provider: 'openrouter', label: 'Inkling', tier: 'free', roles: ['reasoning','multimodal','agentic','rag'], context: 1048576, multimodal: true, toolCalling: true, structuredOutput: false, publicEndpoint: true, enabled: true, priority: 23 },
-  { id: 'minimax/minimax-m3:free', provider: 'openrouter', label: 'MiniMax M3', tier: 'free', roles: ['reasoning','multimodal','agentic','long-context'], context: 1048576, multimodal: true, toolCalling: true, structuredOutput: false, publicEndpoint: true, enabled: true, priority: 24 },
-  { id: 'nex-agi/nex-n2.5-mini:free', provider: 'openrouter', label: 'Nex N2.5 Mini', tier: 'free', roles: ['coding','agentic','verification'], context: 262144, multimodal: true, toolCalling: true, structuredOutput: true, publicEndpoint: true, enabled: true, priority: 25 },
-  { id: 'openai/gpt-oss-120b', provider: 'groq', label: 'GPT OSS 120B on Groq', tier: 'free', roles: ['reasoning','coding','fast'], context: 131072, multimodal: false, toolCalling: true, structuredOutput: true, publicEndpoint: false, enabled: true, priority: 30 },
-  { id: 'gpt-oss-120b', provider: 'cerebras', label: 'GPT OSS 120B on Cerebras', tier: 'trial', roles: ['reasoning','coding','fast'], context: 131072, multimodal: false, toolCalling: true, structuredOutput: true, publicEndpoint: false, enabled: true, priority: 31 },
+  { id: 'gemini-3.8-flash', provider: 'gemini', label: 'Gemini 3.8 Flash', tier: 'free', roles: ['general','reasoning','multimodal'], context: 1048576, multimodal: true, toolCalling: true, structuredOutput: true, publicEndpoint: true, noPersonalData: false, enabled: true, priority: 40 },
+  { id: 'nvidia/nemotron-3-ultra:free', provider: 'openrouter', label: 'Nemotron 3 Ultra', tier: 'free', roles: ['reasoning','agentic','research','long-context'], context: 1048576, multimodal: false, toolCalling: true, structuredOutput: true, publicEndpoint: true, noPersonalData: false, enabled: true, priority: 20 },
+  { id: 'nvidia/nemotron-3-super-120b-a12b:free', provider: 'openrouter', label: 'Nemotron 3 Super', tier: 'free', roles: ['reasoning','agentic','research','long-context'], context: 262144, multimodal: false, toolCalling: true, structuredOutput: true, publicEndpoint: true, noPersonalData: false, enabled: true, priority: 21 },
+  { id: 'inclusionai/ling-3.0-flash-sante:free', provider: 'openrouter', label: 'Ling 3.0 Flash Sante', tier: 'free', roles: ['medical-reasoning','clinical-safety','evidence'], context: 262144, multimodal: false, toolCalling: true, structuredOutput: false, publicEndpoint: true, noPersonalData: false, enabled: true, priority: 22 },
+  { id: 'thinkingmachines/inkling:free', provider: 'openrouter', label: 'Inkling', tier: 'free', roles: ['reasoning','multimodal','agentic','rag'], context: 1048576, multimodal: true, toolCalling: true, structuredOutput: false, publicEndpoint: true, noPersonalData: true, enabled: true, priority: 23 },
+  { id: 'minimax/minimax-m3:free', provider: 'openrouter', label: 'MiniMax M3', tier: 'free', roles: ['reasoning','multimodal','agentic','long-context'], context: 1048576, multimodal: true, toolCalling: true, structuredOutput: false, publicEndpoint: true, noPersonalData: false, enabled: true, priority: 24 },
+  { id: 'nex-agi/nex-n2.5-mini:free', provider: 'openrouter', label: 'Nex N2.5 Mini', tier: 'free', roles: ['coding','agentic','verification'], context: 262144, multimodal: true, toolCalling: true, structuredOutput: true, publicEndpoint: true, noPersonalData: false, enabled: true, priority: 25 },
+  { id: 'google/gemma-4-31b-it:free', provider: 'openrouter', label: 'Gemma 4 31B', tier: 'free', roles: ['reasoning','multimodal','medical-document','long-context'], context: 262144, multimodal: true, toolCalling: true, structuredOutput: true, publicEndpoint: true, noPersonalData: false, enabled: true, priority: 26 },
+  { id: 'google/gemma-4-26b-a4b-it:free', provider: 'openrouter', label: 'Gemma 4 26B A4B', tier: 'free', roles: ['reasoning','multimodal','fast','structured'], context: 262144, multimodal: true, toolCalling: true, structuredOutput: true, publicEndpoint: true, noPersonalData: false, enabled: true, priority: 27 },
+  { id: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free', provider: 'openrouter', label: 'Nemotron 3 Nano Omni', tier: 'free', roles: ['multimodal','perception','audio','video','long-context'], context: 262144, multimodal: true, toolCalling: false, structuredOutput: false, publicEndpoint: true, noPersonalData: false, enabled: true, priority: 28 },
+  { id: 'inclusionai/ling-3.0-flash-vl:free', provider: 'openrouter', label: 'Ling 3.0 Flash VL', tier: 'free', roles: ['multimodal','medical','agentic','reasoning'], context: 262144, multimodal: true, toolCalling: true, structuredOutput: false, publicEndpoint: true, noPersonalData: false, enabled: true, priority: 29 },
+  { id: 'nex-agi/nex-n2.5-pro:free', provider: 'openrouter', label: 'Nex N2.5 Pro', tier: 'free', roles: ['coding','agentic','research','reasoning','multimodal'], context: 262144, multimodal: true, toolCalling: true, structuredOutput: true, publicEndpoint: true, noPersonalData: false, enabled: true, priority: 30 },
+  { id: 'minimax/minimax-m2.7:free', provider: 'openrouter', label: 'MiniMax M2.7', tier: 'free', roles: ['agentic','reasoning','coding','documents'], context: 204800, multimodal: false, toolCalling: true, structuredOutput: false, publicEndpoint: true, noPersonalData: false, enabled: true, priority: 31 },
+  { id: 'nvidia/nemotron-3.5-lightning:free', provider: 'openrouter', label: 'Nemotron 3.5 Lightning', tier: 'free', roles: ['fast','agentic','reasoning'], context: 1048576, multimodal: false, toolCalling: true, structuredOutput: true, publicEndpoint: true, noPersonalData: false, enabled: true, priority: 32 },
+  { id: 'thinkingmachines/inkling-small:free', provider: 'openrouter', label: 'Inkling Small', tier: 'free', roles: ['reasoning','multimodal','agentic','rag','multilingual'], context: 1048576, multimodal: true, toolCalling: true, structuredOutput: false, publicEndpoint: true, noPersonalData: true, enabled: true, priority: 33 },
+  { id: 'openai/gpt-oss-120b', provider: 'groq', label: 'GPT OSS 120B on Groq', tier: 'free', roles: ['reasoning','coding','fast'], context: 131072, multimodal: false, toolCalling: true, structuredOutput: true, publicEndpoint: false, noPersonalData: false, enabled: true, priority: 40 },
+  { id: 'gpt-oss-120b', provider: 'cerebras', label: 'GPT OSS 120B on Cerebras', tier: 'trial', roles: ['reasoning','coding','fast'], context: 131072, multimodal: false, toolCalling: true, structuredOutput: true, publicEndpoint: false, noPersonalData: false, enabled: true, priority: 41 },
 ];
 
 export function configuredProviders() {
@@ -44,23 +53,41 @@ export function availableModels() {
   return AI_MODELS.map(m => ({ ...m, configured: configured[m.provider], available: m.enabled && configured[m.provider] }));
 }
 
-export function selectModel(opts: { mode?: string; patientData?: boolean; preferredModel?: string; allowPublic?: boolean }) {
+export type AIRequestCapability = 'text' | 'multimodal' | 'image' | 'audio' | 'video' | 'agentic' | 'medical' | 'coding' | 'research' | 'fast';
+
+export function modelSupportsCapability(model: AIModel, capability?: AIRequestCapability) {
+  if (!capability || capability === 'text') return true;
+  if (capability === 'multimodal' || capability === 'image' || capability === 'audio' || capability === 'video') return model.multimodal;
+  if (capability === 'agentic') return model.roles.includes('agentic') && model.toolCalling;
+  if (capability === 'medical') return model.roles.includes('medical-reasoning') || model.roles.includes('medical') || model.roles.includes('clinical-safety');
+  if (capability === 'coding') return model.roles.includes('coding');
+  if (capability === 'research') return model.roles.includes('research') || model.roles.includes('reasoning');
+  if (capability === 'fast') return model.roles.includes('fast');
+  return true;
+}
+
+export function selectModel(opts: { mode?: string; patientData?: boolean; preferredModel?: string; allowPublic?: boolean; capability?: AIRequestCapability }) {
   const configured = configuredProviders();
   const allowPublic = opts.allowPublic === true;
   const preferred = opts.preferredModel ? AI_MODELS.find(m => m.id === opts.preferredModel) : undefined;
-  const candidates = AI_MODELS.filter(m => m.enabled && configured[m.provider] && (!opts.patientData || !m.publicEndpoint || allowPublic));
-  if (preferred && candidates.some(m => m.id === preferred.id)) return preferred;
-  if (opts.mode === 'quick') {
-    const speedRank: Record<string, number> = { groq: 0, cerebras: 1, openrouter: 2, gemini: 3 };
-    return candidates.sort((a,b) => (speedRank[a.provider] ?? 9) - (speedRank[b.provider] ?? 9) || a.priority - b.priority)[0] || null;
-  }
-  const role = opts.mode === 'research' ? 'research' : opts.mode === 'analysis' ? 'reasoning' : (opts.patientData ? 'medical-reasoning' : 'general');
-  const ranked = candidates.filter(m => m.roles.includes(role) || m.roles.includes('reasoning')).sort((a,b) => {
+  const candidates = AI_MODELS.filter(m => m.enabled && configured[m.provider] && (!opts.patientData || (!m.noPersonalData && (!m.publicEndpoint || allowPublic))));
+  if (!candidates.length) return null;
+
+  const capability = opts.capability;
+  const compatible = candidates.filter(m => modelSupportsCapability(m, capability));
+  const pool = compatible.length ? compatible : candidates;
+
+  if (preferred && pool.some(m => m.id === preferred.id)) return preferred;
+
+  const role = capability || (opts.mode === 'research' ? 'research' : opts.mode === 'analysis' ? 'reasoning' : (opts.patientData ? 'medical-reasoning' : 'general'));
+  const ranked = pool.sort((a,b) => {
     const aRole = a.roles.includes(role) ? 0 : 1;
     const bRole = b.roles.includes(role) ? 0 : 1;
-    return aRole - bRole || a.priority - b.priority;
+    const aCapability = capability && (capability === 'multimodal' ? a.multimodal : capability === 'agentic' ? a.toolCalling : true) ? 0 : 1;
+    const bCapability = capability && (capability === 'multimodal' ? b.multimodal : capability === 'agentic' ? b.toolCalling : true) ? 0 : 1;
+    return aRole - bRole || aCapability - bCapability || a.priority - b.priority;
   });
-  return (ranked[0] || candidates.sort((a,b)=>a.priority-b.priority)[0]) || null;
+  return ranked[0] || null;
 }
 
 function openAIHeaders(apiKey: string, provider: string) {

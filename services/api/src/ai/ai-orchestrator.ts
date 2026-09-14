@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { AI_MODELS, availableModels, configuredProviders, selectModel, callOpenAICompatible, stableRequestKey } from './ai-providers.js';
+import { AI_MODELS, availableModels, configuredProviders, selectModel, modelSupportsCapability, callOpenAICompatible, stableRequestKey } from './ai-providers.js';
 import { buildPatientIntelligence, buildEvidenceIndex, buildQuestionIntent, compactIntelligenceForPrompt } from './clinical-intelligence.js';
 import { getLanguagePolicy, languageInstruction, SUPPORTED_CLINAI_LANGUAGES } from './language-policy.js';
 import { buildClinicalContext } from '../intelligence/clinicalContext.js';
@@ -617,7 +617,7 @@ async function recordProviderUsage(pool: Pool | null, req: any, model: any, resu
   } catch {}
 }
 
-async function runAgent(deps: Deps, req: any, input: string, options: { purpose: string; role?: string; patientId?: string | null; mode?: string; allowResearch?: boolean; allowCodeExecution?: boolean; preferredModel?: string; publicMode?: boolean; language?: string }) {
+async function runAgent(deps: Deps, req: any, input: string, options: { purpose: string; role?: string; patientId?: string | null; mode?: string; allowResearch?: boolean; allowCodeExecution?: boolean; preferredModel?: string; publicMode?: boolean; language?: string; capability?: import('./ai-providers.js').AIRequestCapability }) {
   const languagePolicy = getLanguagePolicy(options.language);
   const safetyCheck = classifyRequestSafety(input);
   if (safetyCheck.blocked) {
@@ -631,7 +631,7 @@ async function runAgent(deps: Deps, req: any, input: string, options: { purpose:
   const fast = await tryFastPath(deps, req, input, options, languagePolicy);
   if (fast) return fast;
   const patientData = Boolean(options.patientId);
-  const cacheKey = stableRequestKey({ mode: options.mode || 'intelligence', role: options.role || '', patientId: options.patientId || '', input, preferredModel: options.preferredModel || '', publicMode: Boolean(options.publicMode), language: options.language || 'English' });
+  const cacheKey = stableRequestKey({ mode: options.mode || 'intelligence', role: options.role || '', patientId: options.patientId || '', input, preferredModel: options.preferredModel || '', capability: options.capability || '', publicMode: Boolean(options.publicMode), language: options.language || 'English' });
   const cached = multiModelCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return { ...cached.result, cached: true };
   if (cached) multiModelCache.delete(cacheKey);
@@ -692,9 +692,9 @@ ${input}`;
 
   const candidates: any[] = [];
   const configured = configuredProviders();
-  const first = selectModel({ mode: options.mode, patientData, preferredModel: options.preferredModel, allowPublic: ALLOW_PUBLIC_AI_WITH_PATIENT_DATA });
+  const first = selectModel({ mode: options.mode, patientData, preferredModel: options.preferredModel, allowPublic: ALLOW_PUBLIC_AI_WITH_PATIENT_DATA, capability: options.capability });
   if (first) candidates.push(first);
-  for (const m of AI_MODELS.filter(x => x.enabled && configured[x.provider] && (!patientData || !x.publicEndpoint || ALLOW_PUBLIC_AI_WITH_PATIENT_DATA)).sort((a,b)=>a.priority-b.priority)) {
+  for (const m of AI_MODELS.filter(x => x.enabled && configured[x.provider] && modelSupportsCapability(x, options.capability) && (!patientData || (!x.noPersonalData && (!x.publicEndpoint || ALLOW_PUBLIC_AI_WITH_PATIENT_DATA)))).sort((a,b)=>a.priority-b.priority)) {
     if (!candidates.some(x => x.id === m.id)) candidates.push(m);
   }
 
@@ -845,7 +845,7 @@ export function registerAI(deps: Deps) {
   const { app, pool } = deps;
   app.get('/api/ai/status', async () => ({ configured: Object.values(configuredProviders()).some(Boolean), intelligenceEngineConfigured: Boolean(INTELLIGENCE_SERVICE_URL), codeExecutionEnabled: ENABLE_GEMINI_CODE_EXECUTION, model: GEMINI_MODEL, apiVersion: GEMINI_API_VERSION, promptVersion: AI_PROMPT_VERSION, mode: FREE_TIER_MODE ? 'free-tier single-call human-reviewed intelligence' : 'tool-using human-reviewed intelligence' }));
   app.get('/api/ai/providers', async () => ({ data: { multiModelEnabled: MULTI_MODEL_MODE, publicPatientDataAllowed: ALLOW_PUBLIC_AI_WITH_PATIENT_DATA, providers: configuredProviders(), models: availableModels() } }));
-  app.post('/api/ai/router', async (req:any, reply:any) => { const body=z.object({ mode:z.string().optional(), patientData:z.boolean().default(false), preferredModel:z.string().optional() }).parse(req.body||{}); const model=selectModel(body); return model ? { data:model } : reply.code(503).send({error:'No configured AI provider is available for this request.'}); });
+  app.post('/api/ai/router', async (req:any, reply:any) => { const body=z.object({ mode:z.string().optional(), patientData:z.boolean().default(false), preferredModel:z.string().optional(), capability:z.enum(['text','multimodal','image','audio','video','agentic','medical','coding','research','fast']).optional() }).parse(req.body||{}); const model=selectModel(body); return model ? { data:model } : reply.code(503).send({error:'No configured AI provider is available for this request.'}); });
 
   app.get('/api/ai/usage', async (req: any) => {
     const organizationId = deps.dbOrganizationId(req);
@@ -875,9 +875,9 @@ export function registerAI(deps: Deps) {
   });
 
   app.post('/api/ai/assist', async (req: any, reply: any) => {
-    const body = z.object({ patientId: z.string().uuid().nullable().optional(), question: z.string().min(1), purpose: z.string().default('ask-clinai'), role: z.string().optional(), mode: z.enum(['quick','intelligence','analysis','research']).default('intelligence'), language: z.enum(SUPPORTED_CLINAI_LANGUAGES as [string, ...string[]]).default('English') }).parse(req.body || {});
+    const body = z.object({ patientId: z.string().uuid().nullable().optional(), question: z.string().min(1), purpose: z.string().default('ask-clinai'), role: z.string().optional(), mode: z.enum(['quick','intelligence','analysis','research']).default('intelligence'), language: z.enum(SUPPORTED_CLINAI_LANGUAGES as [string, ...string[]]).default('English'), capability: z.enum(['text','multimodal','image','audio','video','agentic','medical','coding','research','fast']).optional() }).parse(req.body || {});
     try {
-      const result = await runAgent(deps, req, body.question, { purpose: body.purpose, role: body.role, patientId: body.patientId || null, mode: body.mode, language: body.language, allowResearch: body.mode === 'research', allowCodeExecution: body.mode === 'analysis' });
+      const result = await runAgent(deps, req, body.question, { purpose: body.purpose, role: body.role, patientId: body.patientId || null, mode: body.mode, language: body.language, capability: body.capability, allowResearch: body.mode === 'research', allowCodeExecution: body.mode === 'analysis' });
       await registerWorkAudit(pool, req, body.patientId || null, body.purpose, result);
       return { data: { answer: clinicianResponse(result, body.language), runId: result.runId } };
     } catch (e: any) { return reply.code(e.statusCode || 502).send({ error: sanitizeClinAIResponse(e.message || 'ClinAI could not complete that request.') }); }
