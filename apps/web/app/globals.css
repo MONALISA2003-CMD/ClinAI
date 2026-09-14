@@ -251,3 +251,34 @@ input,select,textarea,button{max-width:100%}
 .patient-ai-actions{display:flex;align-items:center;gap:10px;justify-content:space-between;flex-wrap:wrap;margin-bottom:10px}
 .patient-ai-actions span{font-size:12px;color:#68736d}
 @media(max-width:700px){.public-feedback-pop,.public-health-pop{position:fixed;right:12px;bottom:74px;width:calc(100vw - 24px)}.public-intro-footer{padding-bottom:8px}.patient-ai-actions{align-items:flex-start}}
+
+/* V2 clinical workspace polish: dense, calm, action-oriented, backend-backed */
+.workspace-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:10px 0 12px}
+.workspace-summary>div{border:1px solid var(--border);background:var(--surface-2);border-radius:10px;padding:9px 11px;min-width:0}
+.workspace-summary span{display:block;font-size:8px;color:var(--muted);font-weight:750;text-transform:uppercase;letter-spacing:.08em}
+.workspace-summary strong{display:block;margin-top:4px;font-size:18px;color:var(--ink)}
+.workspace-summary .needs-attention{border-color:rgba(211,145,22,.28);background:#fffaf0}
+.workspace-summary .needs-attention strong{color:#9a6500}
+.workspace-toolbar{display:flex;gap:9px;align-items:center;margin-bottom:10px}
+.workspace-search{height:40px;flex:1;min-width:180px;display:flex;align-items:center;gap:8px;padding:0 11px;border:1px solid var(--border);border-radius:10px;background:#fff}
+.workspace-search span{font-size:15px;color:var(--muted)}
+.workspace-search input{border:0;outline:0;width:100%;min-width:0;background:transparent;font:inherit;font-size:11px;color:var(--ink)}
+.status-filters{display:flex;gap:5px;overflow:auto;max-width:52%;padding-bottom:2px}
+.status-filters button{border:1px solid var(--border);background:#fff;color:var(--muted);border-radius:999px;padding:7px 10px;font-size:8px;font-weight:800;white-space:nowrap}
+.status-filters button.active{border-color:#a7cdb8;background:var(--clinai-green-soft);color:var(--clinai-green)}
+
+/* Latest continuation direction: clinical green primary, restrained semantic colours */
+:root{--clinai-green:#176b4b;--clinai-green-2:#0f5138;--clinai-green-soft:#edf7f1;--clinai-blue:#275f86;--clinai-blue-2:#347aa8;--clinai-blue-soft:#eef6fb}
+.ai-command-card{border-left:3px solid var(--clinai-green)}
+.welcome-panel .section-kicker{color:var(--clinai-green)}
+.focus-card:hover,.quick-actions button:hover,.journey-steps button:hover{border-color:#a7cdb8;background:#fbfefc}
+
+@media(max-width:700px){
+ .workspace-summary{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+ .workspace-summary>div{padding:8px 9px}
+ .workspace-summary strong{font-size:16px}
+ .workspace-toolbar{display:block}
+ .workspace-search{width:100%;box-sizing:border-box;margin-bottom:7px}
+ .status-filters{max-width:none;overflow-x:auto}
+ .status-filters button{padding:7px 9px}
+}
