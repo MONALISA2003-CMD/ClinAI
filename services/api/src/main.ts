@@ -7,6 +7,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { Pool } from 'pg';
 import { registerAI, registerPublicAI } from './ai/ai-orchestrator.js';
+import { enqueueClinicalEvent, CLINICAL_EVENT_TYPES } from './events/clinicalEvents.js';
 
 const app = Fastify({ logger: true });
 const pool = process.env.DATABASE_URL ? new Pool({ connectionString: process.env.DATABASE_URL, max: 10 }) : null;
@@ -633,7 +634,7 @@ app.post('/api/workflows/:name',async(req:any,reply)=>{
       const qe=await client.query(`INSERT INTO queue_entries(queue_id,patient_id,appointment_id,priority,status) VALUES($1,$2,$3,$4,'waiting-triage') RETURNING id,patient_id AS "patientId",appointment_id AS "appointmentId",priority,status`,[q.rows[0].id,a.rows[0].patientId,b.appointmentId,b.priority||'normal']);
       result={appointment:a.rows[0],queue:qe.rows[0]};
       await dbAudit(client,req,'CHECK_IN','appointment',b.appointmentId,{queueEntryId:qe.rows[0].id});
-      await client.query(`INSERT INTO outbox_events(organization_id,event_type,aggregate_type,aggregate_id,payload) VALUES($1,'appointment.checked_in','appointment',$2,$3)`,[oid,b.appointmentId,JSON.stringify(result)]);
+      await enqueueClinicalEvent(client,{organizationId:oid,eventType:CLINICAL_EVENT_TYPES.APPOINTMENT_CHECKED_IN,aggregateType:'appointment',aggregateId:b.appointmentId,patientId:a.rows[0].patientId,payload:{appointmentId:b.appointmentId,queueEntryId:qe.rows[0].id}});
     } else if(name==='triage'){
       const p=await client.query(`SELECT id FROM patients WHERE id=$1 AND organization_id=$2`,[b.patientId,oid]);if(!p.rowCount)return reply.code(404).send({error:'Patient not found'});
       const tr=await client.query(`INSERT INTO module_records(organization_id,module,status,payload,created_by) VALUES($1,'triage','completed',$2,$3) RETURNING id,payload,status,created_at AS "createdAt"`,[oid,JSON.stringify({...b,status:'completed',completedAt:now()}),dbUserId(req)]);
@@ -904,6 +905,12 @@ app.post('/api/patients/:id/identifiers',async(req:any,reply)=>{
 
 app.get('/api/uganda/profile',async()=>({country:'UG',countryName:'Uganda',currency:'UGX',defaultLocale:'en-UG',supportedLanguages:['en','lg','sw','rn'],clinicalContentPolicy:'Configured and versioned; local/national clinical protocols require governance approval',interoperability:{fhir:'R4',hl7v2:true,dicom:true},nationalAlignment:{healthInformationExchangeGuidelines:'Uganda MoH',digitalHealthArchitecture:'Uganda DH-ASK 2024',privacy:'Uganda Data Protection and Privacy framework'},externalIntegration:{nationalHIE:'not-connected',facilityRegistry:'not-connected',terminologyRegistry:'not-connected'},note:'ClinAI provides an integration-ready architecture; it does not claim live connection to Uganda national systems until credentials and approved interfaces are configured.'}));
 
+// --- FHIR R4 canonical endpoint surface (Release 1 additive layer) ---
+// ClinAI keeps its existing domain model as the source of truth and exposes a
+// standards-facing FHIR R4 surface without replacing or reshaping legacy tables.
+const FHIR_R4_RESOURCES = ['Patient','Encounter','Observation','MedicationRequest','ServiceRequest','DiagnosticReport','Immunization','CarePlan','Procedure','MedicationAdministration','Appointment'] as const;
+app.get('/api/fhir/R4/metadata',async()=>({resourceType:'CapabilityStatement',id:'clinai-fhir-r4',url:'https://clinai.health/fhir/CapabilityStatement/clinai-r4',version:'1.0.0',status:'active',kind:'instance',software:{name:'ClinAI',version:process.env.CLINAI_VERSION||'development'},implementation:{description:'ClinAI FHIR R4 compatibility surface backed by the existing clinical domain model.'},fhirVersion:'4.0.1',format:['json'],rest:[{mode:'server',resource:FHIR_R4_RESOURCES.map(type=>({type,interaction:[{code:'read'}],searchInclude:[]}))}]}));
+
 // --- FHIR R4 resource endpoints ---
 app.get('/api/fhir/Encounter/:id',async(req:any,reply)=>{
   if(!pool)return reply.code(501).send({error:'FHIR Encounter requires PostgreSQL'});
@@ -982,6 +989,70 @@ app.get('/api/guidelines',async(req:any)=>{ if(!pool)return {data:[]}; const j=S
 app.post('/api/guidelines',async(req:any,reply)=>{ if(!pool)return reply.code(501).send({error:'PostgreSQL required'}); const b=z.object({jurisdiction:z.string().min(2),domain:z.string().min(2),title:z.string().min(1),publisher:z.string().min(1),version:z.string().optional(),sourceUrl:z.string().url().optional(),effectiveFrom:z.string().optional(),effectiveTo:z.string().optional(),status:z.enum(['draft','active','retired']).default('draft'),machineReadable:z.boolean().default(false),metadata:z.record(z.any()).optional()}).parse(req.body); const r=await pool.query(`INSERT INTO clinical_guidelines(organization_id,jurisdiction,domain,title,publisher,version,source_url,effective_from,effective_to,status,machine_readable,metadata) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id,jurisdiction,domain,title,publisher,version,source_url AS "sourceUrl",status,machine_readable AS "machineReadable",metadata`,[dbOrganizationId(req),b.jurisdiction,b.domain,b.title,b.publisher,b.version||null,b.sourceUrl||null,b.effectiveFrom||null,b.effectiveTo||null,b.status,b.machineReadable,JSON.stringify(b.metadata||{})]); return reply.code(201).send(r.rows[0]); });
 app.post('/api/guidelines/:id/rules',async(req:any,reply)=>{ if(!pool)return reply.code(501).send({error:'PostgreSQL required'}); const b=z.object({ruleKey:z.string().min(1),description:z.string().optional(),inputSchema:z.record(z.any()).optional(),logic:z.record(z.any()),outputSchema:z.record(z.any()).optional(),priority:z.number().int().default(100),active:z.boolean().default(true)}).parse(req.body); const r=await pool.query(`INSERT INTO clinical_guideline_rules(guideline_id,rule_key,description,input_schema,logic,output_schema,priority,active) SELECT $1,$2,$3,$4,$5,$6,$7,$8 WHERE EXISTS(SELECT 1 FROM clinical_guidelines WHERE id=$1 AND (organization_id=$9 OR organization_id IS NULL)) RETURNING id,rule_key,description,input_schema AS "inputSchema",logic,output_schema AS "outputSchema",priority,active`,[req.params.id,b.ruleKey,b.description||null,JSON.stringify(b.inputSchema||{}),JSON.stringify(b.logic),JSON.stringify(b.outputSchema||{}),b.priority,b.active,dbOrganizationId(req)]); if(!r.rowCount)return reply.code(404).send({error:'Guideline not found'}); return reply.code(201).send(r.rows[0]); });
 
+// --- CDSS foundation: governed rules, evaluations and clinician-facing signals ---
+app.get('/api/cdss/signals',async(req:any)=>{
+  if(!pool)return {data:[]};
+  const patientId=String(req.query?.patientId||'').trim();
+  const status=String(req.query?.status||'').trim();
+  const severity=String(req.query?.severity||'').trim();
+  const params:any[]=[dbOrganizationId(req)]; let n=2; const where=['organization_id=$1'];
+  if(patientId){where.push(`patient_id=$${n++}`);params.push(patientId)}
+  if(status){where.push(`status=$${n++}`);params.push(status)}
+  if(severity){where.push(`severity=$${n++}`);params.push(severity)}
+  const r=await pool.query(`SELECT id,patient_id AS "patientId",encounter_id AS "encounterId",rule_version_id AS "ruleVersionId",source_event_id AS "sourceEventId",signal_type AS "signalType",severity,status,title,summary,evidence,recommendation,action_url AS "actionUrl",detected_at AS "detectedAt",acknowledged_at AS "acknowledgedAt",resolved_at AS "resolvedAt",snoozed_until AS "snoozedUntil",created_at AS "createdAt",updated_at AS "updatedAt" FROM clinical_signals WHERE ${where.join(' AND ')} ORDER BY CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'moderate' THEN 3 WHEN 'low' THEN 4 ELSE 5 END,detected_at DESC LIMIT 200`,params);
+  return {data:r.rows};
+});
+
+app.get('/api/cdss/signals/:id',async(req:any,reply)=>{
+  if(!pool)return reply.code(501).send({error:'PostgreSQL required'});
+  const r=await pool.query(`SELECT s.*,rv.version AS "ruleVersion",rv.engine,gr.rule_key AS "ruleKey",g.title AS "guidelineTitle",g.publisher,g.jurisdiction,g.version AS "guidelineVersion" FROM clinical_signals s LEFT JOIN cdss_rule_versions rv ON rv.id=s.rule_version_id LEFT JOIN clinical_guideline_rules gr ON gr.id=rv.guideline_rule_id LEFT JOIN clinical_guidelines g ON g.id=gr.guideline_id WHERE s.id=$1 AND s.organization_id=$2`,[req.params.id,dbOrganizationId(req)]);
+  if(!r.rowCount)return reply.code(404).send({error:'Clinical signal not found'});
+  const a=await pool.query(`SELECT id,actor_user_id AS "actorUserId",action,reason,metadata,created_at AS "createdAt" FROM clinical_signal_actions WHERE signal_id=$1 AND organization_id=$2 ORDER BY created_at DESC`,[req.params.id,dbOrganizationId(req)]);
+  return {data:{...r.rows[0],actions:a.rows}};
+});
+
+app.post('/api/cdss/signals/:id/action',async(req:any,reply)=>{
+  if(!pool)return reply.code(501).send({error:'PostgreSQL required'});
+  const b=z.object({action:z.enum(['acknowledge','snooze','resolve','dismiss','reopen','view']),reason:z.string().optional(),snoozedUntil:z.string().optional(),metadata:z.record(z.any()).default({})}).parse(req.body||{});
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    const existing=await client.query(`SELECT id,status FROM clinical_signals WHERE id=$1 AND organization_id=$2 FOR UPDATE`,[req.params.id,dbOrganizationId(req)]);
+    if(!existing.rowCount){await client.query('ROLLBACK');return reply.code(404).send({error:'Clinical signal not found'});}
+    const statusMap:any={acknowledge:'acknowledged',snooze:'snoozed',resolve:'resolved',dismiss:'dismissed',reopen:'open',view:existing.rows[0].status};
+    const nextStatus=statusMap[b.action];
+    const r=await client.query(`UPDATE clinical_signals SET status=$1,snoozed_until=CASE WHEN $2='snooze' THEN $3 ELSE NULL END,acknowledged_by=CASE WHEN $2='acknowledge' THEN $4 ELSE acknowledged_by END,acknowledged_at=CASE WHEN $2='acknowledge' THEN now() ELSE acknowledged_at END,resolved_by=CASE WHEN $2='resolve' THEN $4 ELSE resolved_by END,resolved_at=CASE WHEN $2='resolve' THEN now() ELSE resolved_at END,updated_at=now() WHERE id=$5 AND organization_id=$6 RETURNING id,status,snoozed_until AS "snoozedUntil",acknowledged_at AS "acknowledgedAt",resolved_at AS "resolvedAt"`,[nextStatus,b.action,b.snoozedUntil||null,dbUserId(req),req.params.id,dbOrganizationId(req)]);
+    await client.query(`INSERT INTO clinical_signal_actions(signal_id,organization_id,actor_user_id,action,reason,metadata) VALUES($1,$2,$3,$4,$5,$6)`,[req.params.id,dbOrganizationId(req),dbUserId(req),b.action,b.reason||null,JSON.stringify(b.metadata)]);
+    await dbAudit(client,req,`CDSS_${b.action.toUpperCase()}`,'clinical_signal',req.params.id,{reason:b.reason||null});
+    await client.query('COMMIT');
+    return {data:r.rows[0]};
+  }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
+});
+
+app.get('/api/cdss/rules',async(req:any)=>{
+  if(!pool)return {data:[]};
+  const status=String(req.query?.status||'').trim(); const params:any[]=[dbOrganizationId(req)]; let where='(g.organization_id=$1 OR g.organization_id IS NULL)';
+  if(status){params.push(status);where+=` AND rv.status=$${params.length}`;}
+  const r=await pool.query(`SELECT rv.id,rv.guideline_rule_id AS "guidelineRuleId",rv.version,rv.status,rv.engine,rv.evidence,rv.effective_from AS "effectiveFrom",rv.effective_to AS "effectiveTo",rv.approved_at AS "approvedAt",gr.rule_key AS "ruleKey",gr.description,g.id AS "guidelineId",g.title AS "guidelineTitle",g.publisher,g.jurisdiction,g.version AS "guidelineVersion" FROM cdss_rule_versions rv JOIN clinical_guideline_rules gr ON gr.id=rv.guideline_rule_id JOIN clinical_guidelines g ON g.id=gr.guideline_id WHERE ${where} ORDER BY rv.updated_at DESC`,params);
+  return {data:r.rows};
+});
+
+app.post('/api/cdss/rules/:ruleId/versions',async(req:any,reply)=>{
+  if(!pool)return reply.code(501).send({error:'PostgreSQL required'});
+  const b=z.object({version:z.string().min(1),status:z.enum(['draft','review','approved','active','retired']).default('draft'),engine:z.enum(['clinai-json','cql']).default('clinai-json'),logic:z.record(z.any()).default({}),evidence:z.record(z.any()).default({}),effectiveFrom:z.string().optional(),effectiveTo:z.string().optional()}).parse(req.body||{});
+  const owns=await pool.query(`SELECT gr.id FROM clinical_guideline_rules gr JOIN clinical_guidelines g ON g.id=gr.guideline_id WHERE gr.id=$1 AND (g.organization_id=$2 OR g.organization_id IS NULL)`,[req.params.ruleId,dbOrganizationId(req)]);
+  if(!owns.rowCount)return reply.code(404).send({error:'Guideline rule not found'});
+  const r=await pool.query(`INSERT INTO cdss_rule_versions(guideline_rule_id,version,status,engine,logic,evidence,effective_from,effective_to,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id,guideline_rule_id AS "guidelineRuleId",version,status,engine,logic,evidence,effective_from AS "effectiveFrom",effective_to AS "effectiveTo",created_at AS "createdAt"`,[req.params.ruleId,b.version,b.status,b.engine,JSON.stringify(b.logic),JSON.stringify(b.evidence),b.effectiveFrom||null,b.effectiveTo||null,dbUserId(req)]);
+  return reply.code(201).send({data:r.rows[0]});
+});
+
+app.get('/api/cdss/summary',async(req:any)=>{
+  if(!pool)return {data:{}}; const o=dbOrganizationId(req);
+  const r=await pool.query(`SELECT count(*) FILTER (WHERE status='open')::int AS open,count(*) FILTER (WHERE status='acknowledged')::int AS acknowledged,count(*) FILTER (WHERE severity='critical' AND status IN ('open','acknowledged'))::int AS critical,count(*) FILTER (WHERE severity='high' AND status IN ('open','acknowledged'))::int AS high FROM clinical_signals WHERE organization_id=$1`,[o]);
+  return {data:r.rows[0]};
+});
+
+
 app.get('/api/care-pathways',async(req:any)=>{ if(!pool)return {data:[]}; const r=await pool.query(`SELECT id,code,name,domain,jurisdiction,version,status,source_guideline_id AS "sourceGuidelineId",metadata FROM care_pathways WHERE organization_id=$1 OR organization_id IS NULL ORDER BY updated_at DESC`,[dbOrganizationId(req)]); return {data:r.rows}; });
 app.post('/api/care-pathways',async(req:any,reply)=>{ if(!pool)return reply.code(501).send({error:'PostgreSQL required'}); const b=z.object({code:z.string().min(1),name:z.string().min(1),domain:z.string().min(1),jurisdiction:z.string().default('UG'),version:z.string().min(1),status:z.string().default('draft'),sourceGuidelineId:z.string().uuid().optional(),metadata:z.record(z.any()).optional()}).parse(req.body); const r=await pool.query(`INSERT INTO care_pathways(organization_id,code,name,domain,jurisdiction,version,status,source_guideline_id,metadata) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id,code,name,domain,jurisdiction,version,status,source_guideline_id AS "sourceGuidelineId",metadata`,[dbOrganizationId(req),b.code,b.name,b.domain,b.jurisdiction,b.version,b.status,b.sourceGuidelineId||null,JSON.stringify(b.metadata||{})]); return reply.code(201).send(r.rows[0]); });
 app.post('/api/care-pathways/:id/steps',async(req:any,reply)=>{ if(!pool)return reply.code(501).send({error:'PostgreSQL required'}); const b=z.object({sequenceNo:z.number().int().positive(),stepCode:z.string().min(1),title:z.string().min(1),stepType:z.string().min(1),formKey:z.string().optional(),ruleKey:z.string().optional(),required:z.boolean().default(false),configuration:z.record(z.any()).optional()}).parse(req.body); const r=await pool.query(`INSERT INTO care_pathway_steps(pathway_id,sequence_no,step_code,title,step_type,form_key,rule_key,required,configuration) SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9 WHERE EXISTS(SELECT 1 FROM care_pathways WHERE id=$1 AND (organization_id=$10 OR organization_id IS NULL)) RETURNING id,sequence_no AS "sequenceNo",step_code AS "stepCode",title,step_type AS "stepType",form_key AS "formKey",rule_key AS "ruleKey",required,configuration`,[req.params.id,b.sequenceNo,b.stepCode,b.title,b.stepType,b.formKey||null,b.ruleKey||null,b.required,JSON.stringify(b.configuration||{}),dbOrganizationId(req)]); if(!r.rowCount)return reply.code(404).send({error:'Pathway not found'}); return reply.code(201).send(r.rows[0]); });
@@ -1010,6 +1081,21 @@ function clean(o:Row){ const out:Row={}; for(const [k,v] of Object.entries(o)) i
 function fhirPatient(p:Row){
   return clean({resourceType:'Patient',id:p.id,identifier:[{system:'https://clinai.health/patient-number',value:p.patientNumber}],name:[{family:p.lastName,given:[p.firstName]}],gender:p.sex==='unknown'?undefined:p.sex,birthDate:p.dateOfBirth,telecom:[p.phone?{system:'phone',value:p.phone}:null,p.email?{system:'email',value:p.email}:null].filter(Boolean),address:p.address?[{text:p.address}]:undefined});
 }
+// Canonical FHIR R4 paths. These redirect internally to the existing, tested resource handlers.
+for (const resource of FHIR_R4_RESOURCES) {
+  if (resource === 'Patient') continue;
+  app.all(`/api/fhir/R4/${resource}/:id`,async(req:any,reply)=>{
+    const target = `/api/fhir/${resource}/${encodeURIComponent(req.params.id)}`;
+    return reply.redirect(307,target);
+  });
+}
+app.all('/api/fhir/R4/Patient/:id',async(req:any,reply)=>reply.redirect(307,`/api/fhir/Patient/${encodeURIComponent(req.params.id)}`));
+app.all('/api/fhir/R4/Patient',async(req:any,reply)=>{
+  const qs = new URLSearchParams(req.query as Record<string,string>);
+  const suffix = qs.toString() ? `?${qs.toString()}` : '';
+  return reply.redirect(307,`/api/fhir/Patient${suffix}`);
+});
+
 app.get('/api/fhir/Patient/:id',async(req:any,reply)=>{
   let p:any; if(pool){const r=await pool.query(`SELECT id,patient_number AS "patientNumber",first_name AS "firstName",middle_name AS "middleName",last_name AS "lastName",date_of_birth AS "dateOfBirth",sex,phone,email,address FROM patients WHERE id=$1 AND organization_id=$2`,[req.params.id,dbOrganizationId(req)]); p=r.rows[0];} else p=store.patients.find(x=>x.id===req.params.id && x.organizationId===org(req));
   if(!p) return reply.code(404).send({resourceType:'OperationOutcome',issue:[{severity:'error',code:'not-found',diagnostics:'Patient not found'}]});
