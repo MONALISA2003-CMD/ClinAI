@@ -162,7 +162,7 @@ export type ClinicalEvaluationResult = {
 };
 
 export async function evaluateClinicalEvent(pool: Pool, event: EventRow, options: ClinicalEvaluationOptions = {}): Promise<ClinicalEvaluationResult> {
-  if (!SUPPORTED_EVENTS.has(event.event_type)) return { evaluated: 0, triggered: 0 };
+  if (!SUPPORTED_EVENTS.has(event.event_type)) return { evaluated: 0, triggered: 0, triggeredSignals: [] };
   const client = await pool.connect();
   const started = Date.now();
   try {
