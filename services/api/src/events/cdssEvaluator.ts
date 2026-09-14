@@ -8,7 +8,7 @@ type RuleVersion = {
   logic: Record<string, unknown>;
 };
 
-type EventRow = {
+export type EventRow = {
   id: string;
   organization_id: string;
   event_type: string;
@@ -19,6 +19,7 @@ type EventRow = {
 
 type Signal = {
   ruleVersionId: string;
+  ruleKey: string;
   signalType: string;
   severity: 'critical' | 'high' | 'moderate' | 'low' | 'informational';
   title: string;
@@ -29,7 +30,7 @@ type Signal = {
 };
 
 const SUPPORTED_EVENTS = new Set([
-  'patient.registered', 'encounter.started', 'appointment.checked_in',
+  'patient.registered', 'allergy.recorded', 'encounter.started', 'appointment.checked_in',
   'vital.recorded', 'diagnosis.recorded', 'order.created', 'specimen.collected',
   'result.verified', 'medication.ordered', 'medication.dispensed',
   'referral.created', 'referral.completed', 'discharge.started', 'followup.due',
@@ -74,7 +75,7 @@ async function evaluateRule(client: PoolClient, rule: RuleVersion, event: EventR
     const x = r.rows[0];
     const critical = Boolean(x.critical);
     return {
-      ruleVersionId: rule.id, signalType: 'laboratory', severity: critical ? 'critical' : 'high',
+      ruleVersionId: rule.id, ruleKey: rule.ruleKey, signalType: 'laboratory', severity: critical ? 'critical' : 'high',
       title: critical ? 'Critical laboratory result requires review' : 'Flagged laboratory result requires review',
       summary: `${x.testName || 'Laboratory result'}: ${x.valueNumeric ?? x.valueText ?? 'result'}${x.unit ? ` ${x.unit}` : ''}${x.abnormalFlag ? ` (${x.abnormalFlag})` : ''}`,
       evidence: { resultId: x.id, testName: x.testName, valueNumeric: x.valueNumeric, valueText: x.valueText, unit: x.unit, abnormalFlag: x.abnormalFlag, critical: x.critical },
@@ -93,10 +94,10 @@ async function evaluateRule(client: PoolClient, rule: RuleVersion, event: EventR
       const code = text(x.code).toLowerCase();
       const value = num(x.valueNumeric);
       if (rule.ruleKey === 'clinai.low-spo2' && value !== null && ['oxygen-saturation','spo2','oxygen_saturation'].includes(code) && value < 90) {
-        return { ruleVersionId: rule.id, signalType: 'vital', severity: 'critical', title: 'Very low oxygen saturation needs prompt review', summary: `Recorded oxygen saturation ${value}% is very low.`, evidence: { observationId: x.id, code: x.code, value, unit: x.unit, observedAt: x.observedAt }, recommendation: 'Reassess the patient and follow the applicable local clinical protocol.', actionUrl: `/patients/${patientId}` };
+        return { ruleVersionId: rule.id, ruleKey: rule.ruleKey, signalType: 'vital', severity: 'critical', title: 'Very low oxygen saturation needs prompt review', summary: `Recorded oxygen saturation ${value}% is very low.`, evidence: { observationId: x.id, code: x.code, value, unit: x.unit, observedAt: x.observedAt }, recommendation: 'Reassess the patient and follow the applicable local clinical protocol.', actionUrl: `/patients/${patientId}` };
       }
       if (rule.ruleKey === 'clinai.severe-bp' && value !== null && ['systolic-blood-pressure','systolic','blood-pressure','blood_pressure'].includes(code) && value >= 180) {
-        return { ruleVersionId: rule.id, signalType: 'vital', severity: 'high', title: 'Markedly elevated systolic blood pressure needs review', summary: `Recorded systolic blood pressure ${value} mmHg is markedly elevated.`, evidence: { observationId: x.id, code: x.code, value, unit: x.unit, observedAt: x.observedAt }, recommendation: 'Repeat or confirm the measurement as appropriate and review the patient in clinical context.', actionUrl: `/patients/${patientId}` };
+        return { ruleVersionId: rule.id, ruleKey: rule.ruleKey, signalType: 'vital', severity: 'high', title: 'Markedly elevated systolic blood pressure needs review', summary: `Recorded systolic blood pressure ${value} mmHg is markedly elevated.`, evidence: { observationId: x.id, code: x.code, value, unit: x.unit, observedAt: x.observedAt }, recommendation: 'Repeat or confirm the measurement as appropriate and review the patient in clinical context.', actionUrl: `/patients/${patientId}` };
       }
     }
     return null;
@@ -114,7 +115,7 @@ async function evaluateRule(client: PoolClient, rule: RuleVersion, event: EventR
         const allergen = text(x.allergen).toLowerCase();
         return allergen && (name === allergen || name.includes(allergen) || allergen.includes(name));
       });
-      if (a) return { ruleVersionId: rule.id, signalType: 'medication-safety', severity: 'critical', title: 'Medication and recorded allergy overlap requires review', summary: `${m.medicationName} appears to overlap with the recorded allergy entry ${a.allergen}.`, evidence: { medicationOrderId: m.id, medicationName: m.medicationName, allergyId: a.id, allergen: a.allergen, reaction: a.reaction }, recommendation: 'Pause and review the medication against the documented allergy before proceeding.', actionUrl: `/patients/${patientId}` };
+      if (a) return { ruleVersionId: rule.id, ruleKey: rule.ruleKey, signalType: 'medication-safety', severity: 'critical', title: 'Medication and recorded allergy overlap requires review', summary: `${m.medicationName} appears to overlap with the recorded allergy entry ${a.allergen}.`, evidence: { medicationOrderId: m.id, medicationName: m.medicationName, allergyId: a.id, allergen: a.allergen, reaction: a.reaction }, recommendation: 'Pause and review the medication against the documented allergy before proceeding.', actionUrl: `/patients/${patientId}` };
     }
     return null;
   }
@@ -123,7 +124,7 @@ async function evaluateRule(client: PoolClient, rule: RuleVersion, event: EventR
     const r = await client.query(`SELECT co.id, co.order_type AS "orderType", co.status, co.details FROM clinical_orders co JOIN patients p ON p.id=co.patient_id WHERE p.organization_id=$1 AND co.patient_id=$2 AND co.status IN ('ordered','pending','in-progress','in_progress') ORDER BY co.created_at DESC LIMIT 1`, [orgId, patientId]);
     if (!r.rowCount) return null;
     const x = r.rows[0];
-    return { ruleVersionId: rule.id, signalType: 'workflow', severity: 'moderate', title: 'Clinical order remains unresolved', summary: `${x.orderType || 'Clinical order'} remains ${x.status} in the patient record.`, evidence: { orderId: x.id, orderType: x.orderType, status: x.status, details: x.details || {} }, recommendation: 'Review whether the order needs completion, result follow-up, or documented cancellation.', actionUrl: `/patients/${patientId}` };
+    return { ruleVersionId: rule.id, ruleKey: rule.ruleKey, signalType: 'workflow', severity: 'moderate', title: 'Clinical order remains unresolved', summary: `${x.orderType || 'Clinical order'} remains ${x.status} in the patient record.`, evidence: { orderId: x.id, orderType: x.orderType, status: x.status, details: x.details || {} }, recommendation: 'Review whether the order needs completion, result follow-up, or documented cancellation.', actionUrl: `/patients/${patientId}` };
   }
 
   return null;
@@ -149,14 +150,27 @@ async function persistSignal(client: PoolClient, event: EventRow, signal: Signal
   return r.rows[0].id;
 }
 
-export async function evaluateClinicalEvent(pool: Pool, event: EventRow) {
+export type ClinicalEvaluationOptions = {
+  /** Limit evaluation to an explicit rule set. Omit for the existing async worker behavior. */
+  ruleScope?: ReadonlySet<string>;
+};
+
+export type ClinicalEvaluationResult = {
+  evaluated: number;
+  triggered: number;
+  triggeredSignals: Signal[];
+};
+
+export async function evaluateClinicalEvent(pool: Pool, event: EventRow, options: ClinicalEvaluationOptions = {}): Promise<ClinicalEvaluationResult> {
   if (!SUPPORTED_EVENTS.has(event.event_type)) return { evaluated: 0, triggered: 0 };
   const client = await pool.connect();
   const started = Date.now();
   try {
     await client.query('BEGIN');
-    const rules = await activeRules(client);
+    const allRules = await activeRules(client);
+    const rules = options.ruleScope ? allRules.filter(rule => options.ruleScope!.has(rule.ruleKey)) : allRules;
     let triggered = 0;
+    const triggeredSignals: Signal[] = [];
     for (const rule of rules) {
       const signal = await evaluateRule(client, rule, event);
       await client.query(`
@@ -164,10 +178,10 @@ export async function evaluateClinicalEvent(pool: Pool, event: EventRow) {
           (organization_id,patient_id,encounter_id,rule_version_id,outcome,evaluated_at,duration_ms,evidence,error_code)
         VALUES($1,$2,$3,$4,$5,now(),$6,$7,NULL)
       `, [event.organization_id, event.payload.patientId || null, event.payload.encounterId || null, rule.id, signal ? 'triggered' : 'not_triggered', Date.now() - started, JSON.stringify(signal ? signal.evidence : { eventType: event.event_type })]);
-      if (signal) { await persistSignal(client, event, signal); triggered += 1; }
+      if (signal) { await persistSignal(client, event, signal); triggered += 1; triggeredSignals.push(signal); }
     }
     await client.query('COMMIT');
-    return { evaluated: rules.length, triggered };
+    return { evaluated: rules.length, triggered, triggeredSignals };
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;

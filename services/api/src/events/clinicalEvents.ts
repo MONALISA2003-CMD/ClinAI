@@ -13,19 +13,32 @@ type EventInput = {
 
 export const CLINICAL_EVENT_TYPES = Object.freeze({
   PATIENT_REGISTERED: 'patient.registered',
+  ALLERGY_RECORDED: 'allergy.recorded',
+  APPOINTMENT_CREATED: 'appointment.created',
+  QUEUE_ENTERED: 'queue.entered',
   ENCOUNTER_STARTED: 'encounter.started',
+  ENCOUNTER_COMPLETED: 'encounter.completed',
+  CLINICAL_NOTE_SIGNED: 'clinical_note.signed',
   APPOINTMENT_CHECKED_IN: 'appointment.checked_in',
   VITAL_RECORDED: 'vital.recorded',
   DIAGNOSIS_RECORDED: 'diagnosis.recorded',
   ORDER_CREATED: 'order.created',
+  LAB_RESULT_CREATED: 'result.created',
   SPECIMEN_COLLECTED: 'specimen.collected',
+  SPECIMEN_RECEIVED: 'specimen.received',
   RESULT_VERIFIED: 'result.verified',
+  RESULT_RELEASED: 'result.released',
   MEDICATION_ORDERED: 'medication.ordered',
   MEDICATION_DISPENSED: 'medication.dispensed',
+  MEDICATION_ADMINISTERED: 'medication.administered',
   REFERRAL_CREATED: 'referral.created',
+  REFERRAL_SENT: 'referral.sent',
   REFERRAL_COMPLETED: 'referral.completed',
   DISCHARGE_STARTED: 'discharge.started',
+  ADMISSION_STARTED: 'admission.started',
   FOLLOWUP_DUE: 'followup.due',
+  TASK_CREATED: 'task.created',
+  TASK_COMPLETED: 'task.completed',
 } as const);
 
 /**

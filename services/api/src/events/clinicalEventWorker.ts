@@ -1,5 +1,5 @@
 import type { Pool } from 'pg';
-import { evaluateClinicalEvent } from './cdssEvaluator.js';
+import { evaluateClinicalContext } from '../intelligence/cdssGateway.js';
 
 let timer: NodeJS.Timeout | undefined;
 let running = false;
@@ -32,7 +32,19 @@ export function startClinicalEventWorker(pool: Pool | null) {
         } finally { client.release(); }
 
         try {
-          await evaluateClinicalEvent(pool, event);
+          await evaluateClinicalContext(pool, {
+            mode: 'async',
+            trigger: {
+              eventId: event.id,
+              eventType: event.event_type,
+              organizationId: event.organization_id,
+              aggregateType: event.aggregate_type,
+              aggregateId: event.aggregate_id,
+              patientId: event.payload?.patientId ?? null,
+              encounterId: event.payload?.encounterId ?? null,
+              payload: event.payload || {},
+            },
+          });
           await pool.query(`UPDATE outbox_events SET status='processed',processed_at=now(),locked_at=NULL,worker_id=NULL,last_error=NULL WHERE id=$1`, [event.id]);
         } catch (error: any) {
           const message = String(error?.message || 'CDSS event processing failed').slice(0, 1000);
