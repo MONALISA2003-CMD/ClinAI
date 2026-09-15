@@ -17,7 +17,10 @@
     "smoke": "node scripts/smoke.mjs",
     "test:smoke": "node scripts/smoke.mjs",
     "test:v26:modules": "node tests/v26-module-contract-audit.mjs",
-    "test:v26:ai": "node tests/v26-ai-reliability-audit.mjs"
+    "test:v26:ai": "node tests/v26-ai-reliability-audit.mjs",
+    "typecheck:web": "npm --workspace @clinai/web run typecheck",
+    "typecheck:api": "npm --workspace @clinai/api run build",
+    "typecheck": "npm run typecheck:api && npm run typecheck:web"
   },
   "devDependencies": {
     "@types/node": "latest",

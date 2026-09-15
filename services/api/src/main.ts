@@ -375,7 +375,7 @@ app.get('/api/system/status',async(_req,reply)=>{
     return reply.code(503).send({ok:false,service:'clinai-api',status:'degraded',database:{connected:false,engine:'postgresql'}});
   }
 });
-app.get('/api/build-info',async()=>({service:'clinai-api',buildId:process.env.RENDER_GIT_COMMIT||process.env.COMMIT_SHA||'runtime',version:'0.18.1'}));
+app.get('/api/build-info',async()=>({service:'clinai-api',buildId:process.env.RENDER_GIT_COMMIT||process.env.COMMIT_SHA||'runtime',version:'0.18.2'}));
 app.get('/api/modules',async()=>modules);
 app.post('/api/auth/demo',async()=>{ if(!demoTenant) return {token:await app.jwt.sign({sub:'demo-user',role:'admin',organizationId:'demo-org'},{expiresIn:'8h'})}; return {token:await app.jwt.sign({sub:demoTenant.userId,role:'admin',organizationId:demoTenant.organizationId},{expiresIn:'8h'}),organizationId:demoTenant.organizationId,userId:demoTenant.userId}; });
 app.addHook('preHandler',async(req)=>{
@@ -1265,7 +1265,7 @@ app.post('/api/cds/evaluate',async(req:any,reply)=>{
   if(typeof f.spo2==='number'&&f.spo2<90) alerts.push({type:'abnormal-vital',severity:'CRITICAL',title:'Low oxygen saturation',message:'Oxygen saturation is below the configured review threshold.'});
   if(typeof f.systolic==='number'&&f.systolic>=180) alerts.push({type:'abnormal-vital',severity:'CRITICAL',title:'Severely elevated blood pressure',message:'Systolic blood pressure is at or above the configured review threshold.'});
   if(typeof f.temperature==='number'&&f.temperature>=39) alerts.push({type:'abnormal-vital',severity:'WARNING',title:'Elevated temperature',message:'Temperature is elevated and requires clinical review.'});
-  const saved=[]; for(const a of alerts) saved.push(await moduleCreate(req,'clinical-alerts',{...a,patientId:b.patientId,encounterId:b.encounterId,source:'deterministic-cds'},a.severity==='CRITICAL'?'critical':'open'));
+  const saved:any[]=[]; for(const a of alerts) saved.push(await moduleCreate(req,'clinical-alerts',{...a,patientId:b.patientId,encounterId:b.encounterId,source:'deterministic-cds'},a.severity==='CRITICAL'?'critical':'open'));
   return {patientId:b.patientId,alerts:saved,requiresClinicianReview:saved.length>0};
 });
 app.post('/api/care-gaps/:id/resolve',async(req:any,reply)=>{if(!pool){const x=patch('care-gaps',req.params.id,{status:'resolved',resolvedAt:now(),resolution:req.body?.resolution||null},req);if(!x)return reply.code(404).send({error:'Care gap not found'});return x;}const r=await pool.query(`UPDATE module_records SET status='resolved',payload=payload || $1::jsonb,updated_at=now() WHERE id=$2 AND organization_id=$3 AND module='care-gaps' RETURNING id,status,payload,updated_at AS "updatedAt"`,[JSON.stringify({resolvedAt:now(),resolution:req.body?.resolution||null,resolvedBy:dbUserId(req)}),req.params.id,dbOrganizationId(req)]);if(!r.rowCount)return reply.code(404).send({error:'Care gap not found'});await pool.query(`INSERT INTO audit_logs(organization_id,actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,$2,'RESOLVE','care_gap',$3,$4)`,[dbOrganizationId(req),dbUserId(req),r.rows[0].id,JSON.stringify({})]);return {id:r.rows[0].id,...r.rows[0].payload,status:r.rows[0].status,updatedAt:r.rows[0].updatedAt};});
@@ -1392,7 +1392,7 @@ app.post('/api/child-intelligence/care-gaps/detect', async(req:any,reply)=>{
   if(lastGrowth && Date.now()-new Date(lastGrowth).getTime()>180*86400000) gaps.push({gapType:'growth-monitoring',priority:'high',title:'Growth monitoring may be overdue',description:'The most recent growth measurement is more than six months old. Review against the applicable child-health schedule.',evidence:{lastMeasuredAt:lastGrowth}});
   const ir=imm.rows[0];
   if(ir?.overdue_items?.length) gaps.push({gapType:'immunization',priority:'high',title:'Overdue immunization items require review',description:'The latest immunization review contains overdue items.',evidence:{overdueItems:ir.overdue_items}});
-  const created=[];
+  const created:any[]=[];
   for(const g of gaps){
     const existing=await pool.query(`SELECT id FROM child_care_gaps WHERE organization_id=$1 AND patient_id=$2 AND gap_type=$3 AND status IN ('open','acknowledged') LIMIT 1`,[o,p,g.gapType]);
     if(!existing.rowCount){const r=await pool.query(`INSERT INTO child_care_gaps(organization_id,patient_id,gap_type,status,priority,title,description,evidence,source_guideline) VALUES($1,$2,$3,'open',$4,$5,$6,$7,$8) RETURNING *`,[o,p,g.gapType,g.priority,g.title,g.description,JSON.stringify(g.evidence),b.sourceGuideline]);created.push(r.rows[0]);}
