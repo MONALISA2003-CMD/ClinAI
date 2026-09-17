@@ -20,22 +20,23 @@ export type CareGap = {
 
 export async function buildPatientIntelligenceLayer(query: Query, organizationId: string, patientId: string) {
   const [criticalLabs, urgentTasks, overdueFollowups, delayedReferrals, immunizationsDue, activeRisks, recentResults, admissions, carePlans, reconciliation,
-    finance, supply, publicHealth, longitudinalEvents, procedures] = await Promise.all([
+    finance, supply, publicHealth, longitudinalEvents, procedures, referrals] = await Promise.all([
     safe(() => query(`SELECT lr.id,lt.name AS "testName",lr.value_numeric AS "valueNumeric",lr.value_text AS "valueText",lr.unit,lr.status,ls.received_at AS "receivedAt" FROM lab_results lr JOIN lab_samples ls ON ls.id=lr.sample_id JOIN clinical_orders co ON co.id=ls.order_id JOIN lab_tests lt ON lt.id=lr.test_id WHERE co.organization_id=$1 AND co.patient_id=$2 AND lr.critical=true AND lr.status<>'released' ORDER BY ls.received_at DESC LIMIT 10`, [organizationId, patientId]), []),
     safe(() => query(`SELECT id,title,priority,status,due_at AS "dueAt" FROM care_tasks WHERE organization_id=$1 AND patient_id=$2 AND status NOT IN ('completed','closed','cancelled') AND priority IN ('critical','urgent') ORDER BY due_at NULLS LAST LIMIT 20`, [organizationId, patientId]), []),
     safe(() => query(`SELECT id,reason,status,due_at AS "dueAt",created_at AS "createdAt" FROM module_records WHERE organization_id=$1 AND payload->>'patientId'=$2 AND module='follow-up' AND status NOT IN ('completed','closed','cancelled') AND (payload->>'dueAt') IS NOT NULL AND (payload->>'dueAt')::timestamptz < now() ORDER BY created_at DESC LIMIT 20`, [organizationId, patientId]), []),
-    safe(() => query(`SELECT r.id,r.reason,r.destination,r.status,r.created_at AS "createdAt" FROM referrals r WHERE r.organization_id=$1 AND r.patient_id=$2 AND r.status NOT IN ('completed','closed','cancelled') AND r.created_at < now()-interval '7 days' ORDER BY r.created_at ASC LIMIT 20`, [organizationId, patientId]), []),
+    safe(() => query(`SELECT r.id,r.reason,r.destination,r.status,r.created_at AS "createdAt" FROM referrals r JOIN patients p ON p.id=r.patient_id WHERE r.patient_id=$2 AND p.organization_id=$1 AND r.status NOT IN ('completed','closed','cancelled') AND r.created_at < now()-interval '7 days' ORDER BY r.created_at ASC LIMIT 20`, [organizationId, patientId]), []),
     safe(() => query(`SELECT id,vaccine_name AS "vaccineName",dose_number AS "doseNumber",next_due_at AS "nextDueAt" FROM immunizations WHERE organization_id=$1 AND patient_id=$2 AND next_due_at IS NOT NULL AND next_due_at < now() ORDER BY next_due_at ASC LIMIT 20`, [organizationId, patientId]), []),
     safe(() => query(`SELECT id,signal_type AS "ruleKey",severity,title,summary,created_at AS "createdAt" FROM clinical_signals WHERE organization_id=$1 AND patient_id=$2 AND status NOT IN ('resolved','closed','dismissed') ORDER BY created_at DESC LIMIT 20`, [organizationId, patientId]), []),
     safe(() => query(`SELECT lr.id,lt.name AS "testName",lr.value_numeric AS "valueNumeric",lr.value_text AS "valueText",lr.unit,lr.status,ls.received_at AS "receivedAt" FROM lab_results lr JOIN lab_samples ls ON ls.id=lr.sample_id JOIN clinical_orders co ON co.id=ls.order_id JOIN lab_tests lt ON lt.id=lr.test_id WHERE co.organization_id=$1 AND co.patient_id=$2 ORDER BY ls.received_at DESC LIMIT 12`, [organizationId, patientId]), []),
     safe(() => query(`SELECT id,status,ward,bed,admitted_at AS "admittedAt",discharged_at AS "dischargedAt" FROM admissions WHERE organization_id=$1 AND patient_id=$2 ORDER BY admitted_at DESC LIMIT 10`, [organizationId, patientId]), []),
-    safe(() => query(`SELECT id,title,status,goals FROM care_plans WHERE organization_id=$1 AND patient_id=$2 ORDER BY updated_at DESC LIMIT 10`, [organizationId, patientId]), []),
+    safe(() => query(`SELECT id,title,status,goals FROM care_plans WHERE patient_id=$2 AND EXISTS (SELECT 1 FROM patients p WHERE p.id=care_plans.patient_id AND p.organization_id=$1) ORDER BY id DESC LIMIT 10`, [organizationId, patientId]), []),
     safe(() => query(`SELECT id,status,medicines,discrepancies,created_at AS "createdAt" FROM medication_reconciliation WHERE organization_id=$1 AND patient_id=$2 ORDER BY created_at DESC LIMIT 5`, [organizationId, patientId]), []),
     safe(() => query(`SELECT i.id,i.status,i.total,i.created_at AS "createdAt",coalesce((SELECT sum(p.amount) FROM payments p WHERE p.invoice_id=i.id AND p.status='paid'),0) AS "paidAmount",coalesce(i.total,0)-coalesce((SELECT sum(p.amount) FROM payments p WHERE p.invoice_id=i.id AND p.status='paid'),0) AS "balance" FROM invoices i WHERE i.organization_id=$1 AND i.patient_id=$2 ORDER BY i.created_at DESC LIMIT 30`, [organizationId, patientId]), []),
-    safe(() => query(`SELECT mo.id,mo.status,mo.quantity,m.name AS "medicationName",coalesce((SELECT sum(ib.quantity) FROM inventory_batches ib JOIN inventory_items ii ON ii.id=ib.item_id WHERE ii.organization_id=$1 AND lower(ii.name)=lower(m.name)),0) AS "availableQuantity" FROM medication_orders mo JOIN medications m ON m.id=mo.medication_id WHERE mo.organization_id=$1 AND mo.patient_id=$2 ORDER BY mo.id DESC LIMIT 30`, [organizationId, patientId]), []),
+    safe(() => query(`SELECT mo.id,mo.status,mo.quantity,m.name AS "medicationName",coalesce((SELECT sum(ib.quantity) FROM inventory_batches ib JOIN inventory_items ii ON ii.id=ib.item_id WHERE ii.organization_id=$1 AND lower(ii.name)=lower(m.name)),0) AS "availableQuantity" FROM medication_orders mo JOIN medications m ON m.id=mo.medication_id JOIN patients p ON p.id=mo.patient_id WHERE mo.patient_id=$2 AND p.organization_id=$1 ORDER BY mo.id DESC LIMIT 30`, [organizationId, patientId]), []),
     safe(() => query(`SELECT sc.id,sc.status,sc.case_type AS "caseType",sc.detected_at AS "detectedAt",sc.risk_level AS "riskLevel" FROM surveillance_cases sc WHERE sc.organization_id=$1 AND sc.patient_id=$2 ORDER BY sc.detected_at DESC LIMIT 20`, [organizationId, patientId]), []),
     safe(() => query(`SELECT event_type AS "eventType",from_state AS "fromState",to_state AS "toState",payload,created_at AS "at",encounter_id AS "encounterId" FROM clinical_workflow_events WHERE organization_id=$1 AND patient_id=$2 ORDER BY created_at ASC LIMIT 500`, [organizationId, patientId]), []),
-    safe(() => query(`SELECT id,status,procedure_type AS "procedureType",scheduled_at AS "scheduledAt",performed_at AS "performedAt",created_at AS "createdAt" FROM procedures WHERE organization_id=$1 AND patient_id=$2 ORDER BY COALESCE(performed_at,scheduled_at,created_at) DESC LIMIT 30`, [organizationId, patientId]), []),
+    safe(() => query(`SELECT pr.id,pr.status,pr.display AS "procedureType",pr.scheduled_at AS "scheduledAt",pr.performed_at AS "performedAt",pr.created_at AS "createdAt" FROM procedures pr JOIN patients p ON p.id=pr.patient_id WHERE pr.patient_id=$2 AND p.organization_id=$1 ORDER BY COALESCE(pr.performed_at,pr.scheduled_at,pr.created_at) DESC LIMIT 30`, [organizationId, patientId]), []),
+    safe(() => query(`SELECT r.id,r.status,r.destination,r.reason,r.created_at AS "createdAt" FROM referrals r JOIN patients p ON p.id=r.patient_id WHERE p.organization_id=$1 AND r.patient_id=$2 ORDER BY r.created_at DESC LIMIT 50`, [organizationId, patientId]), []),
   ]);
 
   const gaps: CareGap[] = [
@@ -49,7 +50,7 @@ export async function buildPatientIntelligenceLayer(query: Query, organizationId
   ];
 
   const riskSignals = [
-    ...activeRisks.map(x => ({ source:'cdss', ...x })),
+    ...activeRisks.map(x => ({ source:'cdss', severity:x.severity || 'info', ...x })),
     ...gaps.filter(x => ['critical','urgent'].includes(x.severity)).map(x => ({ source:x.sourceModule, ruleKey:x.gapType, severity:x.severity, title:x.title, summary:'Deterministic cross-module care signal requiring review.' })),
   ].slice(0, 60);
 
@@ -90,8 +91,8 @@ export async function buildClinicalVelocity(query: Query, organizationId: string
       (SELECT count(*)::int FROM queue_entries qe JOIN queues q ON q.id=qe.queue_id WHERE q.organization_id=$1 AND qe.joined_at>=now()-($2::text||' days')::interval AND qe.status='completed') AS "completedQueueEntries",
       (SELECT count(*)::int FROM clinical_orders WHERE organization_id=$1 AND created_at>=now()-($2::text||' days')::interval) AS "ordersCreated",
       (SELECT count(*)::int FROM lab_results lr JOIN lab_samples ls ON ls.id=lr.sample_id JOIN clinical_orders co ON co.id=ls.order_id WHERE co.organization_id=$1 AND ls.received_at>=now()-($2::text||' days')::interval) AS "resultsAvailable",
-      (SELECT count(*)::int FROM referrals WHERE organization_id=$1 AND created_at>=now()-($2::text||' days')::interval) AS "referralsCreated",
-      (SELECT count(*)::int FROM referrals WHERE organization_id=$1 AND status IN ('completed','closed') AND created_at>=now()-($2::text||' days')::interval) AS "referralsClosed",
+      (SELECT count(*)::int FROM referrals r JOIN patients p ON p.id=r.patient_id WHERE p.organization_id=$1 AND r.created_at>=now()-($2::text||' days')::interval) AS "referralsCreated",
+      (SELECT count(*)::int FROM referrals r JOIN patients p ON p.id=r.patient_id WHERE p.organization_id=$1 AND r.status IN ('completed','closed') AND r.created_at>=now()-($2::text||' days')::interval) AS "referralsClosed",
       (SELECT count(*)::int FROM care_tasks WHERE organization_id=$1 AND status='completed' AND created_at>=now()-($2::text||' days')::interval) AS "tasksCompleted"
   `, [organizationId, String(period)]), [{}]);
   const actionRows = await safe(() => query(`
@@ -135,12 +136,12 @@ export async function buildValueBasedCare(query: Query, organizationId: string, 
         UNION ALL
         SELECT 'priority-task','urgent' FROM care_tasks WHERE organization_id=$1 AND status='open' AND priority IN ('critical','urgent')
         UNION ALL
-        SELECT 'delayed-referral','high' FROM referrals WHERE organization_id=$1 AND status NOT IN ('completed','closed','cancelled') AND created_at<now()-interval '7 days'
+        SELECT 'delayed-referral','high' FROM referrals r JOIN patients p ON p.id=r.patient_id WHERE p.organization_id=$1 AND r.status NOT IN ('completed','closed','cancelled') AND r.created_at<now()-interval '7 days'
         UNION ALL
         SELECT 'immunization-due','routine' FROM immunizations WHERE organization_id=$1 AND next_due_at IS NOT NULL AND next_due_at<now()
       ) gaps GROUP BY gap_type,severity ORDER BY count DESC`, [organizationId]), []),
     safe(() => query(`SELECT count(*)::int AS count FROM module_records WHERE organization_id=$1 AND module='follow-up' AND status IN ('completed','closed') AND updated_at>=now()-($2::text||' days')::interval`, [organizationId, String(days)]), [{}]),
-    safe(() => query(`SELECT count(*)::int AS count FROM referrals WHERE organization_id=$1 AND status IN ('completed','closed') AND updated_at>=now()-($2::text||' days')::interval`, [organizationId, String(days)]), [{}]),
+    safe(() => query(`SELECT count(*)::int AS count FROM referrals r JOIN patients p ON p.id=r.patient_id WHERE p.organization_id=$1 AND r.status IN ('completed','closed') AND r.created_at>=now()-($2::text||' days')::interval`, [organizationId, String(days)]), [{}]),
     safe(() => query(`SELECT count(*)::int AS count FROM lab_results lr JOIN lab_samples ls ON ls.id=lr.sample_id JOIN clinical_orders co ON co.id=ls.order_id WHERE co.organization_id=$1 AND lr.critical=true AND lr.status='released' AND ls.received_at>=now()-($2::text||' days')::interval`, [organizationId, String(days)]), [{}]),
   ]);
   return {
@@ -184,8 +185,8 @@ export async function calculateClinicalMeasures(query: Query, organizationId: st
   const rows = await safe(() => query(`
     SELECT
       $2::date AS "periodStart", $3::date AS "periodEnd",
-      (SELECT count(*)::numeric FROM referrals WHERE organization_id=$1 AND created_at::date BETWEEN $2::date AND $3::date AND status IN ('completed','closed') AND updated_at <= created_at + interval '7 days') AS referral_num,
-      (SELECT count(*)::numeric FROM referrals WHERE organization_id=$1 AND created_at::date BETWEEN $2::date AND $3::date) AS referral_den,
+      (SELECT count(*)::numeric FROM referrals r JOIN patients p ON p.id=r.patient_id WHERE p.organization_id=$1 AND r.created_at::date BETWEEN $2::date AND $3::date AND r.status IN ('completed','closed')) AS referral_num,
+      (SELECT count(*)::numeric FROM referrals r JOIN patients p ON p.id=r.patient_id WHERE p.organization_id=$1 AND r.created_at::date BETWEEN $2::date AND $3::date) AS referral_den,
       (SELECT count(*)::numeric FROM module_records WHERE organization_id=$1 AND module='follow-up' AND status IN ('completed','closed') AND (payload->>'dueAt') IS NOT NULL AND updated_at::date BETWEEN $2::date AND $3::date AND updated_at <= (payload->>'dueAt')::timestamptz) AS followup_num,
       (SELECT count(*)::numeric FROM module_records WHERE organization_id=$1 AND module='follow-up' AND (payload->>'dueAt') IS NOT NULL AND updated_at::date BETWEEN $2::date AND $3::date) AS followup_den,
       (SELECT count(*)::numeric FROM lab_results lr JOIN lab_samples ls ON ls.id=lr.sample_id JOIN clinical_orders co ON co.id=ls.order_id WHERE co.organization_id=$1 AND lr.critical=true AND lr.status='released' AND ls.received_at::date BETWEEN $2::date AND $3::date) AS critical_release_num,
@@ -217,7 +218,7 @@ export async function recordAICapabilityEvaluation(pool: Pool | null, input: {or
 }
 
 export async function buildPatient360Context(query: Query, organizationId: string, patientId: string, task = 'clinical') {
-  const base = await buildPatientIntelligenceLayer(query, organizationId, patientId);
+  const base: Row = await buildPatientIntelligenceLayer(query, organizationId, patientId);
   const t = task.toLowerCase();
   const profiles: Record<string,string[]> = {
     medication:['medications','reconciliation','supply','riskSignals','careGaps','events'],

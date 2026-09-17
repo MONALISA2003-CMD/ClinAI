@@ -92,6 +92,7 @@ export async function buildClinicalContext(input: {
   purpose?: string;
   role?: string;
   userId?: string | null;
+  queryText?: string;
   query: QueryFn;
   rawBuilder: RawBuilder;
 }) {

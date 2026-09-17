@@ -14,17 +14,13 @@ const unique=[...new Set(modules)];
 assert.equal(unique.length,modules.length,`Duplicate module IDs: ${modules.filter((x,i)=>modules.indexOf(x)!==i).join(', ')}`);
 assert(unique.length>=70,`Expected full module catalogue, found ${unique.length}`);
 
-const readBlock=page.match(/const MODULE_READ_ENDPOINTS:Record<string,string>=\{([\s\S]*?)\n\};/);
-const createBlock=page.match(/const MODULE_CREATE_ENDPOINTS:Record<string,string>=\{([\s\S]*?)\n\};/);
-const roBlock=page.match(/const MODULE_READ_ONLY=new Set\(\[([\s\S]*?)\]\);/);
-assert(readBlock&&createBlock&&roBlock,'Module contracts missing');
-const readKeys=[...readBlock[1].matchAll(/(?:^|,)\s*['"]?([a-z0-9-]+)['"]?\s*:/g)].map(x=>x[1]);
-const createKeys=[...createBlock[1].matchAll(/(?:^|,)\s*['"]([^'"]+)['"]\s*:/g)].map(x=>x[1]);
-const readOnly=[...roBlock[1].matchAll(/['"]([^'"]+)['"]/g)].map(x=>x[1]);
-const backendModuleBlock=api.match(/const modules = \[([\s\S]*?)\] as const;/);
-const backendModules=backendModuleBlock?[...backendModuleBlock[1].matchAll(/['"]([^'"]+)['"]/g)].map(x=>x[1]):[];
-const contractMissing=unique.filter(m=>!readKeys.includes(m)&&!readOnly.includes(m)&&!backendModules.includes(m));
-assert.deepEqual(contractMissing,[],`Modules without read contract or read-only declaration: ${contractMissing.join(', ')}`);
+const catalog=JSON.parse(fs.readFileSync('packages/module-contracts/contracts.json','utf8'));
+assert(Array.isArray(catalog.modules),'Central module contract catalog missing');
+const contractIds=new Set(catalog.modules.map(x=>x.id));
+const contractMissing=unique.filter(m=>!contractIds.has(m));
+assert.deepEqual(contractMissing,[],`Modules missing from central contract catalog: ${contractMissing.join(', ')}`);
+assert(catalog.modules.every(x=>x.backend?.endpoint),'Every module contract must declare a backend read endpoint');
+assert(catalog.modules.every(x=>Array.isArray(x.permissions?.read)),'Every module contract must declare read permissions');
 
 const intelligenceRoutes=['/api/intelligence/overview','/api/intelligence/patient/:patientId','/api/intelligence/velocity','/api/intelligence/care-gaps','/api/intelligence/risk','/api/intelligence/value','/api/intelligence/governance','/api/intelligence/security-events','/api/cds-services','/api/cds-services/:serviceId'];
 for(const route of intelligenceRoutes) assert(api.includes(route),`Missing backend route ${route}`);

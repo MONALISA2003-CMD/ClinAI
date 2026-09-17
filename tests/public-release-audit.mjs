@@ -4,7 +4,7 @@ const css=fs.readFileSync('apps/web/app/globals.css','utf8');
 const api=fs.readFileSync('services/api/src/main.ts','utf8');
 const checks=[
  ['public introduction exists', page.includes('PublicIntroduction')],
- ['30 second automatic entry', page.includes('useState(30)') && page.includes('30-Math.floor')],
+ ['intro requires deliberate entry', !page.includes('30-Math.floor') && page.includes('Review the introduction, then continue when ready.')],
  ['development disclaimer', page.includes('NOT YET APPROPRIATE FOR REAL PATIENT USAGE')],
  ['Uganda context', page.includes("Uganda's healthcare realities")],
  ['feedback invitation', page.includes('WE NEED YOUR FEEDBACK')],

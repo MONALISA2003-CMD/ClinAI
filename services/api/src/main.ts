@@ -12,7 +12,7 @@ import { enqueueClinicalEvent, CLINICAL_EVENT_TYPES } from './events/clinicalEve
 import { startClinicalEventWorker } from './events/clinicalEventWorker.js';
 import { scanUnfinishedJourneys } from './events/clinicalJourneyEngine.js';
 import { evaluateClinicalContext, SYNCHRONOUS_CDSS_RULES } from './intelligence/cdssGateway.js';
-import { buildPatientIntelligenceLayer, buildClinicalVelocity, buildValueBasedCare, buildGovernanceSummary, buildAIGovernanceLifecycle, calculateClinicalMeasures, recordAICapabilityEvaluation, AI_CAPABILITY_CATALOG, buildPatient360Context, buildAISecurityIntelligence, buildAIRiskIntelligence, buildClinicalVelocityIntelligence, buildValueBasedCareIntelligence } from './intelligence/enterpriseIntelligence.js';
+import { buildPatientIntelligenceLayer, buildClinicalVelocity, buildValueBasedCare, buildGovernanceSummary, buildAIGovernanceLifecycle, calculateClinicalMeasures, recordAICapabilityEvaluation, AI_CAPABILITY_CATALOG, buildPatient360Context, buildAISecurityIntelligence, buildAIRiskIntelligence, buildClinicalVelocityIntelligence, buildValueBasedCareIntelligence, recordSecurityEvent } from './intelligence/enterpriseIntelligence.js';
 import moduleContractCatalog from '../../../packages/module-contracts/contracts.json' with { type: 'json' };
 
 const MODULE_CONTRACTS = moduleContractCatalog.modules as any[];
@@ -38,7 +38,7 @@ await loadStore();
 const PUBLIC_PREVIEW = process.env.CLINAI_PUBLIC_PREVIEW === 'true';
 const PRODUCTION = process.env.NODE_ENV === 'production';
 const DEMO_AUTH_ENABLED = process.env.NODE_ENV !== 'production' && process.env.CLINAI_ENABLE_DEMO_AUTH === 'true';
-const PUBLIC_API_PATHS = new Set(['/api/public/feedback','/api/public/health-assistant','/api/public/preview']);
+const PUBLIC_API_PATHS = new Set(['/api/public/feedback','/api/public/preview']);
 const WRITE_ROLES = new Set(['admin','doctor','nurse','lab','pharmacist','reception','cashier','inventory','manager']);
 const READ_ONLY_ROLES = new Set(['viewer','analyst']);
 function actor(req:any){ return req.user?.sub || 'system'; }

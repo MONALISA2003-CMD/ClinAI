@@ -29,6 +29,86 @@ const navIcon=(x:string)=>navShort[x]||pretty(x).slice(0,2).toUpperCase();
 const pretty=(x:string)=>x.replaceAll('-',' ').replace(/\b\w/g,c=>c.toUpperCase());
 const primaryMobile=[['Home','command-center'],['Patients','patients'],['Queue','queue'],['Tasks','tasks']];
 const cards:Array<[string,string,string]>=[['Today','patient and service pressure','analytics'],['Care flow','current clinical activity','encounters'],['Attention','work needing review','care-tasks']];
+const roleLabels:Record<string,string>={admin:'Administrator',doctor:'Doctor',nurse:'Nurse',lab:'Laboratory',pharmacist:'Pharmacist',reception:'Reception',cashier:'Cashier',inventory:'Inventory',manager:'Manager',viewer:'Read-only viewer',analyst:'Analyst'};
+function Logo({compact=false}:{compact?:boolean}){return <div className={`brandlockup ${compact?'compact':''}`}><img src={compact?'/clinai-icon.png':'/clinai-logo.png'} alt="ClinAI"/><span>Better care, connected</span></div>}
+
+function NavContent({module,setModule,close}:{module:string;setModule:(m:string)=>void;close?:()=>void}){return <>
+ <button className={`nav-home ${module==='command-center'?'active':''}`} onClick={()=>{setModule('command-center');close?.()}}><span className="navglyph">⌂</span><span>Home</span></button>
+ {groups.map(([g,items]:any)=><section key={g}><small>{g}</small>{items.map((x:string)=><button key={x} className={module===x?'active':''} onClick={()=>{setModule(x);close?.()}}><span className="navglyph">{navIcon(x)}</span><span>{pretty(x)}</span></button>)}</section>)}
+ </>}
+
+function PublicIntroduction({onContinue}:{onContinue:()=>void}){
+
+ const enter=()=>onContinue();
+ return <section className="public-intro" aria-label="ClinAI introduction">
+  <div className="public-intro-glow public-intro-glow-one"/><div className="public-intro-glow public-intro-glow-two"/>
+  <div className="public-intro-scroll">
+   <div className="public-intro-card intro-brand"><img src="/clinai-logo.png" alt="ClinAI"/><span>BETTER CARE, CONNECTED</span></div>
+   <div className="public-intro-card" id="clinai-about"><span className="intro-kicker">WELCOME TO CLINAI</span><h1>A healthcare platform built around connected care.</h1><p>ClinAI brings care, clinical information, operations and intelligence into one connected experience.</p></div>
+   <div className="public-intro-card"><span className="intro-kicker">WHY CLINAI</span><h2>Healthcare information should move with the patient.</h2><p>Healthcare teams often work across different records, services and processes. When information is separated, it becomes harder to see the complete picture of care.</p></div>
+   <div className="public-intro-card"><span className="intro-kicker">THE UGANDA CONTEXT</span><h2>Built with Uganda's healthcare realities in mind.</h2><p>Healthcare delivery continues to face pressure from fragmented information, limited visibility across services, workload on health workers and the need for timely, useful health information.</p></div>
+   <div className="public-intro-card"><span className="intro-kicker">THE IDEA</span><h2>One connected patient journey.</h2><p>From registration and appointments to triage, clinical care, laboratory, imaging, medication, billing, follow-up, monitoring and health intelligence.</p><strong>HELP INFORMATION MOVE WITH THE PATIENT AND HELP TEAMS SEE WHAT MATTERS.</strong></div>
+   <div className="public-intro-card"><span className="intro-kicker">WE NEED YOUR FEEDBACK</span><h2>This is the real ClinAI experience.</h2><p>We are opening ClinAI so real users can explore it, test the workflows and tell us what makes sense, what is confusing, what is missing and what should work differently.</p></div>
+   <div className="public-intro-card intro-warning"><span className="intro-kicker">IMPORTANT</span><h2>ClinAI is still under development and evaluation.</h2><p><strong>THIS VERSION IS NOT YET APPROPRIATE FOR REAL PATIENT USAGE.</strong></p><p>Please do not enter real patient names, identification numbers, medical records, contact information or other personal health information at this stage.</p></div>
+   <div className="public-intro-card intro-developer"><span className="intro-kicker">DEVELOPED BY</span><h2>MONALISA TECH SOLUTIONS</h2><p>Kampala, Uganda</p><div className="intro-contact"><a href="https://wa.me/256703953711" target="_blank" rel="noreferrer">+256 703 953 711 · WhatsApp</a><a href="https://wa.me/19138992840" target="_blank" rel="noreferrer">+1 913 899 2840 · WhatsApp</a><a href="https://mail.google.com/mail/?view=cm&fs=1&to=monalisatechsolutions@gmail.com" target="_blank" rel="noreferrer">monalisatechsolutions@gmail.com · Email</a></div></div>
+  </div>
+  <div className="public-intro-footer"><span>ClinAI · Uganda</span><button onClick={enter}>ENTER CLINAI</button><PublicFeedbackButton/><PublicHealthButton/><a className="intro-whatsapp" href="https://wa.me/256703953711" target="_blank" rel="noreferrer">+256 703 953 711 · WhatsApp</a><button className="intro-skip" onClick={enter}>SKIP INTRO</button><span>Review the introduction, then continue when ready.</span></div>
+ </section>
+}
+
+function PublicFeedbackButton(){
+ return <a className="intro-feedback" href="https://wa.me/19138992840?text=Hello%20MONALISA%20TECH%20SOLUTIONS%2C%20I%20would%20like%20to%20share%20feedback%20about%20ClinAI." target="_blank" rel="noreferrer">FEEDBACK · WHATSAPP</a>
+}
+
+function PublicHealthButton(){
+ return <button className="intro-feedback" onClick={()=>document.getElementById('clinai-about')?.scrollIntoView({behavior:'smooth'})}>ABOUT CLINAI</button>;
+}
+
+export default function Home(){
+ const [showIntro,setShowIntro]=useState(true);
+ const [token,setToken]=useState(''),[online,setOnline]=useState(true),[pending,setPending]=useState(0),[module,setModule]=useState('command-center'),[rows,setRows]=useState<Row[]>([]),[dash,setDash]=useState<Row>({}),[status,setStatus]=useState('Connecting'),[error,setError]=useState(''),[search,setSearch]=useState(''),[patient360,setPatient360]=useState<Row|null>(null),[encounter,setEncounter]=useState<Row|null>(null),[searchResults,setSearchResults]=useState<Row>({}),[navOpen,setNavOpen]=useState(false);
+ async function login(){try{const cached=typeof window!=='undefined'?sessionStorage.getItem('clinai_token'):null;if(cached){setToken(cached);setStatus('Ready');return}setStatus('Authentication required');setError('Sign in to the authorized ClinAI workspace to access clinical data. The public preview is read-only.')}catch(e:any){setError('Authentication is required.');setStatus('Authentication required')}}
+ async function load(){if(!token||module==='command-center'){setRows([]);return}setStatus('Loading');setError('');try{const endpoint=MODULE_READ_ENDPOINTS[module];if(!endpoint)throw new Error('This workspace does not have a registered data contract.');const {r,data}=await fetchJSON(`${API}${endpoint}`,{},token);if(r.status===401){sessionStorage.removeItem('clinai_token');await login();throw new Error('Your ClinAI session expired. Please sign in again.')}if(!r.ok)throw new Error(humanError(data.error||`Unable to load ${pretty(module)}`));const payload=data.data;setRows(Array.isArray(payload)?payload:(payload&&typeof payload==='object'?[payload]:[]));setStatus('Ready')}catch(e:any){setRows([]);setError(humanError(e.message));setStatus('Error')}}
+ async function refreshDash(){if(!token)return;try{const r=await fetch(`${API}/api/dashboard`,{headers:{Authorization:`Bearer ${token}`}});if(r.ok)setDash(await r.json())}catch{}}
+ async function runSearch(){if(!token||search.trim().length<2){setSearchResults({});return}try{const r=await fetch(`${API}/api/search?q=${encodeURIComponent(search.trim())}`,{headers:{Authorization:`Bearer ${token}`}});const d=await r.json();setSearchResults(d)}catch{setSearchResults({})}}
+ async function openPatient(id:string){try{const r=await fetch(`${API}/api/patients/${id}/360`,{headers:{Authorization:`Bearer ${token}`}});const d=await r.json();if(!r.ok)throw new Error(humanError(d.error||'Unable to open patient'));setPatient360(d)}catch(e:any){setError(humanError(e.message))}}
+ useEffect(()=>{if(!showIntro&&!token)login()},[showIntro,token]);
+ useEffect(()=>{if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});const sync=async()=>{setOnline(navigator.onLine);if(navigator.onLine&&token)await flushOperations(token).catch(()=>{});setPending((await pendingOperations().catch(()=>[])).length)};window.addEventListener('online',sync);window.addEventListener('offline',sync);sync();return()=>{window.removeEventListener('online',sync);window.removeEventListener('offline',sync)}},[token]);
+ useEffect(()=>{if(token){load();refreshDash()}},[token,module]);
+ useEffect(()=>{const onMessage=(e:any)=>setError(String(e.detail||'We could not complete that request. Please try again.'));window.addEventListener('clinai:message',onMessage);return()=>window.removeEventListener('clinai:message',onMessage)},[]);
+ const title=module==='command-center'?'Home':pretty(module);
+ const selectModule=(m:string)=>{setModule(m);setError('');setSearchResults({});setNavOpen(false)};
+ const metrics=[['Patients',dash.patients],['Appointments',dash.appointments],['Waiting',dash.waiting],['Critical labs',dash.criticalLabs],['Open tasks',dash.openTasks],['Unpaid',dash.unpaid]];
+ if(showIntro)return <PublicIntroduction onContinue={()=>setShowIntro(false)}/>;
+ return <main className="app-shell">
+  <aside className="desktop-sidebar"><Logo/><NavContent module={module} setModule={selectModule}/><div className="sidebar-footer"><span className="secure-dot"/> Care that stays connected</div></aside>
+  <aside className="tablet-rail"><Logo compact/><button className="rail-menu" onClick={()=>setNavOpen(true)} aria-label="Open navigation">☰</button>{[['command-center','⌂'],...primaryMobile.slice(1).map(([_,m])=>[m,navIcon(m)])].map(([m,i]:any)=><button key={m} className={module===m?'active':''} onClick={()=>selectModule(m)}><b>{i}</b><span>{pretty(m)}</span></button>)}</aside>
+  <div className="app-main">
+   <header className="topbar">
+    <div className="mobile-brand"><button className="icon-button menu-button" onClick={()=>setNavOpen(true)} aria-label="Open menu">☰</button><Logo compact/></div>
+    <div className="topbar-search"><span>⌕</span><input value={search} onChange={e=>setSearch(e.target.value)} onKeyDown={e=>e.key==='Enter'&&runSearch()} placeholder="Search patients, encounters, appointments..."/><button onClick={runSearch}>Search</button></div>
+    <div className="topbar-actions">{!online&&<span className="connection offline">Offline mode{pending?` · ${pending} queued`:''}</span>}<span className={`connection ${status.toLowerCase()}`}><i aria-hidden="true"/> {status}</span><button className="icon-button" title="Notifications">♢</button><div className="user-chip"><span>CL</span><b>Clinician</b></div></div>
+   </header>
+   <div className="content">
+    <header className="page-header"><div><div className="eyebrow">CLINAI <span>•</span> UGANDA</div><h1>{title}</h1><p>Everything your care team needs, together.</p></div><div className="page-status"><span className="secure-dot"/> {status}</div></header>
+    <div className="mobile-search"><div className="searchbox"><span>⌕</span><input value={search} onChange={e=>setSearch(e.target.value)} onKeyDown={e=>e.key==='Enter'&&runSearch()} placeholder="Search a patient or record"/><button onClick={runSearch}>Go</button></div></div>
+    {Object.keys(searchResults).length>0&&<section className="search-results panel"><div className="panel-title"><div><span className="section-kicker">FIND</span><h2>Results</h2></div><button className="ghost" onClick={()=>setSearchResults({})}>Clear</button></div><div className="search-grid">{Object.entries(searchResults).map(([k,v]:any)=><div key={k}><small>{pretty(k)}</small>{(v||[]).map((r:Row)=><button key={r.id} onClick={()=>r.firstName&&openPatient(r.id)}>{r.firstName?`${r.firstName} ${r.lastName}`:r.display||r.reason||r.status||r.id}</button>)}</div>)}</div></section>}
+    {module==='command-center'?<CommandCenter dash={dash} metrics={metrics} setModule={selectModule} journey={journey} token={token}/>:module==='ai'?<AIWorkspace token={token}/>:<ModuleWorkspace module={module} title={title} rows={rows} token={token} error={error} load={load} refreshDash={refreshDash} openPatient={openPatient} setEncounter={setEncounter} />}
+   </div>
+   <footer className="app-footer"><div><b>DEVELOPED BY MONALISA TECH SOLUTIONS</b><span>Kampala, Uganda</span></div><div className="app-footer-links"><a href="https://wa.me/256703953711" target="_blank" rel="noreferrer">+256 703 953 711 · WhatsApp</a><a href="https://wa.me/19138992840" target="_blank" rel="noreferrer">+1 913 899 2840 · WhatsApp</a><a href="https://mail.google.com/mail/?view=cm&fs=1&to=monalisatechsolutions@gmail.com" target="_blank" rel="noreferrer">monalisatechsolutions@gmail.com · Email</a></div></footer>
+  </div>
+  <nav className="mobile-bottom-nav">{primaryMobile.map(([label,m])=><button key={m} className={module===m?'active':''} onClick={()=>selectModule(m)}><span>{m==='command-center'?'⌂':m==='patients'?'PT':m==='queue'?'Q':'TS'}</span><small>{label}</small></button>)}<button onClick={()=>setNavOpen(true)}><span>•••</span><small>More</small></button></nav>
+  {navOpen&&<div className="nav-overlay" onClick={()=>setNavOpen(false)}><aside className="nav-drawer" onClick={e=>e.stopPropagation()}><div className="drawer-head"><Logo/><button className="icon-button" onClick={()=>setNavOpen(false)}>×</button></div><NavContent module={module} setModule={selectModule} close={()=>setNavOpen(false)}/></aside></div>}
+  {patient360&&<Patient360 data={patient360} token={token} close={()=>setPatient360(null)} setModule={selectModule}/>} {encounter&&<EncounterWorkspace data={encounter} token={token} close={()=>setEncounter(null)} done={()=>{load();refreshDash()}}/>}
+ </main>
+}
+
+function CommandCenter({dash,metrics,setModule,journey,token}:{dash:Row;metrics:any[];setModule:(m:string)=>void;journey:any[];token:string}){
+ const [intel,setIntel]=useState<Row>({}); const [role,setRole]=useState('Authorized workspace');
+ useEffect(()=>{if(!token)return;fetch(`${API}/api/analytics/command-center`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json()).then(d=>setIntel(d.data||{})).catch(()=>{})},[token]);
+ const o=intel.overview||{}; const trend=intel.trend||[]; const maxTrend=Math.max(1,...trend.map((x:Row)=>Number(x.appointments||0)));
+ const roleCards:Record<string,Array<[string,string,string]>>={Leadership:[['Today','patients and service pressure','analytics'],['Financial health','billing and collection','billing'],['Facility readiness','capacity and incidents','facilities']],Doctor:[['My care','active encounters and follow-up','encounters'],['Results','laboratory and imaging review','laboratory'],['Tasks','clinical work needing attention','care-tasks']],Nurse:[['Patient flow','triage and waiting','queue'],['Care tasks','observations and bedside work','nursing'],['Escalations','urgent patients and alerts','emergency']],Pharmacist:[['Dispensing','prescriptions waiting','pharmacy'],['Stock','items needing attention','inventory'],['Reviews','medication reconciliation','medication-reconciliation']]};
+ const cards=roleCards[role]||roleCards.Leadership;
  return <div className="command-center">
   <section className="welcome-panel"><div><span className="section-kicker">COMMAND CENTER</span><h2>Care, clearly in view.</h2><p>See patient flow, clinical attention, financial pressure and facility readiness without opening separate screens.</p></div><div className="welcome-mark"><img src="/clinai-icon.png" alt="ClinAI"/></div></section>
   <section className="panel ai-command-card"><div><span className="section-kicker">CLINAI INTELLIGENCE</span><h2>What needs attention today?</h2><p>Ask ClinAI to interpret the current operational and clinical picture.</p></div><button className="primary" onClick={()=>setModule('ai')}>Ask ClinAI →</button></section>
