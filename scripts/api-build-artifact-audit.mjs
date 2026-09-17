@@ -1,0 +1,12 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
+const artifact=path.resolve(root,'services/api/build/services/api/src/main.js');
+const contract=path.resolve(root,'services/api/build/packages/module-contracts/contracts.json');
+if(!fs.existsSync(artifact)) throw new Error(`API runtime artifact missing: ${path.relative(root,artifact)}`);
+if(!fs.statSync(artifact).size) throw new Error('API runtime artifact is empty.');
+if(!fs.existsSync(contract)) throw new Error(`Compiled module contract catalog missing: ${path.relative(root,contract)}`);
+console.log('API_BUILD_ARTIFACT_PASS');
+console.log(`Runtime entrypoint: ${path.relative(root,artifact)}`);
+console.log(`Compiled contract catalog: ${path.relative(root,contract)}`);

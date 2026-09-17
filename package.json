@@ -29,7 +29,8 @@
     "test:phase2:modules": "node tests/phase2-module-contract-audit.mjs",
     "test:phase3:validation": "node tests/phase3-global-validation-audit.mjs",
     "test:phase4:5:intelligence": "node tests/phase4-5-clinical-intelligence-audit.mjs",
-    "test:phase6:7:intelligence": "node tests/phase6-7-patient360-workspaces-audit.mjs"
+    "test:phase6:7:intelligence": "node tests/phase6-7-patient360-workspaces-audit.mjs",
+    "test:deployment:layout": "node scripts/deployment-layout-audit.mjs && node scripts/api-build-artifact-audit.mjs"
   },
   "devDependencies": {
     "@types/node": "latest",

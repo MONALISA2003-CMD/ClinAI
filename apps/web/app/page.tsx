@@ -30,7 +30,8 @@ async function fetchJSON(url:string, init:RequestInit={}, token?:string){
 const MODULE_CONTRACTS=moduleContractCatalog.modules as ModuleContract[];
 const CONTRACT_BY_ID:Record<string,ModuleContract>=Object.fromEntries(MODULE_CONTRACTS.map((c:ModuleContract)=>[c.id,c]));
 const MODULE_READ_ENDPOINTS:Record<string,string>=Object.fromEntries(MODULE_CONTRACTS.map(c=>[c.id,c.backend.endpoint]));
-const MODULE_CREATE_ENDPOINTS:Record<string,string>=Object.fromEntries(MODULE_CONTRACTS.filter(c=>c.backend.createEndpoint).map(c=>[c.id,c.backend.createEndpoint]));
+const createEndpointContracts=MODULE_CONTRACTS.filter((c): c is ModuleContract & { backend: ModuleContract['backend'] & { createEndpoint: string } } => typeof c.backend.createEndpoint==='string' && c.backend.createEndpoint.length>0);
+const MODULE_CREATE_ENDPOINTS:Record<string,string>=Object.fromEntries(createEndpointContracts.map(c=>[c.id,c.backend.createEndpoint]));
 const MODULE_READ_ONLY=new Set(MODULE_CONTRACTS.filter(c=>!c.backend.createEndpoint).map(c=>c.id));
 const groups:any[]=[
  ['CARE',['patients','appointments','registration','queue','triage','encounters','clinical-notes','diagnoses','orders','care-plans','referrals','referral-transfers','follow-up','care-tasks']],
