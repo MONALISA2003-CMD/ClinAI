@@ -1,0 +1,14 @@
+import fs from 'node:fs';
+import assert from 'node:assert/strict';
+const api=fs.readFileSync('services/api/src/main.ts','utf8');
+const ai=fs.readFileSync('services/api/src/ai/ai-orchestrator.ts','utf8');
+const web=fs.readFileSync('apps/web/app/page.tsx','utf8');
+const schema=fs.readFileSync('database/schema.sql','utf8');
+const seed=fs.readFileSync('database/seeds/clinai-synthetic-test-data.sql','utf8');
+assert.ok(seed.includes('TEST-030') && seed.includes('Mustafa') && seed.includes('lameka@clinaidemoemail.com'),'30-patient seed missing required synthetic identity example');
+assert.ok(seed.includes('Malaria') && seed.includes('pneumonia') && seed.includes('diabetes') && seed.includes('hypertension') && seed.includes('pregnancy') && seed.includes('fracture'),'clinical variety is insufficient');
+assert.ok(seed.includes('referrals') && seed.includes('care_tasks') && seed.includes('clinical_workflow_events') && seed.includes('module_records'),'connected test journeys are incomplete');
+assert.ok(schema.includes('is_test_data boolean') && api.includes('/api/public/test-dashboard') && api.includes('/api/public/test-patients/:patientNumber'),'public test data API boundary missing');
+assert.ok(ai.includes('PUBLIC_TEST_DATA_ENABLED') && ai.includes('buildPublicPatientContext') && ai.includes('publicTestPatient'),'public synthetic patient AI context missing');
+assert.ok(web.includes('Explore 30 connected patient records') && web.includes('TEST DATA') && web.includes('Ask ClinAI about this patient'),'public test patient UX missing');
+console.log('ClinAI public synthetic test data audit passed.');

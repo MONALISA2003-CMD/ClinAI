@@ -38,13 +38,14 @@ await loadStore();
 const PUBLIC_PREVIEW = process.env.CLINAI_PUBLIC_PREVIEW === 'true';
 const PRODUCTION = process.env.NODE_ENV === 'production';
 const DEMO_AUTH_ENABLED = process.env.NODE_ENV !== 'production' && process.env.CLINAI_ENABLE_DEMO_AUTH === 'true';
-const PUBLIC_API_PATHS = new Set(['/api/public/feedback','/api/public/preview','/api/public/ai-assist','/api/public/ai-status','/api/public/ai-feedback']);
+const PUBLIC_API_PATHS = new Set(['/api/public/feedback','/api/public/preview','/api/public/ai-assist','/api/public/ai-status','/api/public/ai-feedback','/api/public/test-dashboard','/api/public/test-patients']);
+const PUBLIC_TEST_DATA_ENABLED = process.env.CLINAI_PUBLIC_TEST_DATA !== 'false';
 const WRITE_ROLES = new Set(['admin','doctor','nurse','lab','pharmacist','reception','cashier','inventory','manager']);
 const READ_ONLY_ROLES = new Set(['viewer','analyst']);
 function actor(req:any){ return req.user?.sub || 'system'; }
 function org(req:any){ return req.user?.organizationId || null; }
 function canWrite(req:any){ return WRITE_ROLES.has(String(req.user?.role || '').toLowerCase()); }
-function isPublicPath(path:string){ return PUBLIC_API_PATHS.has(path); }
+function isPublicPath(path:string){ return PUBLIC_API_PATHS.has(path) || path.startsWith('/api/public/test-patients/'); }
 const AI_NON_MUTATING_PATHS = new Set(['/api/ai/assist','/api/ai/patient-intelligence','/api/ai/compute','/api/ai/analyze','/api/ai/research','/api/ai/document','/api/ai/management-brief','/api/ai/cohort','/api/ai/role-briefing','/api/ai/attention','/api/ai/translate','/api/ai/language/analyze','/api/ai/router','/api/ai/feedback']);
 function isClinicalMutation(req:any){
   const path=(req.raw.url||'/').split('?')[0];
@@ -532,6 +533,32 @@ app.get('/api/analytics/command-center',async(req:any)=>{
     pool.query(`SELECT event_type AS type,severity,reason,created_at AS "createdAt" FROM security_events WHERE organization_id=$1 ORDER BY created_at DESC LIMIT 8`,[o])
   ]);
   return {data:{overview:overview.rows[0],queue:queue.rows,trend:trend.rows,clinical:clinical.rows,finance:finance.rows[0],facilities:facilities.rows,alerts:alerts.rows}};
+});
+
+app.get('/api/public/test-dashboard',async(_req:any,reply:any)=>{
+  if(!pool) return {data:{overview:{patients:0,appointmentsToday:0,waiting:0,activeEncounters:0,occupiedBeds:0,availableBeds:0,openReferrals:0,openTasks:0,outstandingBalance:0},queue:[],trend:[],clinical:[],finance:{},facilities:[],patients:[]}};
+  if(!PUBLIC_TEST_DATA_ENABLED) return reply.code(403).send({error:'Public test data is currently disabled.'});
+  const [overview,queue,trend,clinical,finance,facilities,patients]=await Promise.all([
+    pool.query(`SELECT count(*)::int AS patients,(SELECT count(*) FROM appointments a JOIN patients p ON p.id=a.patient_id WHERE p.is_test_data AND a.start_at::date=current_date) appointments_today,(SELECT count(*) FROM queue_entries qe JOIN queues q ON q.id=qe.queue_id JOIN patients p ON p.id=qe.patient_id WHERE p.is_test_data AND q.code='TEST-QUEUE' AND qe.status NOT IN ('completed','cancelled','no-show')) waiting,(SELECT count(*) FROM encounters e JOIN patients p ON p.id=e.patient_id WHERE p.is_test_data AND e.status IN ('in-progress','active')) active_encounters,(SELECT count(*) FROM facility_beds b WHERE b.status='occupied' AND b.metadata->>'source'='synthetic-test-data') occupied_beds,(SELECT count(*) FROM facility_beds b WHERE b.status='available' AND b.metadata->>'source'='synthetic-test-data') available_beds,(SELECT count(*) FROM referrals r JOIN patients p ON p.id=r.patient_id WHERE p.is_test_data AND r.status NOT IN ('completed','cancelled')) open_referrals,(SELECT count(*) FROM care_tasks t JOIN patients p ON p.id=t.patient_id WHERE p.is_test_data AND t.status='open') open_tasks,(SELECT coalesce(sum(i.total),0) FROM invoices i JOIN patients p ON p.id=i.patient_id WHERE p.is_test_data AND i.status<>'paid') outstanding_balance FROM patients WHERE is_test_data`,[]),
+    pool.query(`SELECT qe.status,qe.priority,count(*)::int AS count FROM queue_entries qe JOIN queues q ON q.id=qe.queue_id JOIN patients p ON p.id=qe.patient_id WHERE p.is_test_data AND q.code='TEST-QUEUE' AND qe.status NOT IN ('completed','cancelled','no-show') GROUP BY qe.status,qe.priority ORDER BY count DESC`),
+    pool.query(`WITH days AS (SELECT generate_series(current_date-6,current_date,interval '1 day')::date d) SELECT d,(SELECT count(*) FROM appointments a JOIN patients p ON p.id=a.patient_id WHERE p.is_test_data AND a.start_at::date=d) appointments,(SELECT count(*) FROM encounters e JOIN patients p ON p.id=e.patient_id WHERE p.is_test_data AND e.started_at::date=d) encounters FROM days ORDER BY d`),
+    pool.query(`SELECT * FROM (VALUES ('Critical laboratory results',(SELECT count(*) FROM lab_results lr JOIN lab_samples ls ON ls.id=lr.sample_id JOIN clinical_orders co ON co.id=ls.order_id JOIN patients p ON p.id=co.patient_id WHERE p.is_test_data AND lr.critical=true AND lr.status<>'released')),('Pending laboratory review',(SELECT count(*) FROM lab_results lr JOIN lab_samples ls ON ls.id=lr.sample_id JOIN clinical_orders co ON co.id=ls.order_id JOIN patients p ON p.id=co.patient_id WHERE p.is_test_data AND lr.status='preliminary')),('Open care tasks',(SELECT count(*) FROM care_tasks t JOIN patients p ON p.id=t.patient_id WHERE p.is_test_data AND t.status='open')),('Medication reviews',(SELECT count(*) FROM medication_reconciliation mr JOIN patients p ON p.id=mr.patient_id WHERE p.is_test_data AND mr.status='in-review')),('Open referrals',(SELECT count(*) FROM referrals r JOIN patients p ON p.id=r.patient_id WHERE p.is_test_data AND r.status NOT IN ('completed','cancelled')))) v(label,count)`),
+    pool.query(`SELECT count(*)::int AS invoices,count(*) FILTER (WHERE i.status='paid')::int AS paid,count(*) FILTER (WHERE i.status<>'paid')::int AS open,coalesce(sum(i.total),0) AS billed FROM invoices i JOIN patients p ON p.id=i.patient_id WHERE p.is_test_data`),
+    pool.query(`SELECT f.id,f.name,f.type,coalesce((SELECT count(*) FROM facility_beds b WHERE b.facility_id=f.id AND b.status='occupied' AND b.metadata->>'source'='synthetic-test-data'),0)::int occupied_beds,coalesce((SELECT count(*) FROM facility_beds b WHERE b.facility_id=f.id AND b.status='available' AND b.metadata->>'source'='synthetic-test-data'),0)::int available_beds,coalesce((SELECT count(*) FROM facility_operational_incidents i WHERE i.facility_id=f.id AND i.impact->>'source'='synthetic-test-data' AND i.status NOT IN ('resolved','closed')),0)::int open_incidents FROM facilities f WHERE f.name='Main Facility' LIMIT 10`),
+    pool.query(`SELECT p.patient_number AS "patientNumber",p.first_name AS "firstName",p.last_name AS "lastName",p.date_of_birth AS "dateOfBirth",p.sex,p.email,p.status,(SELECT d.display FROM diagnoses d WHERE d.patient_id=p.id ORDER BY d.id DESC LIMIT 1) AS "currentProblem",(SELECT t.priority FROM care_tasks t WHERE t.patient_id=p.id AND t.status='open' ORDER BY CASE t.priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 ELSE 3 END,t.created_at DESC LIMIT 1) AS priority,(SELECT count(*)::int FROM module_records mr WHERE mr.module='care-gaps' AND mr.payload->>'patientId'=p.id::text) AS "careGaps" FROM patients p WHERE p.is_test_data ORDER BY p.patient_number`)
+  ]);
+  return {data:{overview:overview.rows[0],queue:queue.rows,trend:trend.rows,clinical:clinical.rows,finance:finance.rows[0],facilities:facilities.rows,patients:patients.rows}};
+});
+
+app.get('/api/public/test-patients',async(_req:any,reply:any)=>{
+  if(!pool)return {data:[]}; if(!PUBLIC_TEST_DATA_ENABLED)return reply.code(403).send({error:'Public test data is currently disabled.'});
+  const r=await pool.query(`SELECT p.patient_number AS "patientNumber",p.first_name AS "firstName",p.last_name AS "lastName",p.date_of_birth AS "dateOfBirth",p.sex,p.email,p.status,(SELECT d.display FROM diagnoses d WHERE d.patient_id=p.id ORDER BY d.id DESC LIMIT 1) AS "currentProblem",(SELECT t.priority FROM care_tasks t WHERE t.patient_id=p.id AND t.status='open' ORDER BY CASE t.priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 ELSE 3 END,t.created_at DESC LIMIT 1) AS priority FROM patients p WHERE p.is_test_data ORDER BY p.patient_number`); return {data:r.rows,count:r.rowCount};
+});
+
+app.get('/api/public/test-patients/:patientNumber',async(req:any,reply:any)=>{
+  if(!pool)return reply.code(404).send({error:'Synthetic test patient not found.'}); if(!PUBLIC_TEST_DATA_ENABLED)return reply.code(403).send({error:'Public test data is currently disabled.'});
+  const r=await pool.query(`SELECT p.patient_number AS "patientNumber",p.first_name AS "firstName",p.last_name AS "lastName",p.date_of_birth AS "dateOfBirth",p.sex,p.email,p.preferred_language AS "preferredLanguage",p.status,(SELECT d.display FROM diagnoses d WHERE d.patient_id=p.id ORDER BY d.id DESC LIMIT 1) AS "currentProblem",(SELECT count(*)::int FROM encounters e WHERE e.patient_id=p.id) encounters,(SELECT count(*)::int FROM diagnoses d WHERE d.patient_id=p.id) diagnoses,(SELECT count(*)::int FROM clinical_orders o WHERE o.patient_id=p.id) orders,(SELECT count(*)::int FROM referrals x WHERE x.patient_id=p.id AND x.status NOT IN ('completed','cancelled')) open_referrals,(SELECT count(*)::int FROM care_tasks t WHERE t.patient_id=p.id AND t.status='open') open_tasks,(SELECT count(*)::int FROM module_records m WHERE m.module='care-gaps' AND m.payload->>'patientId'=p.id::text) care_gaps FROM patients p WHERE p.is_test_data AND p.patient_number=$1 LIMIT 1`,[req.params.patientNumber]);
+  if(!r.rowCount)return reply.code(404).send({error:'Synthetic test patient not found.'}); return {data:r.rows[0],syntheticTestData:true};
 });
 
 app.get('/api/dashboard',async(req:any)=>{

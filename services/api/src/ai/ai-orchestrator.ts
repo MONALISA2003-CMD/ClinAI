@@ -36,6 +36,7 @@ let freeTierLock: Promise<void> = Promise.resolve();
 const freeTierCache = new Map<string, { expiresAt: number; result: any }>();
 const GEMINI_FREE_CACHE_MS = Math.max(30000, Number(process.env.GEMINI_FREE_CACHE_MS || 300000));
 const ALLOW_PUBLIC_AI_WITH_PATIENT_DATA = process.env.CLINAI_ALLOW_PUBLIC_AI_WITH_PATIENT_DATA === 'true';
+const PUBLIC_TEST_DATA_ENABLED = process.env.CLINAI_PUBLIC_TEST_DATA !== 'false';
 const STRICT_CAPABILITY_ROUTING = process.env.CLINAI_STRICT_CAPABILITY_ROUTING !== 'false';
 const MULTI_MODEL_MODE = process.env.CLINAI_MULTI_MODEL_MODE !== 'false';
 const AI_FALLBACK_ATTEMPTS = Math.max(1, Math.min(5, Number(process.env.CLINAI_AI_FALLBACK_ATTEMPTS || 3)));
@@ -283,9 +284,9 @@ function localizedFast(policy: ReturnType<typeof getLanguagePolicy>, kind: strin
 }
 
 async function tryFastPath(deps: Deps, req: any, input: string, options: any, policy: ReturnType<typeof getLanguagePolicy>) {
-  if (options.publicMode || options.mode === 'research' || options.mode === 'analysis') return null;
+  if ((options.publicMode && !options.publicTestPatient) || options.mode === 'research' || options.mode === 'analysis') return null;
   const intent = fastIntent(input, options.patientId); if (!intent) return null;
-  const organizationId = deps.dbOrganizationId(req);
+  const organizationId = options.publicTestPatient ? (options.publicTestOrganizationId || null) : deps.dbOrganizationId(req);
   if (!organizationId) return null;
   const started=Date.now();
   let structured:Row|null=null;
@@ -783,10 +784,11 @@ async function recordProviderUsage(pool: Pool | null, req: any, model: any, resu
   } catch {}
 }
 
-async function runAgent(deps: Deps, req: any, input: string, options: { purpose: string; role?: string; patientId?: string | null; mode?: string; allowResearch?: boolean; allowCodeExecution?: boolean; preferredModel?: string; publicMode?: boolean; language?: string; capability?: import('./ai-providers.js').AIRequestCapability; attachments?: Array<{kind:'image'|'audio';dataUrl?:string;base64?:string;mimeType?:string;format?:string}> }) {
+async function runAgent(deps: Deps, req: any, input: string, options: { purpose: string; role?: string; patientId?: string | null; publicTestPatient?: boolean; publicTestOrganizationId?: string | null; mode?: string; allowResearch?: boolean; allowCodeExecution?: boolean; preferredModel?: string; publicMode?: boolean; language?: string; capability?: import('./ai-providers.js').AIRequestCapability; attachments?: Array<{kind:'image'|'audio';dataUrl?:string;base64?:string;mimeType?:string;format?:string}> }) {
   // Authorization context is authoritative. A client-supplied role is never trusted.
   const effectiveRole = options.publicMode ? 'public' : String(req.user?.role || '').toLowerCase();
   if (!options.publicMode && !req.user?.sub) throw Object.assign(new Error('An authenticated ClinAI workspace is required for AI assistance.'), { statusCode: 401, code: 'AUTHENTICATION_REQUIRED' });
+  if (options.publicTestPatient && (!options.publicMode || !PUBLIC_TEST_DATA_ENABLED || !options.publicTestOrganizationId)) throw Object.assign(new Error('Public test patient access is not enabled.'), { statusCode: 403, code: 'PUBLIC_TEST_DATA_DISABLED' });
   const effectiveOptions = { ...options, role: effectiveRole };
   const languagePolicy = getLanguagePolicy(options.language);
   const safetyCheck = classifyRequestSafety(input);
@@ -801,14 +803,18 @@ async function runAgent(deps: Deps, req: any, input: string, options: { purpose:
   }
   const fast = await tryFastPath(deps, req, input, options, languagePolicy);
   if (fast) return fast;
-  const patientData = Boolean(options.patientId);
+  const patientData = Boolean(options.patientId && (!options.publicMode || options.publicTestPatient));
   const attachmentKey = (options.attachments || []).map((a:any) => createHash('sha256').update(String(a.dataUrl || a.base64 || '')).digest('hex')).join(',');
   const cacheKey = stableRequestKey({ mode: options.mode || 'intelligence', role: effectiveRole || '', patientId: options.patientId || '', input, preferredModel: options.preferredModel || '', capability: options.capability || '', publicMode: Boolean(options.publicMode), language: options.language || 'English', attachmentKey });
   const cached = multiModelCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return { ...cached.result, cached: true };
   if (cached) multiModelCache.delete(cacheKey);
 
-  const organizationId = deps.dbOrganizationId(req);
+  const organizationId = options.publicTestPatient ? (options.publicTestOrganizationId || null) : deps.dbOrganizationId(req);
+  if (options.publicTestPatient && options.patientId) {
+    const allowed = await query(deps.pool, `SELECT id FROM patients WHERE id=$1 AND organization_id=$2 AND is_test_data=true LIMIT 1`, [options.patientId, organizationId]);
+    if (!allowed.length) throw Object.assign(new Error('Synthetic test patient is not available.'), { statusCode: 404, code: 'PUBLIC_TEST_PATIENT_NOT_FOUND' });
+  }
   if (options.capability && deps.pool && organizationId && !options.publicMode) {
     const capabilityRows = await query(deps.pool, `SELECT capability_id AS "capabilityId",risk_level AS "riskLevel",allowed_roles AS "allowedRoles",status FROM ai_capabilities WHERE capability_id=$1 AND status='active' AND (organization_id=$2 OR organization_id IS NULL) ORDER BY organization_id NULLS LAST LIMIT 1`, [options.capability, organizationId]).catch(() => []);
     const cap = capabilityRows[0];
@@ -820,19 +826,19 @@ async function runAgent(deps: Deps, req: any, input: string, options: { purpose:
     }
   }
   const contextKey = `${organizationId || 'none'}:${options.patientId || 'facility'}:${options.mode || 'intelligence'}:${options.publicMode ? 'public' : 'clinical'}`;
-  let context: any = options.publicMode ? { publicHealthOnly: true, generatedAt: new Date().toISOString() } : contextCache.get(contextKey)?.value;
-  if (!options.publicMode && (!context || (contextCache.get(contextKey)?.expiresAt || 0) <= Date.now())) {
+  let context: any = options.publicTestPatient ? contextCache.get(contextKey)?.value : (options.publicMode ? { publicHealthOnly: true, generatedAt: new Date().toISOString() } : contextCache.get(contextKey)?.value);
+  if ((options.publicTestPatient || !options.publicMode) && (!context || (contextCache.get(contextKey)?.expiresAt || 0) <= Date.now())) {
     // Quick requests use the smallest useful context. Full patient/facility context is reserved for intelligence/research work.
-    if (options.mode === 'quick') {
-      context = options.patientId ? await query(deps.pool, `SELECT id,patient_number AS "patientNumber",first_name AS "firstName",last_name AS "lastName",status,preferred_language AS "preferredLanguage" FROM patients WHERE id=$1 AND organization_id=$2`, [options.patientId, organizationId]) : { facility: 'current organization', generatedAt: new Date().toISOString() };
+    if (options.mode === 'quick' && !options.publicTestPatient) {
+      context = options.patientId ? { patient: (await query(deps.pool, `SELECT id,patient_number AS "patientNumber",first_name AS "firstName",last_name AS "lastName",status,preferred_language AS "preferredLanguage" FROM patients WHERE id=$1 AND organization_id=$2`, [options.patientId, organizationId]))[0] || null } : { facility: 'current organization', generatedAt: new Date().toISOString() };
     } else {
       context = options.patientId ? await patientContext(deps.pool, organizationId, options.patientId, options.purpose, req) : await orgContext(deps.pool, organizationId);
     }
     contextCache.set(contextKey, { expiresAt: Date.now() + AI_CONTEXT_CACHE_MS, value: context });
   }
-  const patientIntelligence = !options.publicMode && options.patientId ? compactIntelligenceForPrompt(context.intelligence || buildPatientIntelligence(context)) : null;
+  const patientIntelligence = (patientData && (options.publicTestPatient || !options.publicMode) && context?.intelligence) ? compactIntelligenceForPrompt(context.intelligence) : null;
   const questionIntent = buildQuestionIntent(input);
-  const deterministicReasoning = !options.publicMode && options.mode !== 'quick' ? await intelligenceClinicalReason(context, input).catch(() => null) : null;
+  const deterministicReasoning = (patientData && (options.publicTestPatient || !options.publicMode) && options.mode !== 'quick') ? await intelligenceClinicalReason(context, input).catch(() => null) : null;
   const languageAnalysisPromise = options.language && options.language !== 'English' ? intelligenceLanguage(input).catch(() => null) : Promise.resolve(null);
   let evidence: any[] = [];
   // Evidence is useful for intelligence/research, but loading it for every quick request only adds latency.
@@ -843,9 +849,9 @@ async function runAgent(deps: Deps, req: any, input: string, options: { purpose:
     else { evidence = await approvedKnowledge(deps.pool, organizationId); contextCache.set(evidenceKey, { expiresAt: Date.now() + AI_CONTEXT_CACHE_MS, value: evidence }); }
   }
   const languageAnalysis = await languageAnalysisPromise;
-  const publicPatientContext = patientData && ALLOW_PUBLIC_AI_WITH_PATIENT_DATA ? buildPublicPatientContext(context) : null;
-  const safeContext = patientData && ALLOW_PUBLIC_AI_WITH_PATIENT_DATA ? publicPatientContext : context;
-  const contextLimit = options.mode === 'quick' ? 7000 : (patientData && ALLOW_PUBLIC_AI_WITH_PATIENT_DATA ? 6000 : 22000);
+  const publicPatientContext = patientData && options.publicTestPatient ? buildPublicPatientContext(context) : (patientData && ALLOW_PUBLIC_AI_WITH_PATIENT_DATA ? buildPublicPatientContext(context) : null);
+  const safeContext = options.publicTestPatient ? publicPatientContext : (patientData && ALLOW_PUBLIC_AI_WITH_PATIENT_DATA ? publicPatientContext : context);
+  const contextLimit = options.mode === 'quick' ? 7000 : (options.publicTestPatient ? 14000 : (patientData && ALLOW_PUBLIC_AI_WITH_PATIENT_DATA ? 6000 : 22000));
   const evidenceLimit = options.mode === 'quick' ? 0 : 9000;
   const prompt = `User role: ${effectiveRole || 'healthcare professional'}
 Requested mode: ${options.mode || 'intelligence'}
@@ -871,10 +877,20 @@ Question: ${input}
 ` + `User role: ${effectiveRole || 'healthcare professional'}
 Requested mode: ${options.mode || 'intelligence'}
 Patient-specific request: ${patientData ? 'yes' : 'no'}
-Public-safe mode: ${options.publicMode ? 'yes — do not access or infer patient/facility records' : 'no'}
+Public-safe mode: ${options.publicMode ? (options.publicTestPatient ? 'yes — synthetic test patient records only' : 'yes — do not access or infer patient/facility records') : 'no'}
 ${languageInstruction(languagePolicy, languageAnalysis?.detected)}\nLanguage analysis signal: ${languageAnalysis ? aiText(languageAnalysis, 2500) : 'Not required for English request'}\n\nQuestion intent: ${questionIntent.join(', ') || 'general'}
 
-${options.publicMode ? `PUBLIC CLINAI TESTING MODE:
+${options.publicMode ? (options.publicTestPatient ? `PUBLIC CLINAI SYNTHETIC PATIENT TESTING MODE:
+- The selected patient is synthetic test data created for ClinAI evaluation.
+- You may summarize and analyze the recorded test patient information supplied in the ClinAI context.
+- Distinguish recorded facts from derived signals, interpretation and suggested human review.
+- Never invent a result, medication, diagnosis, appointment, referral, care gap or clinical action.
+- Do not expose contact details, identifiers or internal system identifiers.
+- Never perform or imply a clinical write or protected workflow action.
+- Do not turn test-record analysis into autonomous diagnosis, prescribing, dosing or treatment decisions. Encourage qualified professional review for decisions affecting care.
+- For research mode, use public external evidence when requested; do not access private ClinAI knowledge sources.
+- Treat uploaded media as synthetic/de-identified test material only.
+` : `PUBLIC CLINAI TESTING MODE:
 - This conversation is public and has no authenticated patient, organization or facility context.
 - Use only general ClinAI product/workflow knowledge, user-supplied non-identifying test material, and public evidence explicitly requested by the user.
 - Never claim to see a real patient, facility, organization, staff member, record, queue, laboratory result, medication order or other private system data.
@@ -882,7 +898,7 @@ ${options.publicMode ? `PUBLIC CLINAI TESTING MODE:
 - You may explain healthcare concepts when they are directly relevant to ClinAI, but do not provide personalized diagnosis, prescribing, dosing, emergency triage or treatment decisions. Encourage qualified professional review where a question could affect care.
 - For research mode, use only public external evidence when available; do not access private ClinAI knowledge sources.
 - Treat uploaded media as synthetic/de-identified test material only.
-` : ''}
+`) : ''}
 ClinAI context:
 ${aiText(safeContext, contextLimit)}${patientIntelligence ? `
 
@@ -907,13 +923,14 @@ ${input}`;
   const candidates: any[] = [];
   const configured = configuredProviders();
   const selectionCapability = options.capability;
-  const first = selectModel({ mode: options.mode, patientData, preferredModel: options.preferredModel, allowPublic: ALLOW_PUBLIC_AI_WITH_PATIENT_DATA, capability: selectionCapability });
+  const publicPatientPolicy = ALLOW_PUBLIC_AI_WITH_PATIENT_DATA || options.publicTestPatient;
+  const first = selectModel({ mode: options.mode, patientData, preferredModel: options.preferredModel, allowPublic: publicPatientPolicy, capability: selectionCapability });
   if (!first && selectionCapability && STRICT_CAPABILITY_ROUTING) {
     throw Object.assign(new Error(`No configured AI model supports the requested ${selectionCapability} capability under the current patient-data policy.`), { statusCode: 503, code: 'AI_CAPABILITY_UNAVAILABLE' });
   }
   if (first) candidates.push(first);
   const eligible = AI_MODELS.filter(x => {
-    const dataEligible = !patientData || (x.patientDataEligible && !x.noPersonalData && (!x.publicEndpoint || ALLOW_PUBLIC_AI_WITH_PATIENT_DATA));
+    const dataEligible = !patientData || (x.patientDataEligible && !x.noPersonalData && (!x.publicEndpoint || publicPatientPolicy));
     const capabilityEligible = !selectionCapability || modelSupportsCapability(x, selectionCapability);
     return x.enabled && configured[x.provider] && dataEligible && capabilityEligible;
   }).sort((a,b)=>a.priority-b.priority);
@@ -960,10 +977,32 @@ function buildPublicPatientContext(value: any) {
   // only permits a minimal, non-identifying workload descriptor so the model can answer
   // general workflow questions without receiving diagnoses, labs, medications, notes, IDs,
   // dates, contacts, or longitudinal clinical records.
+  const strip = (value:any):any => {
+    if (Array.isArray(value)) return value.slice(0,80).map(strip);
+    if (!value || typeof value !== 'object') return value;
+    const out:any={};
+    for (const [k,v] of Object.entries(value)) {
+      if (/^(id|organizationId|facilityId|userId|providerId|actorId|encounterId|appointmentId|orderId|sampleId|testId|medicationId|referralId|taskId|admissionId|patientId)$/i.test(k)) continue;
+      if (/^(phone|address|email|nationalId|nationalIdentifier)$/i.test(k)) continue;
+      out[k]=strip(v);
+    }
+    return out;
+  };
   return {
-    publicPatientContext: true,
-    clinicalRecordsProvided: false,
-    note: 'Patient-specific clinical records are intentionally withheld from public/free AI endpoints. Use the direct-provider clinical route for patient context.'
+    publicTestPatient: true,
+    syntheticData: true,
+    clinicalRecordsProvided: true,
+    note: 'This is a synthetic ClinAI test patient. The information below is test data for product evaluation, not a real patient record.',
+    patient: strip(value?.patient || null),
+    encounters: strip(value?.encounters || []), diagnoses: strip(value?.diagnoses || []), observations: strip(value?.observations || []),
+    orders: strip(value?.orders || []), medications: strip(value?.medications || []), referrals: strip(value?.referrals || []),
+    followups: strip(value?.followups || []), tasks: strip(value?.tasks || []), notes: strip(value?.notes || []),
+    reconciliation: strip(value?.reconciliation || []), labResults: strip(value?.labResults || []), imagingStudies: strip(value?.imagingStudies || []),
+    appointments: strip(value?.appointments || []), admissions: strip(value?.admissions || []), chronicCare: strip(value?.chronicCare || []),
+    maternal: strip(value?.maternal || []), pediatrics: strip(value?.pediatrics || []), carePlans: strip(value?.carePlans || []),
+    events: strip(value?.events || []), clinicalAlerts: strip(value?.clinicalAlerts || []), careGaps: strip(value?.careGaps || []),
+    riskSignals: strip(value?.riskSignals || []), patientJourney: strip(value?.patientJourney || []), intelligence: strip(value?.intelligence || {}),
+    crossModuleIntelligence: strip(value?.crossModuleIntelligence || {})
   };
 }
 
@@ -1066,7 +1105,7 @@ export function registerPublicAI(deps: Deps) {
 
   app.get('/api/public/ai-status', async () => {
     const configured = configuredProviders();
-    const publicModels = AI_MODELS.filter((m:any) => m.enabled && m.publicEndpoint && configured[m.provider]);
+    const publicModels = AI_MODELS.filter(m => m.enabled && m.publicEndpoint && configured[m.provider]);
     return { data: { configured: Object.values(configured).some(Boolean), publicModelsAvailable: publicModels.length > 0 || Boolean(GEMINI_API_KEY), capabilities: { text: true, image: publicModels.some((m:any) => m.modalities.includes('image')), audio: publicModels.some((m:any) => m.modalities.includes('audio')), video: false, analytics: true, research: true }, languages: SUPPORTED_CLINAI_LANGUAGES } };
   });
 
@@ -1078,13 +1117,22 @@ export function registerPublicAI(deps: Deps) {
         mode: z.enum(['quick','intelligence','analysis','research']).default('intelligence'),
         language: z.enum(SUPPORTED_CLINAI_LANGUAGES as [string, ...string[]]).default('English'),
         capability: z.enum(['text','multimodal','image','audio','video','medical','research','fast']).optional(),
+        testPatientNumber: z.string().regex(/^TEST-[0-9]{3}$/).optional(),
         attachments: z.array(z.object({kind:z.enum(['image','audio']),mimeType:z.string().max(100),dataUrl:z.string().max(8_000_000).optional(),base64:z.string().max(8_000_000).optional(),format:z.string().max(20).optional()})).max(2).optional(),
       }).parse(req.body || {});
       if (body.attachments?.some((a:any)=>a.kind==='image' && !a.dataUrl)) return reply.code(400).send({error:'Please provide an image for image testing.'});
       if (body.attachments?.some((a:any)=>a.kind==='audio' && !a.base64)) return reply.code(400).send({error:'Please provide audio data for audio testing.'});
       if (body.attachments?.some((a:any)=>a.kind==='audio' && !/^audio\//i.test(a.mimeType))) return reply.code(400).send({error:'The selected audio file could not be used.'});
+      let testPatientId:string|null=null; let testOrganizationId:string|null=null;
+      if (body.testPatientNumber) {
+        if (!PUBLIC_TEST_DATA_ENABLED) return reply.code(403).send({error:'Public test patient access is currently disabled.'});
+        const found=await query(pool, `SELECT id,organization_id AS "organizationId" FROM patients WHERE patient_number=$1 AND is_test_data=true LIMIT 1`, [body.testPatientNumber]);
+        if (!found[0]) return reply.code(404).send({error:'Synthetic test patient not found.'});
+        testPatientId=found[0].id; testOrganizationId=found[0].organizationId;
+      }
       const result = await runAgent(deps, req, body.question, {
-        purpose: 'public-ai-testing', patientId: null, mode: body.mode, language: body.language, capability: body.capability,
+        purpose: testPatientId ? 'public-synthetic-patient-testing' : 'public-ai-testing', patientId: testPatientId, publicTestPatient: Boolean(testPatientId), publicTestOrganizationId: testOrganizationId,
+        mode: body.mode, language: body.language, capability: body.capability,
         allowResearch: body.mode === 'research', allowCodeExecution: false, publicMode: true, attachments: body.attachments,
       });
       if (pool) await pool.query(`INSERT INTO public_ai_runs(run_id,mode,language,capability,input_length) VALUES($1,$2,$3,$4,$5) ON CONFLICT (run_id) DO NOTHING`, [result.runId, body.mode, body.language, body.capability || null, body.question.length]).catch(()=>{});
