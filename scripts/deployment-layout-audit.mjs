@@ -33,7 +33,8 @@ if (vercel.installCommand?.includes('cd ') || vercel.buildCommand?.includes('cd 
 }
 
 const render = fs.readFileSync('render.yaml', 'utf8');
-for (const expected of ['rootDir: services/api', 'rootDir: services/intelligence', 'rootDir: services/ai']) {
+if (!render.includes('rootDir: .')) throw new Error('render.yaml must define the API service from repository root for npm workspaces.');
+for (const expected of ['rootDir: services/intelligence', 'rootDir: services/ai']) {
   if (!render.includes(expected)) throw new Error(`render.yaml missing ${expected}`);
 }
 

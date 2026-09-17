@@ -9,6 +9,23 @@ type Row = Record<string, any>;
 
 const API=(process.env.NEXT_PUBLIC_API_URL||'https://clinai-api.onrender.com').replace(/\/$/,'');
 
+async function fetchJSON(url:string, init:RequestInit={}, token?:string){
+ const headers=new Headers(init.headers||{});
+ if(!headers.has('Accept')) headers.set('Accept','application/json');
+ if(token) headers.set('Authorization',`Bearer ${token}`);
+ const response=await fetch(url,{...init,headers});
+ const contentType=response.headers.get('content-type')||'';
+ let data:any={};
+ if(contentType.includes('application/json')){
+  try{data=await response.json()}catch{data={}}
+ }else{
+  const text=await response.text();
+  data=text?{error:text}:{};
+ }
+ return {r:response,data};
+}
+
+
 const MODULE_CONTRACTS=moduleContractCatalog.modules as any[];
 const CONTRACT_BY_ID:Record<string,any>=Object.fromEntries(MODULE_CONTRACTS.map(c=>[c.id,c]));
 const MODULE_READ_ENDPOINTS:Record<string,string>=Object.fromEntries(MODULE_CONTRACTS.map(c=>[c.id,c.backend.endpoint]));

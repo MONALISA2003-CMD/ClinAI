@@ -3,6 +3,7 @@ services:
     name: clinai-api
     runtime: node
     plan: free
+    rootDir: .
     buildCommand: npm install --no-audit --no-fund && npm run build:api
     startCommand: npm --workspace @clinai/api run start
     healthCheckPath: /health
