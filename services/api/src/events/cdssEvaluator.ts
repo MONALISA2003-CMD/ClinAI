@@ -31,7 +31,7 @@ type Signal = {
 
 const SUPPORTED_EVENTS = new Set([
   'patient.registered', 'allergy.recorded', 'encounter.started', 'appointment.checked_in',
-  'vital.recorded', 'diagnosis.recorded', 'order.created', 'specimen.collected',
+  'vital.recorded', 'triage.recorded', 'diagnosis.recorded', 'order.created', 'specimen.collected',
   'result.verified', 'medication.ordered', 'medication.dispensed',
   'referral.created', 'referral.completed', 'discharge.started', 'followup.due',
   'laboratory.specimen.status',

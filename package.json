@@ -22,8 +22,14 @@
     "typecheck:api": "npm --workspace @clinai/api run build",
     "typecheck": "npm run typecheck:api && npm run typecheck:web",
     "test:v27:audit": "node tests/v27-full-page-audit.mjs",
-    "test:all:stability": "node tests/v27-full-page-audit.mjs && node tests/v26-module-contract-audit.mjs && node tests/v26-ai-reliability-audit.mjs && node tests/schema-contract-audit.mjs && node tests/ai-security-scope-audit.mjs && node tests/v28-completion-audit.mjs",
-    "test:v28:completion": "node tests/v28-completion-audit.mjs"
+    "test:all:stability": "node tests/v27-full-page-audit.mjs && node tests/v26-module-contract-audit.mjs && node tests/v26-ai-reliability-audit.mjs && node tests/schema-contract-audit.mjs && node tests/ai-security-scope-audit.mjs && node tests/v28-completion-audit.mjs && node tests/phase3-global-validation-audit.mjs && node tests/phase4-5-clinical-intelligence-audit.mjs && node tests/phase6-7-patient360-workspaces-audit.mjs",
+    "test:v28:completion": "node tests/v28-completion-audit.mjs",
+    "test:production-integrity:ai": "node tests/production-integrity-ai-audit.mjs",
+    "test:phase1:security": "node tests/phase1-security-boundary-audit.mjs",
+    "test:phase2:modules": "node tests/phase2-module-contract-audit.mjs",
+    "test:phase3:validation": "node tests/phase3-global-validation-audit.mjs",
+    "test:phase4:5:intelligence": "node tests/phase4-5-clinical-intelligence-audit.mjs",
+    "test:phase6:7:intelligence": "node tests/phase6-7-patient360-workspaces-audit.mjs"
   },
   "devDependencies": {
     "@types/node": "latest",

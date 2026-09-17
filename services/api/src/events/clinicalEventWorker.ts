@@ -1,5 +1,6 @@
 import type { Pool } from 'pg';
 import { evaluateClinicalContext } from '../intelligence/cdssGateway.js';
+import { processClinicalEvent, scanUnfinishedJourneys } from './clinicalJourneyEngine.js';
 
 let timer: NodeJS.Timeout | undefined;
 let running = false;
@@ -32,6 +33,8 @@ export function startClinicalEventWorker(pool: Pool | null) {
         } finally { client.release(); }
 
         try {
+          await processClinicalEvent(pool, event);
+          if (event.payload?.patientId) await scanUnfinishedJourneys(pool, event.organization_id, String(event.payload.patientId));
           await evaluateClinicalContext(pool, {
             mode: 'async',
             trigger: {

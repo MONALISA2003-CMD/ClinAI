@@ -14,7 +14,27 @@ type RawBuilder = (pool: any, organizationId: string | null, patientId: string) 
 
 export type ClinicalContextPurpose = 'clinical'|'documentation'|'communication'|'operations'|'patient-portal'|'cdss'|'research';
 
-const CLINICAL_MODULES = ['patient','allergies','encounters','observations','diagnoses','orders','medications','referrals','followups','immunizations','maternal','pediatrics','growth','carePlans','tasks','notes','reconciliation','events','labResults','imagingStudies','appointments','admissions','chronicCare','telemedicine','remoteMonitoring','clinicalAlerts','childHealth','medicationReconciliation','consents','portalMessages','surveillance','investigations','responseTasks','mortality','facilityContext','referralNetwork','aiEvaluations','careGraph','careGaps','riskSignals','patientJourney','crossModuleIntelligence'];
+const TASK_CONTEXTS: Record<string,string[]> = {
+  medication: ['patient','allergies','medications','reconciliation','orders','events','careGaps','riskSignals','inventoryAvailability','dispensations','medicationAdministrations'],
+  finance: ['patient','encounters','appointments','invoices','claims','payments','events'],
+  billing: ['patient','encounters','invoices','claims','payments','events'],
+  surgical: ['patient','encounters','diagnoses','orders','labResults','imagingStudies','procedures','admissions','events','careGaps','riskSignals'],
+  surgery: ['patient','encounters','diagnoses','orders','labResults','imagingStudies','procedures','admissions','events','careGaps','riskSignals'],
+  maternity: ['patient','encounters','maternal','newborn','postnatal','labResults','immunizations','events','careGaps','riskSignals'],
+  pharmacy: ['patient','allergies','medications','reconciliation','orders','dispensations','medicationAdministrations','inventoryAvailability','events','careGaps','riskSignals'],
+  inventory: ['patient','medications','inventoryAvailability','events'],
+  publichealth: ['patient','surveillance','investigations','publicHealth','events','careGaps','riskSignals'],
+  followup: ['patient','encounters','diagnoses','procedures','appointments','followups','events','careGaps','riskSignals'],
+  clinical: ['patient','allergies','encounters','observations','diagnoses','orders','medications','referrals','followups','immunizations','maternal','pediatrics','growth','carePlans','tasks','notes','reconciliation','events','labResults','imagingStudies','appointments','admissions','chronicCare','telemedicine','remoteMonitoring','clinicalAlerts','childHealth','medicationReconciliation','consents','portalMessages','surveillance','investigations','responseTasks','mortality','facilityContext','referralNetwork','aiEvaluations','careGraph','careGaps','riskSignals','patientJourney','crossModuleIntelligence'],
+};
+
+function taskModules(query: string, purpose: ClinicalContextPurpose): string[] | null {
+  const q=String(query||'').toLowerCase();
+  for (const [key,mods] of Object.entries(TASK_CONTEXTS)) if(q.includes(key)) return mods;
+  return purpose==='clinical' ? null : null;
+}
+
+const CLINICAL_MODULES = ['patient','allergies','encounters','observations','diagnoses','orders','medications','referrals','followups','immunizations','maternal','pediatrics','growth','carePlans','tasks','notes','reconciliation','events','labResults','imagingStudies','appointments','admissions','chronicCare','telemedicine','remoteMonitoring','clinicalAlerts','childHealth','medicationReconciliation','consents','portalMessages','surveillance','investigations','responseTasks','mortality','facilityContext','referralNetwork','aiEvaluations','careGraph','careGaps','riskSignals','patientJourney','crossModuleIntelligence','finance','claims','payments','supply','inventoryAvailability','dispensations','medicationAdministrations','newborn','postnatal','procedures','surveillance','investigations','publicHealth'];
 const COMMUNICATION_MODULES = ['patient','appointments','telemedicine'];
 const OPERATIONS_MODULES = ['patient','appointments','encounters','referrals','tasks','admissions','clinicalAlerts'];
 const PORTAL_MODULES = ['patient','appointments','immunizations','carePlans','referrals','followups','telemedicine'];
@@ -93,8 +113,10 @@ export async function buildClinicalContext(input: {
   if (explicitWithdrawn && !relevant) return { patient: null, contextPolicy: { allowed: false, reason: 'ai-consent-withdrawn', purpose, consentStatus: 'withdrawn' } };
 
   const policyModules = allowedModules(purpose, role);
+  const taskSpecific = taskModules(input.queryText || input.purpose || '', purpose);
+  const taskFiltered = taskSpecific ? policyModules.filter(m => taskSpecific.includes(m)) : policyModules;
   const consentScope = scopeModules(relevant?.scope);
-  const modules = consentScope ? policyModules.filter(m => consentScope.includes(m)) : policyModules;
+  const modules = consentScope ? taskFiltered.filter(m => consentScope.includes(m)) : taskFiltered;
   const raw = await input.rawBuilder(input.pool, input.organizationId, input.patientId);
   const context = prune(raw, modules, purpose);
   context.contextPolicy = {
@@ -104,6 +126,7 @@ export async function buildClinicalContext(input: {
     consentStatus: relevant ? 'active' : (consentRows.length ? 'not-active' : 'not-recorded'),
     consentType: relevant?.consentType || null,
     consentScopeApplied: Boolean(consentScope),
+    taskContextApplied: Boolean(taskSpecific),
     moduleCount: modules.length,
     generatedAt: new Date().toISOString(),
   };

@@ -65,10 +65,20 @@ const OFF_TOPIC_PATTERNS = [
   /^(?:write|build|code|debug|program|develop)\s+(?:a\s+)?(?:malware|ransomware|virus|exploit|keylogger|credential\s+stealer)/i,
   /\b(?:bitcoin price|celebrity gossip|gaming cheat|movie review|dating advice|political campaign strategy)\b/i,
 ];
+const CLINAI_SCOPE_TERMS = [
+  'clinai','patient','care','clinical','healthcare','hospital','clinic','appointment','queue','encounter','triage','diagnosis','laboratory','lab','imaging','pharmacy','medicine','medication','nursing','maternity','pediatrics','immunization','referral','follow-up','billing','insurance','claim','inventory','procurement','supplier','facility','staff','task','workflow','public health','analytics','reporting','governance','security','risk','audit','care gap','patient 360','clinical velocity','value based care','guideline','protocol','documentation','handover','discharge','admission','surgery','emergency','telemedicine','monitoring','stock','finance','revenue','payment','research guidance'
+];
+function isClinAIScope(input: string) {
+  const text = String(input || '').toLowerCase().trim();
+  if (!text) return false;
+  if (/^(hi|hello|hey|habari|mambo|jambo|muraho|wasuze otya|osiibye otya|agandi|oraire|apwoyo)\b/i.test(text)) return true;
+  return CLINAI_SCOPE_TERMS.some(term => text.includes(term));
+}
 function classifyRequestSafety(input: string) {
   const text = String(input || '').trim();
   if (SECURITY_PATTERNS.some(p => p.test(text))) return { blocked: true, message: SECURITY_REFUSAL, reason: 'security' };
   if (OFF_TOPIC_PATTERNS.some(p => p.test(text))) return { blocked: true, message: SCOPE_REFUSAL, reason: 'scope' };
+  if (!isClinAIScope(text)) return { blocked: true, message: SCOPE_REFUSAL, reason: 'scope' };
   return { blocked: false, message: '', reason: '' };
 }
 
@@ -87,11 +97,26 @@ function sanitizeClinAIResponse(text: string) {
 }
 
 function polishClinAIAnswer(answer: Row, fallback = 'I could not complete that request from the information currently available.') {
-  const out: Row = { ...answer };
+  const source:any = answer || {};
+  const out: Row = {
+    directAnswer: source.directAnswer ?? source.summary ?? '',
+    currentSituation: source.currentSituation ?? '',
+    recordedFacts: source.recordedFacts ?? source.importantFindings ?? [],
+    attentionItems: source.attentionItems ?? [], careGaps: source.careGaps ?? [],
+    crossModuleEvidence: source.crossModuleEvidence ?? [], safetySignals: source.safetySignals ?? [],
+    calculations: source.calculations ?? [], reasoningSummary: '',
+    suggestedReview: source.suggestedReview ?? source.suggestedNextChecks ?? [],
+    uncertainty: source.uncertainty ?? [], evidence: source.evidence ?? [], provenance: source.provenance ?? [],
+    confidence: source.confidence || 'moderate',
+    ...source,
+  };
+  if (!out.directAnswer && source.summary) out.directAnswer = source.summary;
+  if (!out.recordedFacts.length && Array.isArray(source.importantFindings)) out.recordedFacts = source.importantFindings;
   out.directAnswer = sanitizeClinAIResponse(out.directAnswer || fallback);
-  for (const key of ['recordedFacts','calculations','suggestedReview','uncertainty','evidence']) {
+  for (const key of ['recordedFacts','attentionItems','careGaps','crossModuleEvidence','safetySignals','calculations','suggestedReview','uncertainty','evidence','provenance']) {
     if (Array.isArray(out[key])) out[key] = out[key].map((x:any) => sanitizeClinAIResponse(String(x))).filter(Boolean);
   }
+  out.currentSituation = sanitizeClinAIResponse(String(out.currentSituation || ''));
   out.reasoningSummary = '';
   out.confidence = out.confidence || 'moderate';
   return out;
@@ -133,16 +158,18 @@ const aiSafety = [
 const responseSchema = {
   type: 'object',
   properties: {
-    directAnswer: { type: 'string' },
-    recordedFacts: { type: 'array', items: { type: 'string' } },
-    calculations: { type: 'array', items: { type: 'string' } },
-    reasoningSummary: { type: 'string' },
-    suggestedReview: { type: 'array', items: { type: 'string' } },
+    summary: { type: 'string' },
+    currentSituation: { type: 'string' },
+    importantFindings: { type: 'array', items: { type: 'string' } },
+    attentionItems: { type: 'array', items: { type: 'string' } },
+    careGaps: { type: 'array', items: { type: 'string' } },
+    crossModuleEvidence: { type: 'array', items: { type: 'string' } },
+    safetySignals: { type: 'array', items: { type: 'string' } },
     uncertainty: { type: 'array', items: { type: 'string' } },
-    evidence: { type: 'array', items: { type: 'string' } },
-    confidence: { type: 'string', enum: ['high', 'moderate', 'low', 'insufficient'] },
+    suggestedNextChecks: { type: 'array', items: { type: 'string' } },
+    provenance: { type: 'array', items: { type: 'string' } },
   },
-  required: ['directAnswer', 'recordedFacts', 'calculations', 'reasoningSummary', 'suggestedReview', 'uncertainty', 'evidence', 'confidence'],
+  required: ['summary','currentSituation','importantFindings','attentionItems','careGaps','crossModuleEvidence','safetySignals','uncertainty','suggestedNextChecks','provenance'],
   additionalProperties: false,
 };
 
@@ -162,7 +189,7 @@ QUALITY: Answer the actual question first. Be concise for simple questions and d
 
 CLINICAL SAFETY: Support healthcare professionals; do not replace them. Do not autonomously diagnose, prescribe, discharge, alter medication, authorize payment or make irreversible clinical decisions. Never invent clinical facts or guideline requirements. Never expose private chain-of-thought.
 
-FORMATTING: The final answer must read like a polished response from a healthcare assistant. Use natural language. When sections are helpful, use **UPPERCASE BOLD HEADINGS**, numbered lists and bullet lists. Never output JSON, field names, schemas, code fences, raw tool output, provider messages, technical status messages or implementation notes. JSON may be used internally for orchestration, evidence and safety, but it must remain completely invisible to clinicians at every user-facing boundary.
+FORMATTING: The final answer must read like a polished response from a healthcare assistant. Use natural language and clinically useful structure. For patient or operational intelligence, organize the answer around CURRENT SITUATION, WHAT REQUIRES ATTENTION, CARE GAPS, CROSS-MODULE EVIDENCE, SAFETY SIGNALS, SUGGESTED NEXT CHECKS and UNCERTAINTY when those sections contain useful information. Prefer concrete source-linked statements over generic advice. Never output JSON, field names, schemas, code fences, raw tool output, provider messages, technical status messages or implementation notes. JSON may be used internally for orchestration, evidence and safety, but it must remain completely invisible to clinicians at every user-facing boundary.
 
 ${aiSafety.join('\n')}`;
 
@@ -282,7 +309,21 @@ async function patientContext(pool: Pool | null, organizationId: string | null, 
       query(rawPool, `SELECT id,device_id AS "deviceId",metric,value_numeric AS "valueNumeric",unit,measured_at AS "measuredAt",source,validation_status AS "validationStatus",alert_status AS "alertStatus" FROM remote_monitoring_readings WHERE patient_id=$1 AND organization_id=$2 ORDER BY measured_at DESC LIMIT 60`, [rawPatientId, rawOrganizationId]),
       query(rawPool, `SELECT id,module,status,payload,created_at AS "createdAt" FROM module_records WHERE organization_id=$2 AND payload->>'patientId'=$1 AND module IN ('clinical-alerts','care-gaps') ORDER BY created_at DESC LIMIT 40`, [rawPatientId, rawOrganizationId]),
     ]);
-    const context: Row = { patient: patient[0] || null, allergies, encounters, observations, diagnoses, orders, medications, referrals, followups, immunizations, maternal, pediatrics, growth, carePlans, tasks, notes, reconciliation, events, labResults, imagingStudies, appointments, admissions, chronicCare, telemedicine, remoteMonitoring, clinicalAlerts };
+    const safeRaw = async (sql:string, params:any[]=[]) => { try { return await query(rawPool, sql, params); } catch { return []; } };
+    const [finance, claims, payments, supply, dispensations, medicationAdministrations, newborn, postnatal, procedures, surveillance, investigations] = await Promise.all([
+      safeRaw(`SELECT i.id,i.status,i.total,i.created_at AS "createdAt",coalesce((SELECT sum(p.amount) FROM payments p WHERE p.invoice_id=i.id AND p.status='paid'),0) AS "paidAmount",coalesce(i.total,0)-coalesce((SELECT sum(p.amount) FROM payments p WHERE p.invoice_id=i.id AND p.status='paid'),0) AS "balance" FROM invoices i WHERE i.patient_id=$1 AND i.organization_id=$2 ORDER BY i.created_at DESC LIMIT 40`,[rawPatientId,rawOrganizationId]),
+      safeRaw(`SELECT id,invoice_id AS "invoiceId",status,amount,created_at AS "createdAt" FROM claims WHERE patient_id=$1 AND organization_id=$2 ORDER BY created_at DESC LIMIT 40`,[rawPatientId,rawOrganizationId]),
+      safeRaw(`SELECT p.id,p.invoice_id AS "invoiceId",p.amount,p.status,p.created_at AS "createdAt" FROM payments p JOIN invoices i ON i.id=p.invoice_id WHERE i.patient_id=$1 AND i.organization_id=$2 ORDER BY p.created_at DESC LIMIT 40`,[rawPatientId,rawOrganizationId]),
+      safeRaw(`SELECT mo.id,mo.status,mo.quantity,m.name AS "medicationName",coalesce((SELECT sum(ib.quantity) FROM inventory_batches ib JOIN inventory_items ii ON ii.id=ib.item_id WHERE ii.organization_id=$2 AND lower(ii.name)=lower(m.name)),0) AS "availableQuantity" FROM medication_orders mo JOIN medications m ON m.id=mo.medication_id WHERE mo.patient_id=$1 AND mo.organization_id=$2 ORDER BY mo.id DESC LIMIT 40`,[rawPatientId,rawOrganizationId]),
+      safeRaw(`SELECT d.id,d.medication_order_id AS "medicationOrderId",d.quantity,d.status,d.dispensed_at AS "dispensedAt" FROM dispensations d JOIN medication_orders mo ON mo.id=d.medication_order_id WHERE mo.patient_id=$1 AND mo.organization_id=$2 ORDER BY d.dispensed_at DESC LIMIT 40`,[rawPatientId,rawOrganizationId]),
+      safeRaw(`SELECT ma.id,ma.medication_order_id AS "medicationOrderId",ma.status,ma.administered_at AS "administeredAt" FROM medication_administrations ma JOIN medication_orders mo ON mo.id=ma.medication_order_id WHERE mo.patient_id=$1 AND mo.organization_id=$2 ORDER BY ma.administered_at DESC LIMIT 40`,[rawPatientId,rawOrganizationId]),
+      safeRaw(`SELECT id,birth_event_id AS "birthEventId",sex,birth_weight_grams AS "birthWeightGrams",gestational_age_weeks AS "gestationalAgeWeeks",danger_signs AS "dangerSigns",created_at AS "createdAt" FROM newborn_records WHERE patient_id=$1 AND organization_id=$2 ORDER BY created_at DESC LIMIT 20`,[rawPatientId,rawOrganizationId]),
+      safeRaw(`SELECT id,newborn_id AS "newbornId",contact_date AS "contactDate",contact_timing AS "contactTiming",danger_signs AS "dangerSigns",referral_required AS "referralRequired",plan FROM postnatal_contacts WHERE patient_id=$1 AND organization_id=$2 ORDER BY contact_date DESC LIMIT 30`,[rawPatientId,rawOrganizationId]),
+      safeRaw(`SELECT id,procedure_type AS "procedureType",status,scheduled_at AS "scheduledAt",performed_at AS "performedAt",created_at AS "createdAt" FROM procedures WHERE patient_id=$1 AND organization_id=$2 ORDER BY COALESCE(performed_at,scheduled_at,created_at) DESC LIMIT 40`,[rawPatientId,rawOrganizationId]),
+      safeRaw(`SELECT id,case_type AS "caseType",status,risk_level AS "riskLevel",detected_at AS "detectedAt" FROM surveillance_cases WHERE patient_id=$1 AND organization_id=$2 ORDER BY detected_at DESC LIMIT 30`,[rawPatientId,rawOrganizationId]),
+      safeRaw(`SELECT id,investigation_type AS "investigationType",status,started_at AS "startedAt",completed_at AS "completedAt",findings,risk_assessment AS "riskAssessment" FROM public_health_investigations WHERE patient_id=$1 AND organization_id=$2 ORDER BY started_at DESC LIMIT 30`,[rawPatientId,rawOrganizationId]),
+    ]);
+    const context: Row = { patient: patient[0] || null, allergies, encounters, observations, diagnoses, orders, medications, referrals, followups, immunizations, maternal, pediatrics, growth, carePlans, tasks, notes, reconciliation, events, labResults, imagingStudies, appointments, admissions, chronicCare, telemedicine, remoteMonitoring, clinicalAlerts, finance, claims, payments, supply, dispensations, medicationAdministrations, newborn, postnatal, procedures, surveillance, investigations };
     context.intelligence = buildPatientIntelligence(context);
     context.evidenceIndex = buildEvidenceIndex(context);
     context.crossModuleIntelligence = await buildPatientIntelligenceLayer(async (sql, params=[]) => query(rawPool, sql, params), rawOrganizationId, rawPatientId);
@@ -291,7 +332,7 @@ async function patientContext(pool: Pool | null, organizationId: string | null, 
     context.patientJourney = context.crossModuleIntelligence.patientJourney;
     return context;
   };
-  return buildClinicalContext({ pool, organizationId, patientId, purpose, role: req?.user?.role || 'doctor', userId: req?.user?.sub || null, query: async (sql, params=[]) => query(pool, sql, params), rawBuilder });
+  return buildClinicalContext({ pool, organizationId, patientId, purpose, role: req?.user?.role || 'doctor', userId: req?.user?.sub || null, queryText: String(req?.body?.question || req?.body?.message || req?.query?.question || ''), query: async (sql, params=[]) => query(pool, sql, params), rawBuilder });
 }
 
 async function orgContext(pool: Pool | null, organizationId: string | null) {
@@ -490,7 +531,7 @@ function unwrapStructuredAnswer(value: any): Row | null {
   let current: any = value;
   for (let i = 0; i < 8; i += 1) {
     if (current && typeof current === 'object' && !Array.isArray(current)) {
-      if (current.directAnswer !== undefined || current.recordedFacts !== undefined || current.suggestedReview !== undefined || current.uncertainty !== undefined || current.evidence !== undefined) return current;
+      if (current.directAnswer !== undefined || current.summary !== undefined || current.recordedFacts !== undefined || current.importantFindings !== undefined || current.suggestedReview !== undefined || current.suggestedNextChecks !== undefined || current.uncertainty !== undefined || current.evidence !== undefined) return current;
       if (current.answer !== undefined) { current = current.answer; continue; }
       if (current.data !== undefined) { current = current.data; continue; }
       if (current.result !== undefined) { current = current.result; continue; }
@@ -541,28 +582,87 @@ function stripStructuredDisplayLeak(text: string): string {
 }
 
 function responseToPlain(answer: any, fallback: string, language = 'English') {
-  const normalized = unwrapStructuredAnswer(answer) || { directAnswer: fallback, recordedFacts: [], calculations: [], reasoningSummary: '', suggestedReview: [], uncertainty: [], evidence: [], confidence: 'low' };
-  let direct = stripStructuredDisplayLeak(String(normalized.directAnswer ?? fallback));
-  if (!direct) direct = stripStructuredDisplayLeak(fallback);
-  const cleanAnswer = polishClinAIAnswer({ ...normalized, directAnswer: direct }, fallback);
-  cleanAnswer.directAnswer = stripStructuredDisplayLeak(cleanAnswer.directAnswer) || stripStructuredDisplayLeak(fallback);
+  const normalized = unwrapStructuredAnswer(answer) || { directAnswer: fallback };
+  const cleanAnswer = polishClinAIAnswer(normalized, fallback);
+  const headings = responseHeadings(language);
   const lines: string[] = [];
-  const addParagraph = (heading: string, value: any) => {
+  const add = (heading: string, value: any, bullet = true) => {
     const values = Array.isArray(value) ? value.filter(Boolean) : value ? [value] : [];
     if (!values.length) return;
     lines.push(`**${heading}**`);
     for (const item of values) {
       const safe = stripStructuredDisplayLeak(String(item));
-      if (safe) lines.push(Array.isArray(value) ? `• ${safe}` : safe);
+      if (safe) lines.push(bullet ? `• ${safe}` : safe);
     }
   };
-  const headings = responseHeadings(language);
-  addParagraph(headings.answer, cleanAnswer.directAnswer);
-  addParagraph(headings.points, cleanAnswer.recordedFacts);
-  addParagraph(headings.attention, cleanAnswer.suggestedReview);
-  addParagraph(headings.important, cleanAnswer.uncertainty);
-  const result = sanitizeClinAIResponse(lines.join('\n\n'));
-  return result || `**${headings.answer}**\n\n${stripStructuredDisplayLeak(fallback)}`;
+  if (cleanAnswer.directAnswer) add(headings.answer, cleanAnswer.directAnswer, false);
+  add('CURRENT SITUATION', cleanAnswer.currentSituation, false);
+  add(headings.points, cleanAnswer.recordedFacts);
+  add('WHAT REQUIRES ATTENTION', cleanAnswer.attentionItems?.length ? cleanAnswer.attentionItems : cleanAnswer.suggestedReview);
+  add('CARE GAPS', cleanAnswer.careGaps);
+  add('CROSS-MODULE EVIDENCE', cleanAnswer.crossModuleEvidence?.length ? cleanAnswer.crossModuleEvidence : cleanAnswer.evidence);
+  add('SAFETY SIGNALS', cleanAnswer.safetySignals);
+  add('CALCULATIONS', cleanAnswer.calculations);
+  add('SUGGESTED NEXT CHECKS', cleanAnswer.suggestedReview);
+  add(headings.important, cleanAnswer.uncertainty);
+  add('PROVENANCE', cleanAnswer.provenance);
+  return sanitizeClinAIResponse(lines.join('\n\n')) || `**${headings.answer}**\n\n${stripStructuredDisplayLeak(fallback)}`;
+}
+
+
+const PUBLIC_AI_RESPONSE_KEYS = ['summary','currentSituation','importantFindings','attentionItems','careGaps','crossModuleEvidence','safetySignals','uncertainty','suggestedNextChecks','provenance'] as const;
+
+type ClinicalAIResponse = {
+  summary:string;
+  currentSituation:string;
+  importantFindings:string[];
+  attentionItems:string[];
+  careGaps:string[];
+  crossModuleEvidence:string[];
+  safetySignals:string[];
+  uncertainty:string[];
+  suggestedNextChecks:string[];
+  provenance:string[];
+};
+
+function cleanPublicItem(value:any): string {
+  return stripStructuredDisplayLeak(sanitizeClinAIResponse(typeof value === 'string' ? value : JSON.stringify(value)))
+    .replace(/\b(?:directAnswer|reasoningSummary|toolsUsed|calculations|model|provider|prompt|schema|metadata)\b\s*[:=]/gi, '')
+    .trim();
+}
+
+function validateClinicalAIResponse(value: ClinicalAIResponse): ClinicalAIResponse {
+  const arrays = ['importantFindings','attentionItems','careGaps','crossModuleEvidence','safetySignals','uncertainty','suggestedNextChecks','provenance'] as const;
+  const out:any = { summary:cleanPublicItem(value.summary), currentSituation:cleanPublicItem(value.currentSituation) };
+  for (const key of arrays) {
+    const input = Array.isArray(value[key]) ? value[key] : [];
+    out[key] = input.map(cleanPublicItem).filter(Boolean).slice(0, 30);
+  }
+  if (!out.summary && out.currentSituation) out.summary = out.currentSituation;
+  return out as ClinicalAIResponse;
+}
+
+function toClinicalAIResponse(result:any, language='English'): ClinicalAIResponse {
+  const structured = polishClinAIAnswer(result?.structured ?? result, 'ClinAI could not complete that request from the information currently available.');
+  const findings = (structured.recordedFacts || []).map((x:any)=>`Recorded fact: ${cleanPublicItem(x)}`);
+  const interpretations = (structured.suggestedReview || []).map((x:any)=>`Clinical review: ${cleanPublicItem(x)}`);
+  return validateClinicalAIResponse({
+    summary: cleanPublicItem(structured.directAnswer),
+    currentSituation: cleanPublicItem(structured.currentSituation),
+    importantFindings: [...findings, ...interpretations],
+    attentionItems: (structured.attentionItems || []).map(cleanPublicItem),
+    careGaps: (structured.careGaps || []).map(cleanPublicItem),
+    crossModuleEvidence: (structured.crossModuleEvidence?.length ? structured.crossModuleEvidence : structured.evidence || []).map(cleanPublicItem),
+    safetySignals: (structured.safetySignals || []).map(cleanPublicItem),
+    uncertainty: (structured.uncertainty || []).map(cleanPublicItem),
+    suggestedNextChecks: (structured.suggestedReview || []).map(cleanPublicItem),
+    provenance: (structured.provenance || []).map(cleanPublicItem),
+  });
+}
+
+function publicAIEnvelope(result:any, language='English') {
+  const response = toClinicalAIResponse(result, language);
+  return { response, answer: responseToPlain(result, response.summary || 'ClinAI could not complete that request from the information currently available.', language) };
 }
 
 function clinicianResponse(result: any, language = 'English') {
@@ -590,7 +690,7 @@ function isUsableAgentResponse(text: any, message: any) {
   if (lower === 'no answer was returned.' || lower === 'i could not complete that request from the information currently available.') return false;
   const parsed = parseStructured(value);
   if (parsed) {
-    const direct = String(parsed.directAnswer ?? parsed.answer ?? '').trim();
+    const direct = String(parsed.directAnswer ?? parsed.summary ?? parsed.answer ?? '').trim();
     if (!direct) return false;
     if (/^(no answer was returned|i could not complete that request)/i.test(direct)) return false;
   }
@@ -639,7 +739,7 @@ async function runOpenAICompatibleAgent(deps: Deps, req: any, model: any, input:
     throw Object.assign(new Error(`${model.label} did not return a usable final answer.`), { code: 'PROVIDER_EMPTY_OR_INVALID_RESPONSE', statusCode: 502, provider: model.provider });
   }
   const structured = parseStructured(finalText) || normalizeLooseAnswer(finalText);
-  const directAnswer = String(structured?.directAnswer || '').trim();
+  const directAnswer = String(structured?.directAnswer ?? structured?.summary ?? '').trim();
   if (!directAnswer || /^(no answer was returned|i could not complete that request)/i.test(directAnswer)) {
     throw Object.assign(new Error(`${model.label} returned an incomplete final answer.`), { code: 'PROVIDER_EMPTY_OR_INVALID_RESPONSE', statusCode: 502, provider: model.provider });
   }
@@ -654,6 +754,10 @@ async function recordProviderUsage(pool: Pool | null, req: any, model: any, resu
 }
 
 async function runAgent(deps: Deps, req: any, input: string, options: { purpose: string; role?: string; patientId?: string | null; mode?: string; allowResearch?: boolean; allowCodeExecution?: boolean; preferredModel?: string; publicMode?: boolean; language?: string; capability?: import('./ai-providers.js').AIRequestCapability; attachments?: Array<{kind:'image'|'audio';dataUrl?:string;base64?:string;mimeType?:string;format?:string}> }) {
+  // Authorization context is authoritative. A client-supplied role is never trusted.
+  const effectiveRole = options.publicMode ? 'public' : String(req.user?.role || '').toLowerCase();
+  if (!options.publicMode && !req.user?.sub) throw Object.assign(new Error('An authenticated ClinAI workspace is required for AI assistance.'), { statusCode: 401, code: 'AUTHENTICATION_REQUIRED' });
+  const effectiveOptions = { ...options, role: effectiveRole };
   const languagePolicy = getLanguagePolicy(options.language);
   const safetyCheck = classifyRequestSafety(input);
   if (safetyCheck.blocked) {
@@ -668,7 +772,7 @@ async function runAgent(deps: Deps, req: any, input: string, options: { purpose:
   const fast = await tryFastPath(deps, req, input, options, languagePolicy);
   if (fast) return fast;
   const patientData = Boolean(options.patientId);
-  const cacheKey = stableRequestKey({ mode: options.mode || 'intelligence', role: options.role || '', patientId: options.patientId || '', input, preferredModel: options.preferredModel || '', capability: options.capability || '', publicMode: Boolean(options.publicMode), language: options.language || 'English' });
+  const cacheKey = stableRequestKey({ mode: options.mode || 'intelligence', role: effectiveRole || '', patientId: options.patientId || '', input, preferredModel: options.preferredModel || '', capability: options.capability || '', publicMode: Boolean(options.publicMode), language: options.language || 'English' });
   const cached = multiModelCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return { ...cached.result, cached: true };
   if (cached) multiModelCache.delete(cacheKey);
@@ -677,7 +781,7 @@ async function runAgent(deps: Deps, req: any, input: string, options: { purpose:
   if (options.capability && deps.pool && organizationId && !options.publicMode) {
     const capabilityRows = await query(deps.pool, `SELECT capability_id AS "capabilityId",risk_level AS "riskLevel",allowed_roles AS "allowedRoles",status FROM ai_capabilities WHERE capability_id=$1 AND status='active' AND (organization_id=$2 OR organization_id IS NULL) ORDER BY organization_id NULLS LAST LIMIT 1`, [options.capability, organizationId]).catch(() => []);
     const cap = capabilityRows[0];
-    const role = String(options.role || req.user?.role || '').toLowerCase();
+    const role = String(effectiveRole).toLowerCase();
     const roles = Array.isArray(cap?.allowedRoles) ? cap.allowedRoles.map(String) : [];
     if (!cap || (roles.length && !roles.includes(role) && !roles.includes('admin'))) {
       await recordSecurityEvent(deps.pool,{organizationId,userId:deps.dbUserId(req),patientId:options.patientId||null,capabilityId:options.capability,eventType:'capability-policy-denied',severity:'high',status:'blocked',metadata:{role,purpose:options.purpose}}).catch(()=>null);
@@ -712,7 +816,28 @@ async function runAgent(deps: Deps, req: any, input: string, options: { purpose:
   const safeContext = patientData && ALLOW_PUBLIC_AI_WITH_PATIENT_DATA ? publicPatientContext : context;
   const contextLimit = options.mode === 'quick' ? 7000 : (patientData && ALLOW_PUBLIC_AI_WITH_PATIENT_DATA ? 6000 : 22000);
   const evidenceLimit = options.mode === 'quick' ? 0 : 9000;
-  const prompt = `User role: ${options.role || 'healthcare professional'}
+  const prompt = `User role: ${effectiveRole || 'healthcare professional'}
+Requested mode: ${options.mode || 'intelligence'}
+Patient-specific request: ${patientData ? 'yes' : 'no'}
+
+CLINICAL INTELLIGENCE METHOD:
+1. Start with only facts actually present in the retrieved ClinAI context.
+2. Reconcile the longitudinal record across encounters, diagnoses, orders, laboratory, imaging, medicines, referrals, follow-up, tasks, observations and operational signals when available.
+3. Treat deterministic CDSS and consistency signals as higher-priority evidence than model interpretation. Do not convert a signal into a diagnosis.
+4. Look for unfinished care journeys: ordered-but-missing results, completed/arrived appointments without encounters, overdue follow-up, unresolved referrals, open high-priority tasks, medication/allergy conflicts and important trend changes.
+5. Connect evidence across modules and name the source module or record type in plain language.
+6. Distinguish recorded facts, derived calculations, interpretation, uncertainty and suggested human review.
+7. Never invent a missing result, medication, appointment, guideline requirement, diagnosis, severity or action.
+8. If the record is sparse, say exactly what is missing and avoid generic filler.
+9. Return only the ClinAI clinical response structure: summary, currentSituation, importantFindings, attentionItems, careGaps, crossModuleEvidence, safetySignals, uncertainty, suggestedNextChecks and provenance. Never include internal orchestration fields.
+
+${options.role ? `Authorized role context: ${options.role}` : ''}
+
+${patientData ? 'For this patient, prioritize recent and unresolved information, then longitudinal context.' : 'For facility/operational questions, prioritize current workload, flow, safety, referrals, capacity, supply and financial signals that are actually present.'}
+
+Question: ${input}
+
+` + `User role: ${effectiveRole || 'healthcare professional'}
 Requested mode: ${options.mode || 'intelligence'}
 Patient-specific request: ${patientData ? 'yes' : 'no'}
 Public-safe mode: ${options.publicMode ? 'yes — do not access or infer patient/facility records' : 'no'}
@@ -737,7 +862,7 @@ ${options.attachments?.length ? `Attached clinical media: ${options.attachments.
 User request:
 ${input}`;
 
-  if (!MULTI_MODEL_MODE) return runGeminiAgent(deps, req, input, options, prompt, context, evidence, cacheKey);
+  if (!MULTI_MODEL_MODE) return runGeminiAgent(deps, req, input, effectiveOptions, prompt, context, evidence, cacheKey);
 
   const candidates: any[] = [];
   const configured = configuredProviders();
@@ -764,10 +889,10 @@ ${input}`;
     try {
       let result: any;
       if (model.provider === 'gemini') {
-        result = await runGeminiAgent(deps, req, input, options, prompt, context, evidence, cacheKey, model.id);
+        result = await runGeminiAgent(deps, req, input, effectiveOptions, prompt, context, evidence, cacheKey, model.id);
       } else {
         const allowTools = model.toolCalling && options.mode !== 'quick' && (!patientData || (!model.publicEndpoint && model.patientDataEligible));
-        result = await runOpenAICompatibleAgent(deps, req, model, input, prompt, {...options, attachments: options.attachments});
+        result = await runOpenAICompatibleAgent(deps, req, model, input, prompt, {...effectiveOptions, attachments: effectiveOptions.attachments});
         await recordProviderUsage(deps.pool, req, model, result, 'completed');
         await recordWork(deps.pool, req, deps.dbOrganizationId(req), options.patientId || null, { ...result, purpose: options.purpose, status: 'completed', question: input, evidenceCount: (result.structured.evidence || []).length, confidence: result.structured.confidence, resultSummary: { directAnswer: result.structured.directAnswer } });
       }
@@ -853,9 +978,9 @@ async function runGeminiAgent(deps: Deps, req: any, input: string, options: any,
   const raw = extractText(interaction.data);
   if (!isUsableAgentResponse(raw, {})) throw Object.assign(new Error('Gemini returned an unusable response.'), { code: 'PROVIDER_EMPTY_OR_INVALID_RESPONSE', statusCode: 502, provider: 'gemini' });
   const structured = parseStructured(raw) || normalizeLooseAnswer(raw);
-  if (!String(structured?.directAnswer || '').trim()) throw Object.assign(new Error('Gemini returned an incomplete final answer.'), { code: 'PROVIDER_EMPTY_OR_INVALID_RESPONSE', statusCode: 502, provider: 'gemini' });
+  if (!String(structured?.directAnswer ?? structured?.summary ?? '').trim()) throw Object.assign(new Error('Gemini returned an incomplete final answer.'), { code: 'PROVIDER_EMPTY_OR_INVALID_RESPONSE', statusCode: 502, provider: 'gemini' });
   const result = buildAgentResult(runId, structured, model, 'gemini', options.mode || 'intelligence', started, toolsUsed, calculations, undefined, options.language || 'English');
-  await recordWork(deps.pool, req, deps.dbOrganizationId(req), options.patientId || null, { ...result, purpose: options.purpose, status: 'completed', question: input, evidenceCount: (structured.evidence || []).length, confidence: structured.confidence, resultSummary: { directAnswer: structured.directAnswer } });
+  await recordWork(deps.pool, req, deps.dbOrganizationId(req), options.patientId || null, { ...result, purpose: options.purpose, status: 'completed', question: input, evidenceCount: (structured.evidence || []).length, confidence: structured.confidence, resultSummary: { structured: polishClinAIAnswer(structured), directAnswer: structured.directAnswer, attentionItems: structured.attentionItems || [], careGaps: structured.careGaps || [], safetySignals: structured.safetySignals || [], provenance: structured.provenance || [] } });
   return result;
 }
 
@@ -899,22 +1024,14 @@ export function registerPublicAI(deps: Deps) {
     return reply.code(201).send({ data: { received: true, ...r.rows[0] } });
   });
 
-  app.post('/api/public/health-assistant', async (req: any, reply: any) => {
-    const body = z.object({ question: z.string().min(3).max(4000), language: z.enum(SUPPORTED_CLINAI_LANGUAGES as [string, ...string[]]).default('English') }).parse(req.body || {});
-    const safety = classifyRequestSafety(body.question);
-    if (safety.blocked) return reply.code(400).send({ error: safety.message });
-    try {
-      const result = await runAgent(deps, req, body.question, { purpose: 'public-health-assistant', role: 'public user', mode: 'quick', publicMode: true, language: body.language });
-      return { data: { answer: clinicianResponse(result, body.language), runId: result.runId } };
-    } catch (e: any) {
-      return reply.code(e.statusCode || 502).send({ error: sanitizeClinAIResponse(e.message || 'The public health assistant is temporarily unavailable.') });
-    }
+  app.post('/api/public/health-assistant', async (_req: any, reply: any) => {
+    return reply.code(410).send({ error: 'The public health assistant has been retired. Use ABOUT CLINAI for public information, or sign in to the authorized workspace for ClinAI care-team intelligence.' });
   });
 }
 
 export function registerAI(deps: Deps) {
   const { app, pool } = deps;
-  app.get('/api/ai/status', async () => ({ configured: Object.values(configuredProviders()).some(Boolean), intelligenceEngineConfigured: Boolean(INTELLIGENCE_SERVICE_URL), codeExecutionEnabled: ENABLE_GEMINI_CODE_EXECUTION, model: GEMINI_MODEL, apiVersion: GEMINI_API_VERSION, promptVersion: AI_PROMPT_VERSION, mode: FREE_TIER_MODE ? 'free-tier single-call human-reviewed intelligence' : 'tool-using human-reviewed intelligence' }));
+  app.get('/api/ai/status', async (req: any) => ({ role: req.user?.role || null, configured: Object.values(configuredProviders()).some(Boolean), intelligenceEngineConfigured: Boolean(INTELLIGENCE_SERVICE_URL), codeExecutionEnabled: ENABLE_GEMINI_CODE_EXECUTION, model: GEMINI_MODEL, apiVersion: GEMINI_API_VERSION, promptVersion: AI_PROMPT_VERSION, mode: FREE_TIER_MODE ? 'free-tier single-call human-reviewed intelligence' : 'tool-using human-reviewed intelligence' }));
   app.get('/api/ai/providers', async () => ({ data: { multiModelEnabled: MULTI_MODEL_MODE, strictCapabilityRouting: STRICT_CAPABILITY_ROUTING, publicPatientDataAllowed: ALLOW_PUBLIC_AI_WITH_PATIENT_DATA, providers: configuredProviders(), models: availableModels() } }));
   app.post('/api/ai/router', async (req:any, reply:any) => { const body=z.object({ mode:z.string().optional(), patientData:z.boolean().default(false), preferredModel:z.string().optional(), capability:z.enum(['text','multimodal','image','audio','video','agentic','medical','coding','research','fast']).optional() }).parse(req.body||{}); const model=selectModel(body); return model ? { data:model } : reply.code(503).send({error:'No configured AI provider is available for this request.'}); });
 
@@ -951,15 +1068,15 @@ export function registerAI(deps: Deps) {
     if (body.attachments?.some((a:any)=>a.kind==='audio' && !a.base64)) return reply.code(400).send({error:'Audio attachments require base64 audio data.'});
     if (body.attachments?.some((a:any)=>a.kind==='audio' && !/^audio\//i.test(a.mimeType))) return reply.code(400).send({error:'Audio attachments must use an audio MIME type.'});
     try {
-      const result = await runAgent(deps, req, body.question, { purpose: body.purpose, role: body.role, patientId: body.patientId || null, mode: body.mode, language: body.language, capability: body.capability, allowResearch: body.mode === 'research', allowCodeExecution: body.mode === 'analysis', attachments: body.attachments });
+      const result = await runAgent(deps, req, body.question, { purpose: body.purpose, patientId: body.patientId || null, mode: body.mode, language: body.language, capability: body.capability, allowResearch: body.mode === 'research', allowCodeExecution: body.mode === 'analysis', attachments: body.attachments });
       await registerWorkAudit(pool, req, body.patientId || null, body.purpose, result);
-      return { data: { answer: clinicianResponse(result, body.language), runId: result.runId } };
+      return { data: { ...publicAIEnvelope(result, body.language), runId: result.runId } };
     } catch (e: any) { return reply.code(e.statusCode || 502).send({ error: sanitizeClinAIResponse(e.message || 'ClinAI could not complete that request.') }); }
   });
 
   app.post('/api/ai/patient-intelligence', async (req: any, reply: any) => {
     const body = z.object({ patientId: z.string().uuid(), question: z.string().default('What needs my attention about this patient?'), language: z.enum(SUPPORTED_CLINAI_LANGUAGES as [string, ...string[]]).default('English') }).parse(req.body || {});
-    try { const result=await runAgent(deps, req, body.question, { purpose: 'patient-intelligence', patientId: body.patientId, mode: 'intelligence', language: body.language }); return { data: { answer: clinicianResponse(result, body.language), runId: result.runId } }; } catch (e: any) { return reply.code(e.statusCode || 502).send({ error: sanitizeClinAIResponse(e.message || 'ClinAI could not complete that request.') }); }
+    try { const result=await runAgent(deps, req, body.question, { purpose: 'patient-intelligence', patientId: body.patientId, mode: 'intelligence', language: body.language }); return { data: { ...publicAIEnvelope(result, body.language), runId: result.runId } }; } catch (e: any) { return reply.code(e.statusCode || 502).send({ error: sanitizeClinAIResponse(e.message || 'ClinAI could not complete that request.') }); }
   });
 
   app.post('/api/ai/compute', async (req: any, reply: any) => {
@@ -974,19 +1091,19 @@ export function registerAI(deps: Deps) {
 
   app.post('/api/ai/research', async (req: any, reply: any) => {
     const body = z.object({ question: z.string().min(5), specialty: z.string().optional(), role: z.string().optional() }).parse(req.body || {});
-    try { return { data: await runAgent(deps, req, body.question, { purpose: 'research', role: body.role, mode: 'research', allowResearch: true }) }; } catch (e: any) { return reply.code(e.statusCode || 502).send({ error: e.message }); }
+    try { const result=await runAgent(deps, req, body.question, { purpose: 'research', mode: 'research', allowResearch: true }); return { data: { ...publicAIEnvelope(result), runId: result.runId } }; } catch (e: any) { return reply.code(e.statusCode || 502).send({ error: e.message }); }
   });
 
   app.post('/api/ai/document', async (req: any, reply: any) => {
     const body = z.object({ patientId: z.string().uuid().optional(), documentType: z.enum(['clinical-note','discharge-summary','referral-summary','patient-explanation','handover','management-brief']), sourceText: z.string().min(1) }).parse(req.body || {});
-    try { return { data: await runAgent(deps, req, `Draft a ${body.documentType} from the supplied source notes. Clearly identify missing information and do not invent facts. Source notes:\n${body.sourceText}`, { purpose: `document-${body.documentType}`, patientId: body.patientId, mode: 'intelligence' }) }; } catch (e: any) { return reply.code(e.statusCode || 502).send({ error: e.message }); }
+    try { const result=await runAgent(deps, req, `Draft a ${body.documentType} from the supplied source notes. Clearly identify missing information and do not invent facts. Source notes:\n${body.sourceText}`, { purpose: `document-${body.documentType}`, patientId: body.patientId, mode: 'intelligence' }); return { data: { ...publicAIEnvelope(result), runId: result.runId } }; } catch (e: any) { return reply.code(e.statusCode || 502).send({ error: e.message }); }
   });
 
   app.post('/api/ai/management-brief', async (req: any, reply: any) => {
     const body = z.object({ periodDays: z.number().int().min(1).max(365).default(30), role: z.string().default('leadership') }).parse(req.body || {});
     try {
-      const result = await runAgent(deps, req, `Prepare a management briefing for the last ${body.periodDays} days. Compare the period with the preceding period where useful. Cover patient activity, appointments, waiting/flow pressure, clinical attention, referrals, facility capacity, inventory alerts, operational incidents and financial activity. Quantify important changes using deterministic calculations and clearly separate recorded facts from interpretation.`, { purpose: 'management-brief', role: body.role, mode: 'analysis', allowCodeExecution: true });
-      return { data: result };
+      const result = await runAgent(deps, req, `Prepare a management briefing for the last ${body.periodDays} days. Compare the period with the preceding period where useful. Cover patient activity, appointments, waiting/flow pressure, clinical attention, referrals, facility capacity, inventory alerts, operational incidents and financial activity. Quantify important changes using deterministic calculations and clearly separate recorded facts from interpretation.`, { purpose: 'management-brief', mode: 'analysis', allowCodeExecution: true });
+      return { data: { ...publicAIEnvelope(result), runId: result.runId } };
     } catch (e: any) { return reply.code(e.statusCode || 502).send({ error: e.message }); }
   });
 
@@ -1007,7 +1124,7 @@ export function registerAI(deps: Deps) {
 
   app.post('/api/ai/role-briefing', async (req: any, reply: any) => {
     const body = z.object({ role: z.enum(['leadership','doctor','nurse','pharmacist','laboratory','manager','district']), patientId: z.string().uuid().optional() }).parse(req.body || {});
-    try { return { data: await runAgent(deps, req, `Prepare a concise ${body.role} briefing. Identify the most important current facts, quantified pressures, attention items and suggested review.`, { purpose: 'role-briefing', role: body.role, patientId: body.patientId, mode: 'intelligence' }) }; } catch (e: any) { return reply.code(e.statusCode || 502).send({ error: e.message }); }
+    try { return { data: await runAgent(deps, req, `Prepare a concise ${body.role} briefing. Identify the most important current facts, quantified pressures, attention items and suggested review.`, { purpose: 'role-briefing', patientId: body.patientId, mode: 'intelligence' }) }; } catch (e: any) { return reply.code(e.statusCode || 502).send({ error: e.message }); }
   });
 
   app.post('/api/ai/attention', async (req: any, reply: any) => {
