@@ -1,0 +1,14 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
+const domainPkg=path.join(root,'packages/domain/package.json');
+if(!fs.existsSync(domainPkg)) throw new Error('packages/domain/package.json missing');
+const pkg=JSON.parse(fs.readFileSync(domainPkg,'utf8'));
+if(pkg.type!=='module') throw new Error('packages/domain must be ESM because the API imports its compiled validation module as named exports');
+const startPkg=JSON.parse(fs.readFileSync(path.join(root,'services/api/package.json'),'utf8'));
+if(startPkg.scripts?.start!=='node build/services/api/src/main.js') throw new Error('API start script is not the canonical compiled entrypoint');
+const artifact=path.join(root,'services/api/build/services/api/src/main.js');
+const validation=path.join(root,'services/api/build/packages/domain/validation/index.js');
+if(fs.existsSync(artifact) && fs.existsSync(validation)) console.log('DEPLOYMENT_RUNTIME_MODULE_PASS');
+else console.log('DEPLOYMENT_RUNTIME_MODULE_SOURCE_PASS');
