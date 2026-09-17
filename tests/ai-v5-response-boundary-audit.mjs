@@ -3,9 +3,9 @@ import vm from 'node:vm';
 import ts from '/opt/nvm/versions/node/v22.16.0/lib/node_modules/typescript/lib/typescript.js';
 
 const source = fs.readFileSync(new URL('../services/api/src/ai/ai-orchestrator.ts', import.meta.url), 'utf8');
-const dist = fs.readFileSync(new URL('../services/api/dist/ai/ai-orchestrator.js', import.meta.url), 'utf8');
+const transpiledSource = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
 
-for (const [name, text] of [['source', source], ['dist', dist]]) {
+for (const [name, text] of [['source', source], ['transpiled', transpiledSource]]) {
   for (const forbidden of ['JSON.stringify(result.answer)', 'JSON.stringify(d.data.answer)', 'Stringify AI response for display']) {
     if (text.includes(forbidden)) throw new Error(`${name}: forbidden display serialization found: ${forbidden}`);
   }
@@ -14,10 +14,10 @@ for (const [name, text] of [['source', source], ['dist', dist]]) {
   }
 }
 
-// Execute the pure response-boundary functions from the built API artifact without starting the service.
-const start = dist.indexOf('function sanitizeClinAIResponse');
-const end = dist.indexOf('async function recordWork', start);
-const pure = dist.slice(start, end);
+// Execute the pure response-boundary functions from the transpiled API source without starting the service.
+const start = transpiledSource.indexOf('function sanitizeClinAIResponse');
+const end = transpiledSource.indexOf('async function recordWork', start);
+const pure = transpiledSource.slice(start, end);
 const context = { console, String, JSON, RegExp, Set, Object, Array };
 vm.createContext(context);
 vm.runInContext(`${pure}\nthis.__responseToPlain=responseToPlain;`, context);

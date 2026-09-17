@@ -9,6 +9,7 @@ const required = [
   'services/api/package.json',
   'services/api/src/main.ts',
   'services/api/Dockerfile',
+  'services/api/tsconfig.json',
   'services/intelligence/Dockerfile',
   'services/intelligence/main.py',
   'services/ai/Dockerfile',
@@ -34,6 +35,14 @@ if (vercel.installCommand?.includes('cd ') || vercel.buildCommand?.includes('cd 
 
 const render = fs.readFileSync('render.yaml', 'utf8');
 if (!render.includes('rootDir: .')) throw new Error('render.yaml must define the API service from repository root for npm workspaces.');
+if (!render.includes('test -f services/api/build/main.js')) throw new Error('Render API build must verify the runtime artifact before deploy.');
+if (!render.includes('startCommand: node services/api/build/main.js')) throw new Error('Render API must start the verified runtime artifact directly.');
+const apiTs = JSON.parse(fs.readFileSync('services/api/tsconfig.json', 'utf8'));
+if (apiTs.compilerOptions?.outDir !== 'build') throw new Error('API TypeScript output must use the non-ignored build directory.');
+const apiPkg = JSON.parse(fs.readFileSync('services/api/package.json', 'utf8'));
+if (apiPkg.scripts?.start !== 'node build/main.js') throw new Error('API package start script must use build/main.js.');
+const gitignore = fs.readFileSync('.gitignore','utf8').split(/\r?\n/).map(x=>x.trim());
+if (gitignore.includes('build') || gitignore.includes('/build') || gitignore.includes('**/build')) throw new Error('The API build directory must not be globally ignored.');
 for (const expected of ['rootDir: services/intelligence', 'rootDir: services/ai']) {
   if (!render.includes(expected)) throw new Error(`render.yaml missing ${expected}`);
 }

@@ -3,8 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "start": "node dist/main.js",
+    "build": "tsc -p tsconfig.json && node -e \"require('fs').accessSync('build/main.js')\"",
+    "start": "node build/main.js",
     "test:ai-multi": "node ../../tests/multi-model-ai-audit.mjs"
   },
   "dependencies": {

@@ -4,8 +4,8 @@ services:
     runtime: node
     plan: free
     rootDir: .
-    buildCommand: npm install --no-audit --no-fund && npm run build:api
-    startCommand: npm --workspace @clinai/api run start
+    buildCommand: npm install --no-audit --no-fund --progress=false && npm run build:api && test -f services/api/build/main.js && echo 'ClinAI API runtime artifact verified'
+    startCommand: node services/api/build/main.js
     healthCheckPath: /health
 
   - type: web
