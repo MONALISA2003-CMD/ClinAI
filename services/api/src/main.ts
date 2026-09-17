@@ -10,6 +10,7 @@ import { registerAI, registerPublicAI } from './ai/ai-orchestrator.js';
 import { enqueueClinicalEvent, CLINICAL_EVENT_TYPES } from './events/clinicalEvents.js';
 import { startClinicalEventWorker } from './events/clinicalEventWorker.js';
 import { evaluateClinicalContext, SYNCHRONOUS_CDSS_RULES } from './intelligence/cdssGateway.js';
+import { buildPatientIntelligenceLayer, buildClinicalVelocity, buildValueBasedCare, buildGovernanceSummary, buildAIGovernanceLifecycle, calculateClinicalMeasures, recordAICapabilityEvaluation, AI_CAPABILITY_CATALOG } from './intelligence/enterpriseIntelligence.js';
 
 const app = Fastify({ logger: true });
 const pool = process.env.DATABASE_URL ? new Pool({ connectionString: process.env.DATABASE_URL, max: 10 }) : null;
@@ -375,7 +376,7 @@ app.get('/api/system/status',async(_req,reply)=>{
     return reply.code(503).send({ok:false,service:'clinai-api',status:'degraded',database:{connected:false,engine:'postgresql'}});
   }
 });
-app.get('/api/build-info',async()=>({service:'clinai-api',buildId:process.env.RENDER_GIT_COMMIT||process.env.COMMIT_SHA||'runtime',version:'0.18.2'}));
+app.get('/api/build-info',async()=>({service:'clinai-api',buildId:process.env.RENDER_GIT_COMMIT||process.env.COMMIT_SHA||'runtime',version:'0.20.0'}));
 app.get('/api/modules',async()=>modules);
 app.post('/api/auth/demo',async()=>{ if(!demoTenant) return {token:await app.jwt.sign({sub:'demo-user',role:'admin',organizationId:'demo-org'},{expiresIn:'8h'})}; return {token:await app.jwt.sign({sub:demoTenant.userId,role:'admin',organizationId:demoTenant.organizationId},{expiresIn:'8h'}),organizationId:demoTenant.organizationId,userId:demoTenant.userId}; });
 app.addHook('preHandler',async(req)=>{
@@ -1765,6 +1766,178 @@ app.get('/api/care-graph',async(req:any)=>{if(!pool)return {data:[]};const r=awa
 // Existing specialized POST routes remain the source of truth for their writes.
 app.post('/api/response',async(req:any,reply)=>{if(!pool)return reply.code(501).send({error:'PostgreSQL required'});const b=z.object({investigationId:z.string().uuid().optional(),eventId:z.string().uuid().optional(),taskType:z.string(),title:z.string(),priority:z.string().default('routine'),dueAt:z.string().optional(),assignedTo:z.string().uuid().optional(),evidence:z.record(z.any()).default({})}).parse(req.body||{});const r=await pool.query(`INSERT INTO public_health_response_tasks(organization_id,investigation_id,event_id,task_type,title,priority,due_at,assigned_to,evidence,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,[dbOrganizationId(req),b.investigationId||null,b.eventId||null,b.taskType,b.title,b.priority,b.dueAt||null,b.assignedTo||null,JSON.stringify(b.evidence),dbUserId(req)]);return reply.code(201).send(r.rows[0]);});
 app.post('/api/referral-network',async(req:any,reply)=>{if(!pool)return reply.code(501).send({error:'PostgreSQL required'});const b=z.object({fromFacilityId:z.string().uuid(),toFacilityId:z.string().uuid(),serviceCode:z.string().optional(),status:z.enum(['active','restricted','inactive']).default('active'),typicalWaitMinutes:z.number().int().nonnegative().optional(),transportNotes:z.record(z.any()).default({}),metadata:z.record(z.any()).default({})}).parse(req.body||{});const r=await pool.query(`INSERT INTO referral_network_nodes(organization_id,from_facility_id,to_facility_id,service_code,status,typical_wait_minutes,transport_notes,metadata) SELECT $1,$2,$3,$4,$5,$6,$7,$8 WHERE EXISTS(SELECT 1 FROM facilities WHERE id=$2 AND organization_id=$1) AND EXISTS(SELECT 1 FROM facilities WHERE id=$3 AND organization_id=$1) RETURNING *`,[dbOrganizationId(req),b.fromFacilityId,b.toFacilityId,b.serviceCode||null,b.status,b.typicalWaitMinutes??null,JSON.stringify(b.transportNotes),JSON.stringify(b.metadata)]);if(!r.rowCount)return reply.code(404).send({error:'Facility not found'});return reply.code(201).send(r.rows[0]);});
+
+
+
+// --- Cross-module clinical intelligence and governance surfaces (additive) ---
+// These endpoints read existing EMR/workflow data and keep deterministic CDSS separate
+// from the protected generative AI Router. They never replace existing module routes.
+const INTELLIGENCE_ROLES = new Set(['admin','doctor','nurse','pharmacist','lab','manager']);
+const GOVERNANCE_ROLES = new Set(['admin','manager']);
+function intelligenceQuery(){ return async (sql:string, params:any[]=[]) => pool ? (await pool.query(sql,params)).rows : []; }
+
+app.get('/api/intelligence/overview', async (req:any, reply:any) => {
+  const organizationId = dbOrganizationId(req); if (!organizationId) return reply.code(400).send({error:'Organization context is required'});
+  const q = intelligenceQuery();
+  try {
+    const [velocity, value, governance, careGaps, risk] = await Promise.all([
+      buildClinicalVelocity(q, organizationId, Number(req.query?.days || 30)),
+      buildValueBasedCare(q, organizationId, Number(req.query?.days || 30)),
+      buildGovernanceSummary(q, organizationId),
+      q(`SELECT gap_type AS "gapType",severity,count(*)::int AS count FROM (SELECT 'critical-result-review' AS gap_type,'critical' AS severity FROM lab_results lr JOIN lab_samples ls ON ls.id=lr.sample_id JOIN clinical_orders co ON co.id=ls.order_id WHERE co.organization_id=$1 AND lr.critical=true AND lr.status<>'released' UNION ALL SELECT 'priority-task','urgent' FROM care_tasks WHERE organization_id=$1 AND status='open' AND priority IN ('critical','urgent') UNION ALL SELECT 'delayed-referral','high' FROM referrals WHERE organization_id=$1 AND status NOT IN ('completed','closed','cancelled') AND created_at<now()-interval '7 days' UNION ALL SELECT 'immunization-due','routine' FROM immunizations WHERE organization_id=$1 AND next_due_at IS NOT NULL AND next_due_at<now()) gaps GROUP BY gap_type,severity ORDER BY count DESC`, [organizationId]),
+      q(`SELECT severity,status,count(*)::int AS count FROM clinical_signals WHERE organization_id=$1 AND status NOT IN ('resolved','dismissed') GROUP BY severity,status ORDER BY count DESC`, [organizationId]),
+    ]);
+    return {data:{generatedAt:new Date().toISOString(),velocity,value,governance,careGaps,riskSignals:risk}};
+  } catch (e:any) { return reply.code(500).send({error:'Clinical intelligence overview could not be prepared.'}); }
+});
+
+app.get('/api/intelligence/patient/:patientId', async (req:any, reply:any) => {
+  const organizationId=dbOrganizationId(req); if(!organizationId)return reply.code(400).send({error:'Organization context is required'});
+  if(!INTELLIGENCE_ROLES.has(req.user?.role||''))return reply.code(403).send({error:'This intelligence view requires an authorized clinical or management role.'});
+  try {
+    const data=await buildPatientIntelligenceLayer(intelligenceQuery(),organizationId,req.params.patientId);
+    return {data};
+  } catch { return reply.code(500).send({error:'Patient intelligence could not be prepared.'}); }
+});
+
+app.get('/api/intelligence/velocity', async (req:any, reply:any) => {
+  const organizationId=dbOrganizationId(req); if(!organizationId)return reply.code(400).send({error:'Organization context is required'});
+  try { return {data:await buildClinicalVelocity(intelligenceQuery(),organizationId,Number(req.query?.days||30))}; }
+  catch { return reply.code(500).send({error:'Clinical velocity could not be calculated.'}); }
+});
+
+app.get('/api/intelligence/care-gaps', async (req:any, reply:any) => {
+  const organizationId=dbOrganizationId(req); if(!organizationId)return reply.code(400).send({error:'Organization context is required'});
+  const q=intelligenceQuery();
+  try {
+    if(req.query?.patientId) return {data:await buildPatientIntelligenceLayer(q,organizationId,String(req.query.patientId))};
+    const rows=await q(`SELECT gap_type AS "gapType",severity,count(*)::int AS count FROM (SELECT 'critical-result-review' AS gap_type,'critical' AS severity FROM lab_results lr JOIN lab_samples ls ON ls.id=lr.sample_id JOIN clinical_orders co ON co.id=ls.order_id WHERE co.organization_id=$1 AND lr.critical=true AND lr.status<>'released' UNION ALL SELECT 'priority-task','urgent' FROM care_tasks WHERE organization_id=$1 AND status='open' AND priority IN ('critical','urgent') UNION ALL SELECT 'delayed-referral','high' FROM referrals WHERE organization_id=$1 AND status NOT IN ('completed','closed','cancelled') AND created_at<now()-interval '7 days' UNION ALL SELECT 'immunization-due','routine' FROM immunizations WHERE organization_id=$1 AND next_due_at IS NOT NULL AND next_due_at<now()) gaps GROUP BY gap_type,severity ORDER BY CASE severity WHEN 'critical' THEN 1 WHEN 'urgent' THEN 2 WHEN 'high' THEN 3 ELSE 4 END,count DESC`,[organizationId]);
+    return {data:{generatedAt:new Date().toISOString(),gaps:rows}};
+  } catch { return reply.code(500).send({error:'Care gap intelligence could not be prepared.'}); }
+});
+
+app.get('/api/intelligence/risk', async (req:any, reply:any) => {
+  const organizationId=dbOrganizationId(req); if(!organizationId)return reply.code(400).send({error:'Organization context is required'});
+  try {
+    const rows=await intelligenceQuery()(`SELECT severity,status,count(*)::int AS count FROM clinical_signals WHERE organization_id=$1 GROUP BY severity,status ORDER BY CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'moderate' THEN 3 ELSE 4 END`,[organizationId]);
+    const assessments=await intelligenceQuery()(`SELECT risk_level AS "riskLevel",risk_type AS "riskType",status,count(*)::int AS count FROM ai_risk_assessments WHERE organization_id=$1 GROUP BY risk_level,risk_type,status ORDER BY count DESC`,[organizationId]);
+    return {data:{generatedAt:new Date().toISOString(),clinicalSignals:rows,aiRiskAssessments:assessments,policy:{deterministicSignalsRemainSourceOfClinicalRisk:true,generativeAIIsInterpretive:true}}};
+  } catch { return reply.code(500).send({error:'Risk intelligence could not be prepared.'}); }
+});
+
+app.get('/api/intelligence/value', async (req:any, reply:any) => {
+  const organizationId=dbOrganizationId(req); if(!organizationId)return reply.code(400).send({error:'Organization context is required'});
+  try { return {data:await buildValueBasedCare(intelligenceQuery(),organizationId,Number(req.query?.days||30))}; }
+  catch { return reply.code(500).send({error:'Value-based care intelligence could not be prepared.'}); }
+});
+
+app.get('/api/intelligence/governance', async (req:any, reply:any) => {
+  if(!GOVERNANCE_ROLES.has(req.user?.role||''))return reply.code(403).send({error:'Governance information requires an authorized management role.'});
+  const organizationId=dbOrganizationId(req); if(!organizationId)return reply.code(400).send({error:'Organization context is required'});
+  try { return {data:await buildGovernanceSummary(intelligenceQuery(),organizationId)}; }
+  catch { return reply.code(500).send({error:'AI governance summary could not be prepared.'}); }
+});
+
+app.get('/api/intelligence/security-events', async (req:any, reply:any) => {
+  if(!GOVERNANCE_ROLES.has(req.user?.role||''))return reply.code(403).send({error:'AI security events require an authorized management role.'});
+  const organizationId=dbOrganizationId(req); if(!organizationId)return reply.code(400).send({error:'Organization context is required'});
+  try {
+    const rows=await intelligenceQuery()(`SELECT id,event_type AS "eventType",severity,status,capability_id AS "capabilityId",created_at AS "createdAt" FROM ai_security_events WHERE organization_id=$1 ORDER BY created_at DESC LIMIT 200`,[organizationId]);
+    return {data:rows};
+  } catch { return reply.code(500).send({error:'AI security events could not be loaded.'}); }
+});
+
+// CDS Hooks discovery and service boundary. Clinical rules are executed by the existing
+// deterministic CDSS evaluator. No generative model is called by this endpoint.
+const CDS_HOOKS = [
+  {id:'patient-view',title:'Patient view intelligence',description:'Returns governed deterministic clinical review signals when a patient record is opened.',eventType:'patient.viewed'},
+  {id:'encounter-start',title:'Encounter start intelligence',description:'Returns deterministic safety signals at encounter start.',eventType:'encounter.started'},
+  {id:'order-select',title:'Order selection safety review',description:'Returns deterministic safety signals when an order is selected for review.',eventType:'order.select'},
+  {id:'order-sign',title:'Order sign safety review',description:'Returns synchronous medication/allergy and critical safety signals before order completion.',eventType:'order.sign'},
+  {id:'encounter-discharge',title:'Discharge review',description:'Returns unresolved safety and follow-up signals at discharge.',eventType:'encounter.discharge'},
+];
+app.get('/api/cds-services',async()=>({services:CDS_HOOKS.map(h=>({id:h.id,title:h.title,description:h.description,hook:h.id,endpoint:`/api/cds-services/${h.id}`}))}));
+app.post('/api/cds-services/:serviceId',async(req:any,reply:any)=>{
+  const service=CDS_HOOKS.find(x=>x.id===req.params.serviceId); if(!service)return reply.code(404).send({error:'CDS service not found'});
+  const organizationId=dbOrganizationId(req); if(!organizationId)return reply.code(400).send({error:'Organization context is required'});
+  if(!pool)return reply.code(501).send({error:'CDS service requires PostgreSQL'});
+  const body=req.body||{}; const patientId=body.patientId || body.context?.patientId || body.context?.patient?.id || body.prefetch?.patient?.id || null;
+  if(!patientId)return {cards:[],systemActions:[]};
+  const mode=service.id==='order-sign'?'sync':'sync';
+  const decision=await evaluateClinicalContext(pool,{mode,trigger:{eventType:service.eventType,organizationId,patientId:String(patientId),encounterId:body.encounterId||body.context?.encounterId||null,payload:body.context||{}}});
+  return {cards:decision.reasons.slice(0,8).map((x:any)=>({uuid:randomUUID(),summary:x.title,detail:x.summary,indicator:x.severity==='critical'?'critical':x.severity==='high'?'warning':'info',source:{label:'ClinAI CDSS',url:'/api/cds-services'},links:[]})),systemActions:[]};
+});
+
+
+
+// --- V28 completed governance, measurement and interoperability surfaces ---
+app.get('/api/intelligence/capabilities', async (req:any, reply:any) => {
+  const organizationId=dbOrganizationId(req); if(!organizationId)return reply.code(400).send({error:'Organization context is required'});
+  try { const rows=await intelligenceQuery()(`SELECT capability_id AS "capabilityId",name,domain,risk_level AS "riskLevel",allowed_roles AS "allowedRoles",allowed_modules AS "allowedModules",required_context AS "requiredContext",allowed_data AS "allowedData",model_policy AS "modelPolicy",evidence_policy AS "evidencePolicy",human_review AS "humanReview",action_permissions AS "actionPermissions",evaluation_policy AS "evaluationPolicy",status,version FROM ai_capabilities WHERE organization_id=$1 OR organization_id IS NULL ORDER BY domain,capability_id`,[organizationId]); return {data:rows,catalog:AI_CAPABILITY_CATALOG}; } catch { return reply.code(500).send({error:'AI capability registry could not be loaded.'}); }
+});
+
+app.post('/api/intelligence/capability-evaluations', async (req:any, reply:any) => {
+  if(!GOVERNANCE_ROLES.has(req.user?.role||''))return reply.code(403).send({error:'Capability evaluation requires an authorized management role.'});
+  const b=z.object({capabilityId:z.string().min(2),version:z.string().default('1.0'),evaluationType:z.string().min(2),status:z.enum(['pending','passed','failed','reviewed']).default('pending'),sampleSize:z.number().int().nonnegative().optional(),metrics:z.record(z.any()).default({}),findings:z.record(z.any()).default({})}).parse(req.body||{});
+  try { return reply.code(201).send({data:await recordAICapabilityEvaluation(pool,{organizationId:dbOrganizationId(req)!,...b,reviewerId:dbUserId(req)})}); } catch { return reply.code(500).send({error:'Capability evaluation could not be recorded.'}); }
+});
+
+app.get('/api/intelligence/lifecycle', async (req:any, reply:any) => {
+  if(!GOVERNANCE_ROLES.has(req.user?.role||''))return reply.code(403).send({error:'AI lifecycle information requires an authorized management role.'});
+  const organizationId=dbOrganizationId(req); if(!organizationId)return reply.code(400).send({error:'Organization context is required'});
+  try{return {data:await buildAIGovernanceLifecycle(intelligenceQuery(),organizationId)}}catch{return reply.code(500).send({error:'AI lifecycle information could not be prepared.'})}
+});
+
+app.post('/api/intelligence/incidents', async (req:any, reply:any) => {
+  if(!GOVERNANCE_ROLES.has(req.user?.role||''))return reply.code(403).send({error:'AI incident management requires an authorized management role.'});
+  if(!pool)return reply.code(501).send({error:'PostgreSQL required'});
+  const b=z.object({capabilityId:z.string().optional(),severity:z.enum(['low','moderate','high','critical']).default('moderate'),incidentType:z.string().min(2),patientId:z.string().uuid().optional(),description:z.string().min(5),containment:z.record(z.any()).default({}),rootCause:z.record(z.any()).default({}),correctiveAction:z.record(z.any()).default({}),ownerId:z.string().uuid().optional()}).parse(req.body||{});
+  const r=await pool.query(`INSERT INTO ai_incidents(organization_id,capability_id,severity,incident_type,patient_id,description,containment,root_cause,corrective_action,owner_id,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id,created_at AS "createdAt",status`,[dbOrganizationId(req),b.capabilityId||null,b.severity,b.incidentType,b.patientId||null,b.description,JSON.stringify(b.containment),JSON.stringify(b.rootCause),JSON.stringify(b.correctiveAction),b.ownerId||null,dbUserId(req)]);
+  await recordSecurityEvent(pool,{organizationId:dbOrganizationId(req)!,userId:dbUserId(req),patientId:b.patientId||null,capabilityId:b.capabilityId||null,eventType:'ai-incident-created',severity:b.severity,status:'observed',metadata:{incidentType:b.incidentType}}).catch(()=>null);
+  return reply.code(201).send({data:r.rows[0]});
+});
+
+app.get('/api/intelligence/care-gaps/snapshots', async (req:any, reply:any) => {
+  const organizationId=dbOrganizationId(req); if(!organizationId)return reply.code(400).send({error:'Organization context is required'});
+  try { const rows=await intelligenceQuery()(`SELECT id,patient_id AS "patientId",gap_type AS "gapType",severity,status,source_module AS "sourceModule",evidence,detected_at AS "detectedAt",closed_at AS "closedAt" FROM care_gap_snapshots WHERE organization_id=$1 ${req.query?.patientId?'AND patient_id=$2':''} AND status='open' ORDER BY CASE severity WHEN 'critical' THEN 0 WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 ELSE 3 END,detected_at DESC LIMIT 500`,req.query?.patientId?[organizationId,String(req.query.patientId)]:[organizationId]); return {data:rows}; } catch { return reply.code(500).send({error:'Care-gap snapshots could not be loaded.'}); }
+});
+
+app.post('/api/intelligence/care-gaps/materialize', async (req:any, reply:any) => {
+  if(!GOVERNANCE_ROLES.has(req.user?.role||''))return reply.code(403).send({error:'Care-gap materialization requires an authorized management role.'});
+  if(!pool)return reply.code(501).send({error:'PostgreSQL required'});
+  const organizationId=dbOrganizationId(req); if(!organizationId)return reply.code(400).send({error:'Organization context is required'});
+  const patientId=req.body?.patientId?String(req.body.patientId):null;
+  const intelligence=patientId?await buildPatientIntelligenceLayer(intelligenceQuery(),organizationId,patientId):null;
+  if(!intelligence)return reply.code(400).send({error:'A patientId is required to materialize patient care gaps.'});
+  const client=await pool.connect(); try { await client.query('BEGIN'); const ids:string[]=[]; for(const g of intelligence.careGaps||[]) { const r=await client.query(`INSERT INTO care_gap_snapshots(organization_id,patient_id,gap_type,severity,status,source_module,evidence) VALUES($1,$2,$3,$4,'open',$5,$6) RETURNING id`,[organizationId,patientId,g.gapType,g.severity,g.sourceModule,JSON.stringify(g.evidence||{})]); if(r.rowCount)ids.push(r.rows[0].id); } await client.query('COMMIT'); return {data:{created:ids.length,ids,generatedAt:intelligence.generatedAt}}; } catch(e){await client.query('ROLLBACK');throw e} finally{client.release()}
+});
+
+app.get('/api/intelligence/measures', async (req:any, reply:any) => {
+  const organizationId=dbOrganizationId(req); if(!organizationId)return reply.code(400).send({error:'Organization context is required'});
+  const end=String(req.query?.end||new Date().toISOString().slice(0,10)); const start=String(req.query?.start||new Date(Date.now()-29*86400000).toISOString().slice(0,10));
+  try{return {data:await calculateClinicalMeasures(intelligenceQuery(),organizationId,start,end),period:{start,end},logic:'CQL-compatible deterministic execution'}}catch{return reply.code(500).send({error:'Clinical measures could not be calculated.'})}
+});
+
+app.post('/api/intelligence/measures/materialize', async (req:any, reply:any) => {
+  if(!GOVERNANCE_ROLES.has(req.user?.role||''))return reply.code(403).send({error:'Measure materialization requires an authorized management role.'});
+  if(!pool)return reply.code(501).send({error:'PostgreSQL required'});
+  const organizationId=dbOrganizationId(req); if(!organizationId)return reply.code(400).send({error:'Organization context is required'});
+  const end=String(req.body?.end||new Date().toISOString().slice(0,10)); const start=String(req.body?.start||new Date(Date.now()-29*86400000).toISOString().slice(0,10));
+  const measures=await calculateClinicalMeasures(intelligenceQuery(),organizationId,start,end);
+  const client=await pool.connect(); try { await client.query('BEGIN'); for(const m of measures) await client.query(`INSERT INTO clinical_measure_results(organization_id,measure_code,period_start,period_end,numerator,denominator,value_numeric,evidence) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(organization_id,measure_code,period_start,period_end) DO UPDATE SET numerator=EXCLUDED.numerator,denominator=EXCLUDED.denominator,value_numeric=EXCLUDED.value_numeric,evidence=EXCLUDED.evidence,calculated_at=now()`,[organizationId,m.measureCode,start,end,m.numerator,m.denominator,m.valueNumeric,JSON.stringify({engine:'deterministic',logic:'CQL-compatible'})]); await client.query('COMMIT'); return {data:measures,period:{start,end}}; } catch(e){await client.query('ROLLBACK');throw e} finally{client.release()}
+});
+
+app.post('/api/smart/apps', async (req:any, reply:any) => {
+  if(!GOVERNANCE_ROLES.has(req.user?.role||''))return reply.code(403).send({error:'SMART app registration requires an authorized management role.'});
+  if(!pool)return reply.code(501).send({error:'PostgreSQL required'});
+  const b=z.object({clientId:z.string().min(3).max(120),appName:z.string().min(2).max(200),redirectUris:z.array(z.string().url()).min(1).max(10),scopes:z.array(z.string()).default(['openid','fhirUser','launch','patient/*.read']),launchUri:z.string().url().optional()}).parse(req.body||{});
+  const r=await pool.query(`INSERT INTO smart_app_registrations(organization_id,client_id,app_name,redirect_uris,scopes,launch_uri) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(organization_id,client_id) DO UPDATE SET app_name=EXCLUDED.app_name,redirect_uris=EXCLUDED.redirect_uris,scopes=EXCLUDED.scopes,launch_uri=EXCLUDED.launch_uri,updated_at=now() RETURNING id,client_id AS "clientId",app_name AS "appName",redirect_uris AS "redirectUris",scopes,launch_uri AS "launchUri",status`);
+  return reply.code(201).send({data:r.rows[0]});
+});
+
+app.get('/.well-known/smart-configuration', async (req:any) => { const base=`${String(process.env.PUBLIC_BASE_URL||'').replace(/\/$/,'')||'https://clinai-api.onrender.com'}`; return {issuer:base,authorization_endpoint:`${base}/api/smart/authorize`,token_endpoint:`${base}/api/smart/token`,capabilities:['launch-ehr','client-public','client-confidential-symmetric','permission-v2','context-ehr-patient','context-ehr-encounter','sso-openid-connect'],scopes_supported:['openid','fhirUser','launch','launch/patient','patient/*.read','user/*.read','offline_access'],response_types_supported:['code'],grant_types_supported:['authorization_code','refresh_token'],code_challenge_methods_supported:['S256']}; });
+app.get('/api/smart/authorize', async (req:any, reply:any) => { const q=req.query||{}; if(!q.client_id||!q.redirect_uri||!q.response_type) return reply.code(400).send({error:'SMART authorization parameters are incomplete.'}); if(String(q.response_type)!=='code')return reply.code(400).send({error:'Only authorization code flow is supported.'}); if(!pool)return reply.code(503).send({error:'SMART authorization requires PostgreSQL.'}); const r=await pool.query(`SELECT id,organization_id FROM smart_app_registrations WHERE client_id=$1 AND status='active' AND redirect_uris @> $2::jsonb LIMIT 1`,[String(q.client_id),JSON.stringify([String(q.redirect_uri)])]); if(!r.rowCount)return reply.code(400).send({error:'SMART client is not registered for this redirect URI.'}); const code=randomUUID(); const orgId=String(r.rows[0].organization_id||dbOrganizationId(req)||''); if(!orgId)return reply.code(400).send({error:'SMART organization context is required.'}); if(dbOrganizationId(req)!==orgId)return reply.code(403).send({error:'SMART client belongs to a different organization.'}); const requestedScope=String(q.scope||'openid fhirUser launch'); const challenge=String(q.code_challenge||''); if(!challenge)return reply.code(400).send({error:'PKCE code_challenge is required.'}); await pool.query(`INSERT INTO smart_authorization_codes(organization_id,user_id,user_role,client_id,redirect_uri,code_hash,scope,patient_id,code_challenge,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,now()+interval '5 minutes')`,[orgId,dbUserId(req),String(req.user?.role||'doctor'),String(q.client_id),String(q.redirect_uri),createHash('sha256').update(code).digest('hex'),requestedScope,q.patient_id||null,challenge]); const u=new URL(String(q.redirect_uri)); u.searchParams.set('code',code); if(q.state)u.searchParams.set('state',String(q.state)); return reply.redirect(u.toString()); });
+app.post('/api/smart/token', async (req:any, reply:any) => { if(!pool)return reply.code(503).send({error:'SMART token service requires PostgreSQL.'}); const b=z.object({grant_type:z.enum(['authorization_code','refresh_token']),code:z.string().optional(),client_id:z.string().min(2),redirect_uri:z.string().optional(),refresh_token:z.string().optional(),code_verifier:z.string().optional()}).parse(req.body||{}); if(b.grant_type!=='authorization_code'||!b.code)return reply.code(400).send({error:'Authorization code is required.'}); if(!b.code_verifier)return reply.code(400).send({error:'PKCE code_verifier is required.'}); const hash=createHash('sha256').update(b.code).digest('hex'); const r=await pool.query(`UPDATE smart_authorization_codes SET used_at=now() WHERE code_hash=$1 AND client_id=$2 AND redirect_uri=COALESCE($3,redirect_uri) AND used_at IS NULL AND expires_at>now() RETURNING organization_id,user_id,user_role,scope,patient_id,code_challenge`,[hash,b.client_id,b.redirect_uri||null]); if(!r.rowCount)return reply.code(400).send({error:'Authorization code is invalid, expired or already used.'}); const expected=createHash('sha256').update(b.code_verifier).digest('base64url'); if(expected!==r.rows[0].code_challenge)return reply.code(400).send({error:'PKCE verification failed.'}); const accessToken=await app.jwt.sign({sub:r.rows[0].user_id||`smart:${b.client_id}`,organizationId:r.rows[0].organization_id,role:r.rows[0].user_role||'doctor',scope:r.rows[0].scope||'',smartClientId:b.client_id}, {expiresIn:'15m'}); return {access_token:accessToken,token_type:'Bearer',expires_in:900,scope:r.rows[0].scope||'',patient:r.rows[0].patient_id||undefined}; });
 
 app.listen({port:Number(process.env.PORT||4000),host:'0.0.0.0'});
 

@@ -284,3 +284,14 @@ input,select,textarea,button{max-width:100%}
 }
 
 .module-readonly-note{margin:14px 0;padding:13px 15px;border:1px solid #dce5ec;border-radius:14px;background:#f7fafc;color:#5f6f7d;font-size:13px;line-height:1.5}
+
+/* Cross-module intelligence surfaces */
+.intelligence-card-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin:14px 0}
+.intelligence-card{padding:14px 15px;border:1px solid rgba(20,40,70,.10);border-radius:14px;background:linear-gradient(180deg,rgba(255,255,255,.98),rgba(247,250,253,.98));min-width:0}
+.intelligence-card span{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.08em;opacity:.62;margin-bottom:7px}
+.intelligence-card strong{display:block;font-size:22px;line-height:1.1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.intelligence-note{font-size:12px;line-height:1.5;opacity:.7;margin:0 0 10px}
+@media (max-width:900px){.intelligence-card-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:520px){.intelligence-card-grid{grid-template-columns:1fr}}
+.public-intro-footer .intro-whatsapp{display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--border-strong);border-radius:9px;background:#fff;color:var(--clinai-blue);padding:9px 13px;font-size:10px;font-weight:850;text-decoration:none}
+@media(max-width:700px){.public-intro-footer .intro-whatsapp{flex:1;min-width:0}}

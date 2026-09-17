@@ -116,7 +116,7 @@ function extractChatText(data: any) {
   return data?.output_text || '';
 }
 
-export async function callOpenAICompatible(model: AIModel, prompt: string, system: string, schema: any, opts: { maxTokens?: number; reasoning?: boolean; tools?: any[]; messages?: any[] } = {}) {
+export async function callOpenAICompatible(model: AIModel, prompt: string, system: string, schema: any, opts: { maxTokens?: number; reasoning?: boolean; tools?: any[]; messages?: any[]; attachments?: any[] } = {}) {
   const configured = configuredProviders();
   let url = '';
   let key = '';
@@ -124,7 +124,9 @@ export async function callOpenAICompatible(model: AIModel, prompt: string, syste
   if (model.provider === 'groq') { url = 'https://api.groq.com/openai/v1/chat/completions'; key = process.env.GROQ_API_KEY || ''; }
   if (model.provider === 'cerebras') { url = 'https://api.cerebras.ai/v1/chat/completions'; key = process.env.CEREBRAS_API_KEY || ''; }
   if (!key || !configured[model.provider]) throw Object.assign(new Error(`${model.label} is not configured.`), { code: 'PROVIDER_NOT_CONFIGURED', statusCode: 503 });
-  const messages = opts.messages || [{ role: 'system', content: system }, { role: 'user', content: prompt }];
+  const attachmentBlocks = (opts.attachments || []).map((a:any) => a.kind === 'image' ? ({ type:'image_url', image_url:{url:a.dataUrl} }) : a.kind === 'audio' ? ({ type:'input_audio', input_audio:{data:a.base64, format:a.format||'wav'} }) : null).filter(Boolean);
+  const userContent:any = attachmentBlocks.length ? [{type:'text',text:prompt}, ...attachmentBlocks] : prompt;
+  const messages = opts.messages || [{ role: 'system', content: system }, { role: 'user', content: userContent }];
   const body: any = { model: model.id, messages, temperature: 0.2, max_tokens: opts.maxTokens || 4096 };
   const toolsEnabled = Boolean(opts.tools?.length && model.toolCalling);
   if (toolsEnabled) { body.tools = opts.tools; body.tool_choice = 'auto'; }

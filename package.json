@@ -20,7 +20,10 @@
     "test:v26:ai": "node tests/v26-ai-reliability-audit.mjs",
     "typecheck:web": "npm --workspace @clinai/web run typecheck",
     "typecheck:api": "npm --workspace @clinai/api run build",
-    "typecheck": "npm run typecheck:api && npm run typecheck:web"
+    "typecheck": "npm run typecheck:api && npm run typecheck:web",
+    "test:v27:audit": "node tests/v27-full-page-audit.mjs",
+    "test:all:stability": "node tests/v27-full-page-audit.mjs && node tests/v26-module-contract-audit.mjs && node tests/v26-ai-reliability-audit.mjs && node tests/schema-contract-audit.mjs && node tests/ai-security-scope-audit.mjs && node tests/v28-completion-audit.mjs",
+    "test:v28:completion": "node tests/v28-completion-audit.mjs"
   },
   "devDependencies": {
     "@types/node": "latest",

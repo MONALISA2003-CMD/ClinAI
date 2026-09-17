@@ -14,7 +14,7 @@ type RawBuilder = (pool: any, organizationId: string | null, patientId: string) 
 
 export type ClinicalContextPurpose = 'clinical'|'documentation'|'communication'|'operations'|'patient-portal'|'cdss'|'research';
 
-const CLINICAL_MODULES = ['patient','allergies','encounters','observations','diagnoses','orders','medications','referrals','followups','immunizations','maternal','pediatrics','growth','carePlans','tasks','notes','reconciliation','events','labResults','imagingStudies','appointments','admissions','chronicCare','telemedicine','remoteMonitoring','clinicalAlerts'];
+const CLINICAL_MODULES = ['patient','allergies','encounters','observations','diagnoses','orders','medications','referrals','followups','immunizations','maternal','pediatrics','growth','carePlans','tasks','notes','reconciliation','events','labResults','imagingStudies','appointments','admissions','chronicCare','telemedicine','remoteMonitoring','clinicalAlerts','childHealth','medicationReconciliation','consents','portalMessages','surveillance','investigations','responseTasks','mortality','facilityContext','referralNetwork','aiEvaluations','careGraph','careGaps','riskSignals','patientJourney','crossModuleIntelligence'];
 const COMMUNICATION_MODULES = ['patient','appointments','telemedicine'];
 const OPERATIONS_MODULES = ['patient','appointments','encounters','referrals','tasks','admissions','clinicalAlerts'];
 const PORTAL_MODULES = ['patient','appointments','immunizations','carePlans','referrals','followups','telemedicine'];

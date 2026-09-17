@@ -6,6 +6,7 @@ import { AI_MODELS, availableModels, configuredProviders, selectModel, modelSupp
 import { buildPatientIntelligence, buildEvidenceIndex, buildQuestionIntent, compactIntelligenceForPrompt } from './clinical-intelligence.js';
 import { getLanguagePolicy, languageInstruction, SUPPORTED_CLINAI_LANGUAGES } from './language-policy.js';
 import { buildClinicalContext } from '../intelligence/clinicalContext.js';
+import { buildPatientIntelligenceLayer, recordSecurityEvent } from '../intelligence/enterpriseIntelligence.js';
 
 type Row = Record<string, any>;
 type Deps = {
@@ -56,6 +57,9 @@ const SECURITY_PATTERNS = [
   /(?:process\.env|GEMINI_|OPENROUTER_|GROQ_|CEREBRAS_|DATABASE_URL|JWT_SECRET|SERVICE_ACCOUNT)/i,
   /(?:bypass|disable|evade|circumvent)\s+(?:security|authentication|authorization|tenant|permission|access\s+control)/i,
   /(?:hack|exploit|attack|break\s+into|penetrate)\s+(?:clinai|this\s+system|the\s+system|the\s+api|the\s+database)/i,
+  /(?:ignore|disregard|override)\s+(?:all|any|previous|above)\s+(?:instructions|rules|policies)/i,
+  /(?:jailbreak|developer\s+mode|sudo|root\s+access|admin\s+override)/i,
+  /(?:paste|dump|export|exfiltrate)\s+(?:patient|medical|clinical|database)\s+(?:data|records)/i,
 ];
 const OFF_TOPIC_PATTERNS = [
   /^(?:write|build|code|debug|program|develop)\s+(?:a\s+)?(?:malware|ransomware|virus|exploit|keylogger|credential\s+stealer)/i,
@@ -281,6 +285,10 @@ async function patientContext(pool: Pool | null, organizationId: string | null, 
     const context: Row = { patient: patient[0] || null, allergies, encounters, observations, diagnoses, orders, medications, referrals, followups, immunizations, maternal, pediatrics, growth, carePlans, tasks, notes, reconciliation, events, labResults, imagingStudies, appointments, admissions, chronicCare, telemedicine, remoteMonitoring, clinicalAlerts };
     context.intelligence = buildPatientIntelligence(context);
     context.evidenceIndex = buildEvidenceIndex(context);
+    context.crossModuleIntelligence = await buildPatientIntelligenceLayer(async (sql, params=[]) => query(rawPool, sql, params), rawOrganizationId, rawPatientId);
+    context.careGaps = context.crossModuleIntelligence.careGaps;
+    context.riskSignals = context.crossModuleIntelligence.riskSignals;
+    context.patientJourney = context.crossModuleIntelligence.patientJourney;
     return context;
   };
   return buildClinicalContext({ pool, organizationId, patientId, purpose, role: req?.user?.role || 'doctor', userId: req?.user?.sub || null, query: async (sql, params=[]) => query(pool, sql, params), rawBuilder });
@@ -591,7 +599,8 @@ function isUsableAgentResponse(text: any, message: any) {
 
 async function runOpenAICompatibleAgent(deps: Deps, req: any, model: any, input: string, prompt: string, options: any, allowTools: boolean) {
   const started = Date.now();
-  const messages:any[] = [{ role: 'system', content: baseSystem }, { role: 'user', content: prompt }];
+  const attachmentBlocks = (options.attachments || []).map((a:any) => a.kind === 'image' ? ({ type:'image_url', image_url:{url:a.dataUrl} }) : a.kind === 'audio' ? ({ type:'input_audio', input_audio:{data:a.base64, format:a.format||'wav'} }) : null).filter(Boolean);
+  const messages:any[] = [{ role: 'system', content: baseSystem }, { role: 'user', content: attachmentBlocks.length ? [{type:'text',text:prompt},...attachmentBlocks] : prompt }];
   const toolsUsed:any[] = [];
   const calculations:any[] = [];
   const maxRounds = allowTools ? (FREE_TIER_MODE ? AI_FREE_TOOL_ROUNDS : Math.max(0, Math.min(3, Number(process.env.CLINAI_OPENAI_TOOL_ROUNDS || 2)))) : 0;
@@ -644,10 +653,11 @@ async function recordProviderUsage(pool: Pool | null, req: any, model: any, resu
   } catch {}
 }
 
-async function runAgent(deps: Deps, req: any, input: string, options: { purpose: string; role?: string; patientId?: string | null; mode?: string; allowResearch?: boolean; allowCodeExecution?: boolean; preferredModel?: string; publicMode?: boolean; language?: string; capability?: import('./ai-providers.js').AIRequestCapability }) {
+async function runAgent(deps: Deps, req: any, input: string, options: { purpose: string; role?: string; patientId?: string | null; mode?: string; allowResearch?: boolean; allowCodeExecution?: boolean; preferredModel?: string; publicMode?: boolean; language?: string; capability?: import('./ai-providers.js').AIRequestCapability; attachments?: Array<{kind:'image'|'audio';dataUrl?:string;base64?:string;mimeType?:string;format?:string}> }) {
   const languagePolicy = getLanguagePolicy(options.language);
   const safetyCheck = classifyRequestSafety(input);
   if (safetyCheck.blocked) {
+    await recordSecurityEvent(deps.pool, { organizationId: deps.dbOrganizationId(req) || '', userId: deps.dbUserId(req), patientId: options.patientId || null, eventType: safetyCheck.reason === 'security' ? 'blocked-security-request' : 'blocked-out-of-scope-request', severity: safetyCheck.reason === 'security' ? 'high' : 'info', status: 'blocked', metadata: { purpose: options.purpose, mode: options.mode || 'intelligence' } }).catch(() => null);
     const blocked = polishClinAIAnswer({ directAnswer: safetyCheck.message, recordedFacts: [], calculations: [], reasoningSummary: '', suggestedReview: [], uncertainty: [], evidence: [], confidence: 'high' });
     return { runId: randomUUID(), answer: responseToPlain(blocked, blocked.directAnswer, languagePolicy.language), structured: blocked, mode: options.mode || 'intelligence', toolsUsed: [], calculations: [], latencyMs: 0 };
   }
@@ -664,6 +674,16 @@ async function runAgent(deps: Deps, req: any, input: string, options: { purpose:
   if (cached) multiModelCache.delete(cacheKey);
 
   const organizationId = deps.dbOrganizationId(req);
+  if (options.capability && deps.pool && organizationId && !options.publicMode) {
+    const capabilityRows = await query(deps.pool, `SELECT capability_id AS "capabilityId",risk_level AS "riskLevel",allowed_roles AS "allowedRoles",status FROM ai_capabilities WHERE capability_id=$1 AND status='active' AND (organization_id=$2 OR organization_id IS NULL) ORDER BY organization_id NULLS LAST LIMIT 1`, [options.capability, organizationId]).catch(() => []);
+    const cap = capabilityRows[0];
+    const role = String(options.role || req.user?.role || '').toLowerCase();
+    const roles = Array.isArray(cap?.allowedRoles) ? cap.allowedRoles.map(String) : [];
+    if (!cap || (roles.length && !roles.includes(role) && !roles.includes('admin'))) {
+      await recordSecurityEvent(deps.pool,{organizationId,userId:deps.dbUserId(req),patientId:options.patientId||null,capabilityId:options.capability,eventType:'capability-policy-denied',severity:'high',status:'blocked',metadata:{role,purpose:options.purpose}}).catch(()=>null);
+      throw Object.assign(new Error('This AI capability is not authorized for the current role or organization policy.'),{statusCode:403,code:'AI_CAPABILITY_POLICY_DENIED'});
+    }
+  }
   const contextKey = `${organizationId || 'none'}:${options.patientId || 'facility'}:${options.mode || 'intelligence'}:${options.publicMode ? 'public' : 'clinical'}`;
   let context: any = options.publicMode ? { publicHealthOnly: true, generatedAt: new Date().toISOString() } : contextCache.get(contextKey)?.value;
   if (!options.publicMode && (!context || (contextCache.get(contextKey)?.expiresAt || 0) <= Date.now())) {
@@ -713,6 +733,7 @@ ${aiText(context.evidenceIndex || buildEvidenceIndex(context), 9000)}` : ''}${ev
 Approved evidence registry:
 ${aiText(evidence, evidenceLimit)}` : ''}
 
+${options.attachments?.length ? `Attached clinical media: ${options.attachments.map((a:any)=>`${a.kind} (${a.mimeType||'unknown type'})`).join(', ')}. Inspect only the supplied media and do not infer facts not visible/audible in it.` : ''}
 User request:
 ${input}`;
 
@@ -746,7 +767,7 @@ ${input}`;
         result = await runGeminiAgent(deps, req, input, options, prompt, context, evidence, cacheKey, model.id);
       } else {
         const allowTools = model.toolCalling && options.mode !== 'quick' && (!patientData || (!model.publicEndpoint && model.patientDataEligible));
-        result = await runOpenAICompatibleAgent(deps, req, model, input, prompt, options, allowTools);
+        result = await runOpenAICompatibleAgent(deps, req, model, input, prompt, {...options, attachments: options.attachments});
         await recordProviderUsage(deps.pool, req, model, result, 'completed');
         await recordWork(deps.pool, req, deps.dbOrganizationId(req), options.patientId || null, { ...result, purpose: options.purpose, status: 'completed', question: input, evidenceCount: (result.structured.evidence || []).length, confidence: result.structured.confidence, resultSummary: { directAnswer: result.structured.directAnswer } });
       }
@@ -806,7 +827,9 @@ async function runGeminiAgent(deps: Deps, req: any, input: string, options: any,
   if (!freeGemini && options.allowCodeExecution && ENABLE_GEMINI_CODE_EXECUTION) tools.push({ type: 'code_execution' });
   await acquireFreeTierSlot();
   const model = selectedModel || (options.mode === 'quick' ? GEMINI_FAST_MODEL : GEMINI_REASONING_MODEL);
-  const history: any[] = [{ type: 'user_input', content: [{ type: 'text', text: aiText(prompt, GEMINI_FREE_MAX_INPUT_CHARS) }] }];
+  const geminiContent:any[] = [{ type: 'text', text: aiText(prompt, GEMINI_FREE_MAX_INPUT_CHARS) }];
+  for (const a of (options.attachments || [])) { if (a.kind === 'image' && a.dataUrl) geminiContent.push({ type:'image', mime_type:a.mimeType||'image/jpeg', data:a.dataUrl.replace(/^data:[^;]+;base64,/,'') }); }
+  const history: any[] = [{ type: 'user_input', content: geminiContent }];
   let interaction: any = await geminiRequest({ model, input: history, system_instruction: baseSystem, tools, store: false, response_format: { type: 'text', mime_type: 'application/json', schema: responseSchema } });
   const toolsUsed: Row[] = [];
   const calculations: Row[] = [];
@@ -923,9 +946,12 @@ export function registerAI(deps: Deps) {
   });
 
   app.post('/api/ai/assist', async (req: any, reply: any) => {
-    const body = z.object({ patientId: z.string().uuid().nullable().optional(), question: z.string().min(1), purpose: z.string().default('ask-clinai'), role: z.string().optional(), mode: z.enum(['quick','intelligence','analysis','research']).default('intelligence'), language: z.enum(SUPPORTED_CLINAI_LANGUAGES as [string, ...string[]]).default('English'), capability: z.enum(['text','multimodal','image','audio','video','agentic','medical','coding','research','fast']).optional() }).parse(req.body || {});
+    const body = z.object({ patientId: z.string().uuid().nullable().optional(), question: z.string().min(1), purpose: z.string().default('ask-clinai'), role: z.string().optional(), mode: z.enum(['quick','intelligence','analysis','research']).default('intelligence'), language: z.enum(SUPPORTED_CLINAI_LANGUAGES as [string, ...string[]]).default('English'), capability: z.enum(['text','multimodal','image','audio','video','agentic','medical','coding','research','fast']).optional(), attachments: z.array(z.object({kind:z.enum(['image','audio']),mimeType:z.string().max(100),dataUrl:z.string().max(8_000_000).optional(),base64:z.string().max(8_000_000).optional(),format:z.string().max(20).optional()})).max(4).optional() }).parse(req.body || {});
+    if (body.attachments?.some((a:any)=>a.kind==='image' && !a.dataUrl)) return reply.code(400).send({error:'Image attachments require a data URL.'});
+    if (body.attachments?.some((a:any)=>a.kind==='audio' && !a.base64)) return reply.code(400).send({error:'Audio attachments require base64 audio data.'});
+    if (body.attachments?.some((a:any)=>a.kind==='audio' && !/^audio\//i.test(a.mimeType))) return reply.code(400).send({error:'Audio attachments must use an audio MIME type.'});
     try {
-      const result = await runAgent(deps, req, body.question, { purpose: body.purpose, role: body.role, patientId: body.patientId || null, mode: body.mode, language: body.language, capability: body.capability, allowResearch: body.mode === 'research', allowCodeExecution: body.mode === 'analysis' });
+      const result = await runAgent(deps, req, body.question, { purpose: body.purpose, role: body.role, patientId: body.patientId || null, mode: body.mode, language: body.language, capability: body.capability, allowResearch: body.mode === 'research', allowCodeExecution: body.mode === 'analysis', attachments: body.attachments });
       await registerWorkAudit(pool, req, body.patientId || null, body.purpose, result);
       return { data: { answer: clinicianResponse(result, body.language), runId: result.runId } };
     } catch (e: any) { return reply.code(e.statusCode || 502).send({ error: sanitizeClinAIResponse(e.message || 'ClinAI could not complete that request.') }); }
