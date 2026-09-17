@@ -24,3 +24,19 @@ No migration was added and no reset, truncate, destructive delete, or destructiv
 ## Verification
 - `node tests/phase1-security-boundary-audit.mjs` passed.
 - TypeScript parsing/checking was attempted with the globally available TypeScript compiler. Full dependency-backed compilation could not run because `npm install` timed out and `node_modules` is absent. Existing source-level TypeScript errors remain unverified until dependencies are installed.
+
+
+## Phase 1 platform restoration pass
+
+This pass restores the public read-only navigation and patient inspection path without weakening the production write boundary.
+
+- Public preview can open the full module navigation using `/api/public/test-modules/:module`.
+- Public module reads are limited to synthetic patient-linked records and never create, update, or delete data.
+- A dedicated `/api/public/test-patients/:patientNumber/360` endpoint exposes a read-only synthetic Patient 360 record.
+- Public Patient 360 includes identity-safe demographics, appointments, encounters, diagnoses, observations, notes, orders, medicines, allergies, admissions, immunization, chronic care, referrals, follow-up, tasks, monitoring, telemedicine, contacts, alerts, and a longitudinal timeline.
+- Public patient cards and the Patients workspace can open Patient 360 directly.
+- The existing authenticated Patient 360 endpoint remains organization-scoped and unchanged.
+- Neon PostgreSQL remains the source of truth; no reset, truncate, destructive delete, or schema rewrite was performed by this pass.
+
+### Verification limitation
+The source tree in this environment does not contain installed npm dependencies, so a full dependency-backed Next.js/TypeScript production build could not be executed here. The existing source-level checks therefore remain the authoritative local validation available in this workspace until dependencies are installed and the deployment pipeline runs.
