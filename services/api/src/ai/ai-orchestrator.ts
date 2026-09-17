@@ -65,8 +65,32 @@ const OFF_TOPIC_PATTERNS = [
   /^(?:write|build|code|debug|program|develop)\s+(?:a\s+)?(?:malware|ransomware|virus|exploit|keylogger|credential\s+stealer)/i,
   /\b(?:bitcoin price|celebrity gossip|gaming cheat|movie review|dating advice|political campaign strategy)\b/i,
 ];
+const PUBLIC_AI_RATE_WINDOW_MS = Math.max(60_000, Number(process.env.CLINAI_PUBLIC_AI_RATE_WINDOW_MS || 600_000));
+const PUBLIC_AI_RATE_LIMIT = Math.max(5, Number(process.env.CLINAI_PUBLIC_AI_RATE_LIMIT || 60));
+const publicAIRate = new Map<string, { startedAt: number; count: number }>();
+function publicClientKey(req:any) {
+  const forwarded = String(req?.headers?.['x-forwarded-for'] || '').split(',')[0].trim();
+  return forwarded || String(req?.ip || req?.socket?.remoteAddress || 'public');
+}
+function enforcePublicAIRate(req:any) {
+  const key = publicClientKey(req);
+  const now = Date.now();
+  const current = publicAIRate.get(key);
+  if (!current || now - current.startedAt >= PUBLIC_AI_RATE_WINDOW_MS) {
+    publicAIRate.set(key, { startedAt: now, count: 1 });
+  } else {
+    current.count += 1;
+    if (current.count > PUBLIC_AI_RATE_LIMIT) {
+      throw Object.assign(new Error('ClinAI public intelligence is receiving many requests from this connection. Please wait a moment and try again.'), { statusCode: 429, code: 'PUBLIC_AI_RATE_LIMIT' });
+    }
+  }
+  if (publicAIRate.size > 5000) {
+    for (const [k,v] of publicAIRate) if (now - v.startedAt >= PUBLIC_AI_RATE_WINDOW_MS) publicAIRate.delete(k);
+  }
+}
+
 const CLINAI_SCOPE_TERMS = [
-  'clinai','patient','care','clinical','healthcare','hospital','clinic','appointment','queue','encounter','triage','diagnosis','laboratory','lab','imaging','pharmacy','medicine','medication','nursing','maternity','pediatrics','immunization','referral','follow-up','billing','insurance','claim','inventory','procurement','supplier','facility','staff','task','workflow','public health','analytics','reporting','governance','security','risk','audit','care gap','patient 360','clinical velocity','value based care','guideline','protocol','documentation','handover','discharge','admission','surgery','emergency','telemedicine','monitoring','stock','finance','revenue','payment','research guidance'
+  'clinai','patient','care','clinical','healthcare','hospital','clinic','appointment','queue','encounter','triage','diagnosis','laboratory','lab','imaging','pharmacy','medicine','medication','nursing','maternity','pediatrics','immunization','referral','follow-up','billing','insurance','claim','inventory','procurement','supplier','facility','staff','task','workflow','public health','analytics','reporting','governance','security','risk','audit','care gap','patient 360','clinical velocity','value based care','guideline','protocol','documentation','handover','discharge','admission','surgery','emergency','telemedicine','monitoring','stock','finance','revenue','payment','research guidance','calculation','calculate','analytics','statistics','trend','forecast','anomaly','bmi','blood pressure','body mass index','dataset','measure','numerator','denominator','percentage','rate','symptom','diagnosis','treatment','disease','condition','clinical guidance','medical guidance','malaria','tuberculosis','tb','hiv','hypertension','diabetes','asthma','pneumonia','infection','fever','pregnancy','vaccination','vaccine','antibiotic','medicine','dose','dosage'
 ];
 function isClinAIScope(input: string) {
   const text = String(input || '').toLowerCase().trim();
@@ -449,6 +473,12 @@ const toolDeclarations = [
   { type: 'function', name: 'get_approved_evidence', description: 'Retrieve approved ClinAI knowledge sources and organization-approved guidance metadata.', parameters: { type: 'object', properties: { specialty: { type: 'string' } } } },
 ];
 
+function publicToolDeclarations() {
+  return toolDeclarations
+    .filter((t:any) => t.name === 'calculate' || t.name === 'analyze_dataset')
+    .map((t:any) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.parameters } }));
+}
+
 async function executeTool(name: string, args: Row, deps: Deps, req: any) {
   const organizationId = deps.dbOrganizationId(req);
   if (name === 'get_patient_snapshot') return patientContext(deps.pool, organizationId, String(args.patientId), 'clinical', req);
@@ -710,7 +740,7 @@ async function runOpenAICompatibleAgent(deps: Deps, req: any, model: any, input:
     const response:any = await callOpenAICompatible(model, prompt, baseSystem, responseSchema, {
       reasoning: options.mode !== 'quick' && model.provider !== 'groq',
       maxTokens: options.mode === 'quick' ? AI_QUICK_MAX_TOKENS : AI_STANDARD_MAX_TOKENS,
-      tools: allowTools && round < maxRounds ? openAIToolDeclarations() : undefined,
+      tools: allowTools && round < maxRounds ? (options.publicMode ? publicToolDeclarations() : openAIToolDeclarations()) : undefined,
       messages,
     });
     usage = response.usage || usage;
@@ -772,7 +802,8 @@ async function runAgent(deps: Deps, req: any, input: string, options: { purpose:
   const fast = await tryFastPath(deps, req, input, options, languagePolicy);
   if (fast) return fast;
   const patientData = Boolean(options.patientId);
-  const cacheKey = stableRequestKey({ mode: options.mode || 'intelligence', role: effectiveRole || '', patientId: options.patientId || '', input, preferredModel: options.preferredModel || '', capability: options.capability || '', publicMode: Boolean(options.publicMode), language: options.language || 'English' });
+  const attachmentKey = (options.attachments || []).map((a:any) => createHash('sha256').update(String(a.dataUrl || a.base64 || '')).digest('hex')).join(',');
+  const cacheKey = stableRequestKey({ mode: options.mode || 'intelligence', role: effectiveRole || '', patientId: options.patientId || '', input, preferredModel: options.preferredModel || '', capability: options.capability || '', publicMode: Boolean(options.publicMode), language: options.language || 'English', attachmentKey });
   const cached = multiModelCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return { ...cached.result, cached: true };
   if (cached) multiModelCache.delete(cacheKey);
@@ -843,6 +874,15 @@ Patient-specific request: ${patientData ? 'yes' : 'no'}
 Public-safe mode: ${options.publicMode ? 'yes — do not access or infer patient/facility records' : 'no'}
 ${languageInstruction(languagePolicy, languageAnalysis?.detected)}\nLanguage analysis signal: ${languageAnalysis ? aiText(languageAnalysis, 2500) : 'Not required for English request'}\n\nQuestion intent: ${questionIntent.join(', ') || 'general'}
 
+${options.publicMode ? `PUBLIC CLINAI TESTING MODE:
+- This conversation is public and has no authenticated patient, organization or facility context.
+- Use only general ClinAI product/workflow knowledge, user-supplied non-identifying test material, and public evidence explicitly requested by the user.
+- Never claim to see a real patient, facility, organization, staff member, record, queue, laboratory result, medication order or other private system data.
+- Never perform or imply a clinical write or protected workflow action.
+- You may explain healthcare concepts when they are directly relevant to ClinAI, but do not provide personalized diagnosis, prescribing, dosing, emergency triage or treatment decisions. Encourage qualified professional review where a question could affect care.
+- For research mode, use only public external evidence when available; do not access private ClinAI knowledge sources.
+- Treat uploaded media as synthetic/de-identified test material only.
+` : ''}
 ClinAI context:
 ${aiText(safeContext, contextLimit)}${patientIntelligence ? `
 
@@ -891,7 +931,7 @@ ${input}`;
       if (model.provider === 'gemini') {
         result = await runGeminiAgent(deps, req, input, effectiveOptions, prompt, context, evidence, cacheKey, model.id);
       } else {
-        const allowTools = model.toolCalling && options.mode !== 'quick' && (!patientData || (!model.publicEndpoint && model.patientDataEligible));
+        const allowTools = model.toolCalling && options.mode !== 'quick' && (options.publicMode ? options.mode === 'analysis' : (!patientData || (!model.publicEndpoint && model.patientDataEligible)));
         result = await runOpenAICompatibleAgent(deps, req, model, input, prompt, {...effectiveOptions, attachments: effectiveOptions.attachments}, allowTools);
         await recordProviderUsage(deps.pool, req, model, result, 'completed');
         await recordWork(deps.pool, req, deps.dbOrganizationId(req), options.patientId || null, { ...result, purpose: options.purpose, status: 'completed', question: input, evidenceCount: (result.structured.evidence || []).length, confidence: result.structured.confidence, resultSummary: { directAnswer: result.structured.directAnswer } });
@@ -947,9 +987,9 @@ async function runGeminiAgent(deps: Deps, req: any, input: string, options: any,
   const runId = randomUUID();
   const started = Date.now();
   const freeGemini = FREE_TIER_MODE;
-  const tools: any[] = freeGemini ? [] : [...toolDeclarations];
-  if (!freeGemini && options.allowResearch) tools.push({ type: 'google_search' }, { type: 'url_context' });
-  if (!freeGemini && options.allowCodeExecution && ENABLE_GEMINI_CODE_EXECUTION) tools.push({ type: 'code_execution' });
+  const tools: any[] = freeGemini ? [] : options.publicMode ? (options.allowResearch ? [{ type: 'google_search' }, { type: 'url_context' }] : options.mode === 'analysis' ? toolDeclarations.filter((t:any) => t.name === 'calculate' || t.name === 'analyze_dataset') : []) : [...toolDeclarations];
+  if (!freeGemini && !options.publicMode && options.allowResearch) tools.push({ type: 'google_search' }, { type: 'url_context' });
+  if (!freeGemini && !options.publicMode && options.allowCodeExecution && ENABLE_GEMINI_CODE_EXECUTION) tools.push({ type: 'code_execution' });
   await acquireFreeTierSlot();
   const model = selectedModel || (options.mode === 'quick' ? GEMINI_FAST_MODEL : GEMINI_REASONING_MODEL);
   const geminiContent:any[] = [{ type: 'text', text: aiText(prompt, GEMINI_FREE_MAX_INPUT_CHARS) }];
@@ -1022,6 +1062,46 @@ export function registerPublicAI(deps: Deps) {
     await pool.query(`CREATE TABLE IF NOT EXISTS public_feedback (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), type text NOT NULL, rating text, reason text, message text NOT NULL, page text, anonymous boolean NOT NULL DEFAULT true, created_at timestamptz NOT NULL DEFAULT now())`);
     const r = await pool.query(`INSERT INTO public_feedback(type,rating,reason,message,page,anonymous) VALUES($1,$2,$3,$4,$5,$6) RETURNING id,created_at AS "createdAt"`, [body.type, body.rating || null, body.reason || null, body.message, body.page || null, body.anonymous]);
     return reply.code(201).send({ data: { received: true, ...r.rows[0] } });
+  });
+
+  app.get('/api/public/ai-status', async () => {
+    const configured = configuredProviders();
+    const publicModels = AI_MODELS.filter((m:any) => m.enabled && m.publicEndpoint && configured[m.provider]);
+    return { data: { configured: Object.values(configured).some(Boolean), publicModelsAvailable: publicModels.length > 0 || Boolean(GEMINI_API_KEY), capabilities: { text: true, image: publicModels.some((m:any) => m.modalities.includes('image')), audio: publicModels.some((m:any) => m.modalities.includes('audio')), video: false, analytics: true, research: true }, languages: SUPPORTED_CLINAI_LANGUAGES } };
+  });
+
+  app.post('/api/public/ai-assist', async (req: any, reply: any) => {
+    try {
+      enforcePublicAIRate(req);
+      const body = z.object({
+        question: z.string().trim().min(1).max(12000),
+        mode: z.enum(['quick','intelligence','analysis','research']).default('intelligence'),
+        language: z.enum(SUPPORTED_CLINAI_LANGUAGES as [string, ...string[]]).default('English'),
+        capability: z.enum(['text','multimodal','image','audio','video','medical','research','fast']).optional(),
+        attachments: z.array(z.object({kind:z.enum(['image','audio']),mimeType:z.string().max(100),dataUrl:z.string().max(8_000_000).optional(),base64:z.string().max(8_000_000).optional(),format:z.string().max(20).optional()})).max(2).optional(),
+      }).parse(req.body || {});
+      if (body.attachments?.some((a:any)=>a.kind==='image' && !a.dataUrl)) return reply.code(400).send({error:'Please provide an image for image testing.'});
+      if (body.attachments?.some((a:any)=>a.kind==='audio' && !a.base64)) return reply.code(400).send({error:'Please provide audio data for audio testing.'});
+      if (body.attachments?.some((a:any)=>a.kind==='audio' && !/^audio\//i.test(a.mimeType))) return reply.code(400).send({error:'The selected audio file could not be used.'});
+      const result = await runAgent(deps, req, body.question, {
+        purpose: 'public-ai-testing', patientId: null, mode: body.mode, language: body.language, capability: body.capability,
+        allowResearch: body.mode === 'research', allowCodeExecution: false, publicMode: true, attachments: body.attachments,
+      });
+      if (pool) await pool.query(`INSERT INTO public_ai_runs(run_id,mode,language,capability,input_length) VALUES($1,$2,$3,$4,$5) ON CONFLICT (run_id) DO NOTHING`, [result.runId, body.mode, body.language, body.capability || null, body.question.length]).catch(()=>{});
+      return { data: { ...publicAIEnvelope(result, body.language), runId: result.runId } };
+    } catch (e: any) {
+      const status = Number(e?.statusCode || 502);
+      return reply.code(status).send({ error: sanitizeClinAIResponse(e?.message || 'ClinAI could not complete that public test.') });
+    }
+  });
+
+  app.post('/api/public/ai-feedback', async (req: any, reply: any) => {
+    if (!pool) return reply.code(503).send({ error: 'Feedback storage is temporarily unavailable.' });
+    const body = z.object({ runId: z.string().min(8).max(120), rating: z.enum(['up','down','neutral']), reason: z.enum(['incorrect','missing-information','too-complicated','did-not-answer','unsafe','other']).optional(), comment: z.string().max(2000).optional() }).parse(req.body || {});
+    const exists = await pool.query('SELECT run_id FROM public_ai_runs WHERE run_id=$1 LIMIT 1', [body.runId]).catch(()=>({rowCount:0,rows:[]} as any));
+    if (!exists.rowCount) return reply.code(400).send({ error: 'That response is no longer available for feedback.' });
+    const r = await pool.query(`INSERT INTO public_ai_feedback(run_id,rating,reason,comment) VALUES($1,$2,$3,$4) RETURNING id,created_at AS "createdAt"`, [body.runId, body.rating, body.reason || null, body.comment || null]);
+    return reply.code(201).send({ data: { recorded: true, ...r.rows[0] } });
   });
 
   app.post('/api/public/health-assistant', async (_req: any, reply: any) => {

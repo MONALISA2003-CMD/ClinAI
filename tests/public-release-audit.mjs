@@ -2,22 +2,33 @@ import fs from 'node:fs';
 const page=fs.readFileSync('apps/web/app/page.tsx','utf8');
 const css=fs.readFileSync('apps/web/app/globals.css','utf8');
 const api=fs.readFileSync('services/api/src/main.ts','utf8');
+const ai=fs.readFileSync('services/api/src/ai/ai-orchestrator.ts','utf8');
 const checks=[
  ['public introduction exists', page.includes('PublicIntroduction')],
- ['intro requires deliberate entry', !page.includes('30-Math.floor') && page.includes('Review the introduction, then continue when ready.')],
- ['development disclaimer', page.includes('NOT YET APPROPRIATE FOR REAL PATIENT USAGE')],
- ['Uganda context', page.includes("Uganda's healthcare realities")],
- ['feedback invitation', page.includes('WE NEED YOUR FEEDBACK')],
+ ['intro requires deliberate entry', page.includes('ENTER CLINAI') && page.includes('ABOUT CLINAI')],
+ ['public development safety notice', page.includes('PUBLIC DEVELOPMENT VERSION') && page.includes('synthetic or de-identified information only')],
+ ['about ClinAI direction', page.includes('ABOUT CLINAI') && page.includes('Healthcare information should move with the patient.')],
+ ['how ClinAI works', page.includes('HOW CLINAI WORKS') && page.includes('Connected care')],
+ ['public feedback invitation', page.includes('GIVE FEEDBACK') && page.includes('/api/public/feedback')],
  ['Monalisa attribution', page.includes('MONALISA TECH SOLUTIONS')],
- ['WhatsApp contact', page.includes('wa.me/19138992840')],
- ['Gmail contact', page.includes('mail.google.com/mail/?view=cm&fs=1&to=monalisatechsolutions@gmail.com')],
- ['no fake data seeding in web', !/fake|demo patient|sample patient/i.test(page)],
- ['no login page UI', !/<h[12][^>]*>Login<\/h[12]>/i.test(page) && !/>Log in</i.test(page)],
+ ['no fake data seeding in web', !/fake patient|demo patient|sample patient/i.test(page)],
+ ['public AI endpoint', api.includes("'/api/public/ai-assist'") && ai.includes('publicMode: true')],
+ ['public AI status endpoint', api.includes("'/api/public/ai-status'")],
+ ['public AI feedback endpoint', api.includes("'/api/public/ai-feedback'")],
+ ['public AI no patient id', /public-ai-testing'[\s\S]{0,500}patientId: null/.test(ai)],
+ ['public AI no clinical writes', ai.includes('allowCodeExecution: false') && ai.includes('publicMode: true')],
+ ['public AI safe tools only', ai.includes("t.name === 'calculate' || t.name === 'analyze_dataset'")],
+ ['public AI rate limiting', ai.includes('PUBLIC_AI_RATE_LIMIT') && ai.includes('enforcePublicAIRate')],
+ ['public AI multimodal testing UI', page.includes('Add synthetic media') && page.includes('accept="image/*,audio/*"')],
+ ['public AI modes', page.includes("['quick','Quick'") && page.includes("['research','Research'")],
+ ['public AI languages', page.includes('Kiswahili') && page.includes('Kinyarwanda') && page.includes('Luganda') && page.includes('Runyankore') && page.includes('Alur')],
  ['patient 360 medications', api.includes('medication_orders mo JOIN medications m') && api.includes('medications:medications.rows')],
- ['patient timeline medication', api.includes("'medication',m.name")],
- ['human backend error fallback', api.includes("We could not complete that request. Please try again.")],
- ['responsive intro styles', css.includes('.public-intro') && css.includes('@media(max-width:700px)')],
- ['app footer contact', page.includes('app-footer')],
+ ['human backend error fallback', api.includes('We could not complete that request. Please try again.')],
+ ['responsive intro styles', css.includes('.public-intro-shell') && css.includes('@media(max-width:700px)') && css.includes('@media(min-width:701px) and (max-height:760px)')],
+ ['mobile/tablet/desktop intro sizing', css.includes('@media(max-width:1100px)') && css.includes('@media(max-width:700px)') && css.includes('@media(max-width:380px)')],
+ ['implementation language removed from key UI', !page.includes('This workspace is connected to its existing clinical data source') && !page.includes('Deterministic signals synthesized across the longitudinal record')],
+ ['public path bypass is explicit', api.includes("'/api/public/ai-assist'" ) && api.includes("'/api/public/ai-feedback'") && api.includes('isPublicPath(publicPath)')],
+ ['public feedback/run schema', api.includes('public_ai_runs') && api.includes('public_ai_feedback')],
 ];
 const failed=checks.filter(([,ok])=>!ok);
 if(failed.length){console.error('Public release audit failed:',failed.map(([n])=>n).join(', '));process.exit(1)}

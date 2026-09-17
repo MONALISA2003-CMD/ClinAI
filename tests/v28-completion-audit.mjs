@@ -20,8 +20,7 @@ const required=[
  ['SMART app registration',api.includes('/api/smart/apps')],
  ['CDS Hooks order-select',api.includes("id:'order-select'")],
  ['multimodal attachment transport',ai.includes('attachments')&&providers.includes('input_audio')&&providers.includes('image_url')],
- ['intro Uganda WhatsApp',page.includes('https://wa.me/256703953711')],
- ['intro feedback WhatsApp',page.includes('https://wa.me/19138992840?text=Hello%20MONALISA')],
+ ['public intro feedback flow',page.includes('/api/public/feedback')&&page.includes('GIVE FEEDBACK')],
  ['footer Uganda WhatsApp',page.includes('>+256 703 953 711 · WhatsApp</a>')],
 ];
 for(const [name,ok] of required) if(!ok) throw new Error(`Missing: ${name}`);

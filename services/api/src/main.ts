@@ -38,7 +38,7 @@ await loadStore();
 const PUBLIC_PREVIEW = process.env.CLINAI_PUBLIC_PREVIEW === 'true';
 const PRODUCTION = process.env.NODE_ENV === 'production';
 const DEMO_AUTH_ENABLED = process.env.NODE_ENV !== 'production' && process.env.CLINAI_ENABLE_DEMO_AUTH === 'true';
-const PUBLIC_API_PATHS = new Set(['/api/public/feedback','/api/public/preview']);
+const PUBLIC_API_PATHS = new Set(['/api/public/feedback','/api/public/preview','/api/public/ai-assist','/api/public/ai-status','/api/public/ai-feedback']);
 const WRITE_ROLES = new Set(['admin','doctor','nurse','lab','pharmacist','reception','cashier','inventory','manager']);
 const READ_ONLY_ROLES = new Set(['viewer','analyst']);
 function actor(req:any){ return req.user?.sub || 'system'; }
@@ -1705,6 +1705,16 @@ async function ensureAIInteractionSchema(){
       page text, anonymous boolean NOT NULL DEFAULT true, created_at timestamptz NOT NULL DEFAULT now()
     );
     CREATE INDEX IF NOT EXISTS public_feedback_created_idx ON public_feedback(created_at DESC);
+    CREATE TABLE IF NOT EXISTS public_ai_runs (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), run_id text NOT NULL UNIQUE, mode text NOT NULL, language text NOT NULL DEFAULT 'English',
+      capability text, input_length integer NOT NULL DEFAULT 0, created_at timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS public_ai_runs_created_idx ON public_ai_runs(created_at DESC);
+    CREATE TABLE IF NOT EXISTS public_ai_feedback (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), run_id text NOT NULL, rating text NOT NULL, reason text, comment text,
+      created_at timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS public_ai_feedback_run_idx ON public_ai_feedback(run_id,created_at DESC);
   `);
 }
 
