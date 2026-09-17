@@ -4,6 +4,8 @@ import {enqueueOperation,flushOperations,pendingOperations} from '../lib/offline
 import moduleContractCatalog from '../../../packages/module-contracts/contracts.json';
 import { validateRecord } from '../../../packages/domain/validation';
 
+type Row = Record<string, any>;
+
 
 const API=(process.env.NEXT_PUBLIC_API_URL||'https://clinai-api.onrender.com').replace(/\/$/,'');
 
