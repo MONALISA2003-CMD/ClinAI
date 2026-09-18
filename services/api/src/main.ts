@@ -609,8 +609,21 @@ app.get('/api/public/test-modules/:module',async(req:any,reply:any)=>{
     const r=await pool.query(`SELECT id,patient_number AS "patientNumber",first_name AS "firstName",middle_name AS "middleName",last_name AS "lastName",date_of_birth AS "dateOfBirth",sex,preferred_language AS "preferredLanguage",status FROM patients WHERE organization_id=$1 AND is_test_data=true ORDER BY patient_number LIMIT 100`,[oid]);
     return {data:r.rows,count:r.rowCount,readOnly:true,synthetic:true,module:moduleId};
   }
-  const r=await pool.query(`SELECT id,module,status,payload,created_at AS "createdAt",updated_at AS "updatedAt" FROM module_records WHERE organization_id=$1 AND module=$2 AND (payload->>'isTestData'='true' OR payload->>'patientId' IN (SELECT id::text FROM patients WHERE organization_id=$1 AND is_test_data=true)) ORDER BY created_at DESC LIMIT 500`,[oid,moduleId]);
-  return {data:r.rows.map((x:any)=>({id:x.id,module:x.module,status:x.status,...x.payload,createdAt:x.createdAt,updatedAt:x.updatedAt})),count:r.rowCount,readOnly:true,synthetic:true,module:moduleId};
+  const requestedPatient=String(req.query?.patientNumber||'').trim();
+  const params:any[]=[oid,moduleId];
+  let patientClause='';
+  if(requestedPatient){
+    params.push(requestedPatient);
+    patientClause=` AND payload->>'patientNumber'=$3`;
+  }
+  const r=await pool.query(`SELECT mr.id,mr.module,mr.status,mr.payload,mr.created_at AS "createdAt",mr.updated_at AS "updatedAt",p.patient_number AS "patientNumber",p.first_name AS "firstName",p.middle_name AS "middleName",p.last_name AS "lastName",p.sex,p.date_of_birth AS "dateOfBirth",p.status AS "patientStatus"
+    FROM module_records mr
+    LEFT JOIN patients p ON p.id::text=mr.payload->>'patientId' AND p.organization_id=mr.organization_id AND p.is_test_data=true
+    WHERE mr.organization_id=$1 AND mr.module=$2
+      AND (mr.payload->>'isTestData'='true' OR mr.payload->>'patientId' IN (SELECT id::text FROM patients WHERE organization_id=$1 AND is_test_data=true))
+      ${patientClause}
+    ORDER BY mr.created_at DESC LIMIT 500`,params);
+  return {data:r.rows.map((x:any)=>({id:x.id,module:x.module,status:x.status,...x.payload,patientNumber:x.patientNumber||x.payload?.patientNumber,firstName:x.firstName||undefined,middleName:x.middleName||undefined,lastName:x.lastName||undefined,sex:x.sex||undefined,dateOfBirth:x.dateOfBirth||undefined,patientStatus:x.patientStatus||undefined,createdAt:x.createdAt,updatedAt:x.updatedAt})),count:r.rowCount,readOnly:true,synthetic:true,module:moduleId,patientNumber:requestedPatient||null,patientCount:new Set(r.rows.map((x:any)=>x.patientNumber).filter(Boolean)).size};
 });
 
 

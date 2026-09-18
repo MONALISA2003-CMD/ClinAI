@@ -283,7 +283,7 @@ input,select,textarea,button{max-width:100%}
  .status-filters button{padding:7px 9px}
 }
 
-.module-readonly-note{margin:14px 0;padding:13px 15px;border:1px solid #dce5ec;border-radius:14px;background:#f7fafc;color:#5f6f7d;font-size:13px;line-height:1.5}
+
 
 /* Cross-module intelligence surfaces */
 .intelligence-card-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin:14px 0}
@@ -341,7 +341,7 @@ input,select,textarea,button{max-width:100%}
 .ai-upload input{max-width:220px;font-size:8px}
 .ai-attachment-clear{min-height:36px!important}
 .ai-public-workspace .ai-role span{font-size:8px}
-.module-readonly-note{color:#566773}
+
 
 @media(max-width:1100px){
  .public-intro-shell{width:min(920px,calc(100% - 36px));padding-top:34px;padding-bottom:34px}
