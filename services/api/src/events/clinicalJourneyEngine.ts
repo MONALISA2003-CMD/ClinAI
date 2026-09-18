@@ -6,11 +6,11 @@ export type JourneyDefinition = { key:string; title:string; steps:JourneyStep[] 
 export const CLINICAL_JOURNEYS: JourneyDefinition[] = [
   { key:'emergency', title:'Emergency', steps:[
     {key:'arrival',eventTypes:['emergency.arrived','encounter.started'],title:'Arrival',maxMinutes:30,next:'triage'},
-    {key:'triage',eventTypes:['appointment.checked_in','vital.recorded','triage.recorded'],title:'Triage',maxMinutes:30,next:'severity'},
+    {key:'triage',eventTypes:['appointment.checked_in','queue.transitioned','vital.recorded','triage.recorded'],title:'Triage',maxMinutes:30,next:'severity'},
     {key:'severity',eventTypes:['triage.severity.recorded','triage.recorded'],title:'Severity',maxMinutes:60,next:'assessment'},
     {key:'assessment',eventTypes:['assessment.recorded','nursing.assessment.recorded','clinical_note.signed'],title:'Assessment',maxMinutes:120,next:'orders'},
     {key:'orders',eventTypes:['order.created'],title:'Orders',maxMinutes:180,next:'results'},
-    {key:'results',eventTypes:['result.created','result.verified','result.released'],title:'Results',maxMinutes:360,next:'treatment'},
+    {key:'results',eventTypes:['result.created','result.verified','result.released','lab_result.verify','lab_result.release'],title:'Results',maxMinutes:360,next:'treatment'},
     {key:'treatment',eventTypes:['medication.ordered','medication.administered','procedure.completed'],title:'Treatment',maxMinutes:720,next:'disposition'},
     {key:'disposition',eventTypes:['disposition.recorded','admission.started','discharge.started','referral.sent'],title:'Disposition',maxMinutes:1440}
   ]},
@@ -73,13 +73,18 @@ for (const journey of CLINICAL_JOURNEYS) for (const step of journey.steps) for (
 export function journeyForEvent(eventType:string){ return journeyByEvent.get(eventType) || null; }
 
 async function projectWorkflowEvent(client:PoolClient,event:any){
+  const mapped=journeyForEvent(event.event_type);
+  const priorStep=mapped?.journey.steps.findIndex(s=>s.next===mapped.step.key);
+  const fromState=mapped && priorStep !== undefined && priorStep >= 0 ? mapped.journey.steps[priorStep].key : null;
+  const toState=mapped?.step.key || null;
   const inserted = await client.query(`
-    INSERT INTO clinical_workflow_events(organization_id,patient_id,encounter_id,event_type,from_state,to_state,payload,actor_id,source_event_id)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
+    INSERT INTO clinical_workflow_events(organization_id,patient_id,encounter_id,event_type,from_state,to_state,payload,actor_id,source_event_id,correlation_id,causation_id,schema_version)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
     ON CONFLICT (source_event_id) DO NOTHING
     RETURNING id`,[
       event.organization_id,event.payload?.patientId||null,event.payload?.encounterId||null,event.event_type,
-      event.payload?.fromState||null,event.payload?.fromState ? null : null,JSON.stringify(event.payload||{}),null,event.id
+      event.payload?.fromState||fromState,event.payload?.toState||toState,JSON.stringify(event.payload||{}),event.payload?.actorId||null,event.id,
+      event.correlation_id||event.payload?.correlationId||null,event.causation_id||event.payload?.causationId||null,event.schema_version||1
     ]);
   return inserted.rows[0]?.id || (await client.query(`SELECT id FROM clinical_workflow_events WHERE source_event_id=$1`,[event.id])).rows[0]?.id || null;
 }

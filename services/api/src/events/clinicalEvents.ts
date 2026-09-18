@@ -9,6 +9,9 @@ type EventInput = {
   encounterId?: string | null;
   payload?: Record<string, unknown>;
   eventKey?: string;
+  correlationId?: string | null;
+  causationId?: string | null;
+  schemaVersion?: number;
 };
 
 export const CLINICAL_EVENT_TYPES = Object.freeze({
@@ -81,12 +84,13 @@ export async function enqueueClinicalEvent(client: any, input: EventInput) {
   };
   const result = await client.query(
     `INSERT INTO outbox_events
-      (organization_id,event_type,aggregate_type,aggregate_id,payload,event_key)
-     VALUES($1,$2,$3,$4,$5,$6)
+      (organization_id,event_type,aggregate_type,aggregate_id,payload,event_key,correlation_id,causation_id,schema_version)
+     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
      ON CONFLICT (event_key) DO NOTHING
      RETURNING id`,
     [input.organizationId, input.eventType, input.aggregateType ?? null,
-      input.aggregateId ?? null, JSON.stringify(payload), eventKey]
+      input.aggregateId ?? null, JSON.stringify(payload), eventKey,
+      input.correlationId ?? null, input.causationId ?? null, input.schemaVersion ?? 1]
   );
   return { eventKey, id: result.rows[0]?.id ?? null, inserted: result.rowCount > 0 };
 }
