@@ -145,3 +145,6 @@ ALTER TABLE claims ADD COLUMN IF NOT EXISTS patient_responsibility numeric NOT N
 
 UPDATE claims SET claim_number=COALESCE(claim_number,external_reference) WHERE claim_number IS NULL;
 UPDATE insurance_policies SET member_number=COALESCE(member_number,policy_number) WHERE member_number IS NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS finance_reconciliation_invoice_claim_null_payment_uq ON finance_reconciliations(invoice_id,claim_id) WHERE payment_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS accounting_entries_reference_uq ON accounting_entries(organization_id,reference_type,reference_id,entry_type) WHERE reference_id IS NOT NULL;
