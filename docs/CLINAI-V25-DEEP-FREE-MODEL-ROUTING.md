@@ -8,16 +8,16 @@ ClinAI uses the existing four provider credentials:
 - `GEMINI_API_KEY` / `GEMINI_AUTHORIZATION_KEY`
 - `OPENROUTER_API_KEY`
 - `GROQ_API_KEY`
-- `CEREBRAS_API_KEY`
 
 No model-specific API key is required for OpenRouter models. One OpenRouter key is used with the selected model slug.
 
 ## Registered model count
-The current registry contains 17 entries:
+The current free-only registry contains 16 entries:
 - 1 Gemini entry
-- 14 OpenRouter free/public entries
+- 14 OpenRouter free/public entries, including the NVIDIA Nemotron family
 - 1 Groq GPT-OSS 120B entry
-- 1 Cerebras GPT-OSS 120B entry
+
+The former Cerebras trial path has been removed from the runtime.
 
 ## Capability policy
 `AIModel.modalities` is conservative and currently declares text/image/audio/video support. An explicit request capability is a hard constraint. If the candidate pool has zero compatible configured models, routing stops with `AI_CAPABILITY_UNAVAILABLE`; it never falls back to an incompatible text-only model.
@@ -53,6 +53,9 @@ The legacy behavior of recursively redacting identifiers while still passing cli
 - public patient-data setting
 
 This prevents operators from confusing “model is configured” with “model is eligible for patient context.”
+
+## Free-only runtime behavior
+The runtime now hard-blocks non-free models, applies provider-global quota reservations before each network request, and uses deterministic Python reasoning before model inference.
 
 ## Existing AI behavior preserved
 This change does not modify:

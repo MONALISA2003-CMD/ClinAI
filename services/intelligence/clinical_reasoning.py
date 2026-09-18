@@ -134,6 +134,45 @@ def analyze_clinical_context(context: dict[str, Any], question: str = "", now: d
         if med_name and med_name.lower() in allergy_text:
             signals.append({"severity": "urgent", "type": "medication-allergy", "signal": f"A medication name appears to overlap with a recorded allergy entry: {med_name}.", "sourceId": med.get("id")})
 
+    # Medication duplication, missing administration details and same-class name overlap are deterministic review signals only.
+    active_meds = [m for m in meds if _s(m.get("status")).lower() not in {"stopped", "discontinued", "cancelled", "inactive"}]
+    normalized_meds: dict[str, list[dict[str, Any]]] = {}
+    for med in active_meds:
+        name = _s(med.get("genericName") or med.get("medicationName") or med.get("name")).lower()
+        compact = " ".join(name.replace("/", " ").split())
+        if compact:
+            normalized_meds.setdefault(compact, []).append(med)
+        missing = [field for field in ("dose", "frequency") if not _s(med.get(field))]
+        if missing:
+            data_quality.append(f"Medication '{name or 'unspecified'}' is missing recorded {', '.join(missing)} information.")
+    for name, rows in normalized_meds.items():
+        if len(rows) > 1:
+            signals.append({"severity": "attention", "type": "duplicate-medication", "signal": f"Multiple active medication records share the same normalized name: {name}.", "sourceIds": [r.get("id") for r in rows[:6]]})
+
+    # Appointment patterns are useful operational signals without making clinical decisions.
+    no_show = [a for a in appointments if _s(a.get("status")).lower() in {"no-show", "no_show", "missed"}]
+    if len(no_show) >= 2:
+        signals.append({"severity": "attention", "type": "appointment-pattern", "signal": f"The retrieved record contains {len(no_show)} missed or no-show appointment entries.", "sourceId": no_show[0].get("id")})
+        gaps.append({"type": "repeated-no-show", "count": len(no_show)})
+
+    # Laboratory trends: compare the latest two numeric results for each named test.
+    lab_series: dict[str, list[tuple[datetime, float, str | None, str]]] = {}
+    for lab in labs:
+        value = _num(lab.get("valueNumeric") if lab.get("valueNumeric") is not None else lab.get("value"))
+        dt = _date(lab.get("reportedAt") or lab.get("resultedAt") or lab.get("recordedAt") or lab.get("createdAt") or lab.get("date"))
+        label = _s(lab.get("testName") or lab.get("name") or lab.get("analyte") or "laboratory result").lower()
+        if value is not None and dt and label:
+            lab_series.setdefault(label, []).append((dt, value, lab.get("id"), _s(lab.get("unit"))))
+    for label, rows in lab_series.items():
+        rows.sort(key=lambda x: x[0])
+        if len(rows) >= 2:
+            previous, latest = rows[-2], rows[-1]
+            if previous[1] != 0:
+                pct = ((latest[1] - previous[1]) / abs(previous[1])) * 100
+                if abs(pct) >= 20:
+                    changes.append({"measure": label, "from": previous[1], "to": latest[1], "percentChange": round(pct, 1), "unit": latest[3] or previous[3], "sourceIds": [previous[2], latest[2]]})
+                    signals.append({"severity": "attention", "type": "laboratory-trend", "signal": f"The latest {label} value changed by {pct:+.1f}% from the preceding recorded value; review the direction and clinical context.", "sourceId": latest[2]})
+
     # Workflow gaps.
     for order in orders:
         status = _s(order.get("status")).lower()
@@ -212,6 +251,6 @@ def analyze_clinical_context(context: dict[str, Any], question: str = "", now: d
         "longitudinalChanges": changes[:30],
         "workflowGaps": gaps[:40],
         "dataQuality": data_quality[:20],
-        "counts": {"vitals": len(vitals), "labs": len(labs), "medications": len(meds), "diagnoses": len(diagnoses), "encounters": len(encounters), "appointments": len(appointments), "referrals": len(referrals), "tasks": len(tasks), "alerts": len(alerts), "orders": len(orders), "imaging": len(imaging), "admissions": len(admissions)},
+        "counts": {"vitals": len(vitals), "labs": len(labs), "medications": len(meds), "diagnoses": len(diagnoses), "encounters": len(encounters), "appointments": len(appointments), "referrals": len(referrals), "tasks": len(tasks), "alerts": len(alerts), "orders": len(orders), "imaging": len(imaging), "admissions": len(admissions), "activeMedications": len(active_meds), "missedAppointments": len(no_show)},
         "safety": "Signals identify records that deserve professional review. They are not diagnoses, prescriptions, triage decisions or irreversible clinical actions.",
     }

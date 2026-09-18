@@ -23,11 +23,12 @@ for (const needle of required) {
 if (!orch.includes('STRICT_CAPABILITY_ROUTING')) throw new Error('Strict capability routing flag missing');
 if (!orch.includes("code: 'AI_CAPABILITY_UNAVAILABLE'")) throw new Error('Capability-unavailable error missing');
 if (!orch.includes("code: 'AI_PROVIDER_POLICY_BLOCKED'")) throw new Error('Patient-data policy error missing');
-if (!orch.includes('clinicalRecordsProvided: false')) throw new Error('Public patient context is not explicitly blocked');
+if (!orch.includes('clinicalRecordsProvided: true')) throw new Error('Synthetic public patient context marker missing');
+if (!orch.includes('syntheticData: true')) throw new Error('Synthetic public patient marker missing');
 if (orch.includes('public-models-receive-redacted context')) throw new Error('Legacy unsafe redacted-public context policy still present');
 
 const modelLines = providers.split('\n').filter(x => x.trim().startsWith('{ id:'));
-if (modelLines.length !== 17) throw new Error(`Expected 17 model entries, found ${modelLines.length}`);
+if (modelLines.length !== 16) throw new Error(`Expected 16 free model entries, found ${modelLines.length}`);
 const openRouterLines = modelLines.filter(x => x.includes("provider: 'openrouter'"));
 if (openRouterLines.length !== 14) throw new Error(`Expected 14 OpenRouter models, found ${openRouterLines.length}`);
 for (const line of openRouterLines) {

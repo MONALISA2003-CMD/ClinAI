@@ -15,8 +15,6 @@ import { evaluateClinicalContext, SYNCHRONOUS_CDSS_RULES } from './intelligence/
 import { buildPatientIntelligenceLayer, buildClinicalVelocity, buildValueBasedCare, buildGovernanceSummary, buildAIGovernanceLifecycle, calculateClinicalMeasures, recordAICapabilityEvaluation, AI_CAPABILITY_CATALOG, buildPatient360Context, buildAISecurityIntelligence, buildAIRiskIntelligence, buildClinicalVelocityIntelligence, buildValueBasedCareIntelligence, recordSecurityEvent } from './intelligence/enterpriseIntelligence.js';
 import moduleContractCatalog from '../../../packages/module-contracts/contracts.json' with { type: 'json' };
 import { registerWorkstream2DomainRoutes } from './routes/workstream2Domains.js';
-import { registerWorkstream4JourneyRoutes } from './routes/workstream4Journeys.js';
-import { listConnectedWorkflows, getConnectedWorkflow, listEventCatalog, validateConnectedDataMap } from './events/connectedDataMap.js';
 
 const MODULE_CONTRACTS = moduleContractCatalog.modules as any[];
 const MODULE_CONTRACT_BY_ID:Record<string,any> = Object.fromEntries(MODULE_CONTRACTS.map(c=>[c.id,c]));
@@ -2055,52 +2053,6 @@ app.get('/api/facility-resources',async(req:any)=>{if(!pool)return {data:[]};con
 app.get('/api/facility-performance',async(req:any)=>{if(!pool)return {data:[]};const r=await pool.query(`SELECT p.*,f.name AS "facilityName",f.type AS "facilityType" FROM facility_performance_snapshots p LEFT JOIN facilities f ON f.id=p.facility_id WHERE p.organization_id=$1 ORDER BY p.period_end DESC,p.created_at DESC LIMIT 500`,[dbOrganizationId(req)]);return {data:r.rows,count:r.rowCount};});
 app.get('/api/referral-network',async(req:any)=>{if(!pool)return {data:[]};const r=await pool.query(`SELECT n.*,ff.name AS "fromFacilityName",tf.name AS "toFacilityName" FROM referral_network_nodes n JOIN facilities ff ON ff.id=n.from_facility_id JOIN facilities tf ON tf.id=n.to_facility_id WHERE n.organization_id=$1 ORDER BY ff.name,tf.name,n.service_code LIMIT 500`,[dbOrganizationId(req)]);return {data:r.rows,count:r.rowCount};});
 app.get('/api/ai-evaluations',async(req:any)=>{if(!pool)return {data:[]};const r=await pool.query(`SELECT id,patient_id AS "patientId",model_version AS "modelVersion",use_case AS "useCase",input_summary AS "inputSummary",output_summary AS "outputSummary",expected_result AS "expectedResult",reviewer_id AS "reviewerId",verdict,safety_flags AS "safetyFlags",created_at AS "createdAt",reviewed_at AS "reviewedAt" FROM ai_evaluations WHERE organization_id=$1 ORDER BY created_at DESC LIMIT 500`,[dbOrganizationId(req)]);return {data:r.rows,count:r.rowCount};});
-app.get('/api/events/connected-data-map', async (req:any, reply:any) => {
-  const organizationId=dbOrganizationId(req);
-  if(!organizationId)return reply.code(400).send({error:'Organization context is required'});
-  return {data:listConnectedWorkflows(),count:listConnectedWorkflows().length};
-});
-app.get('/api/events/connected-data-map/:workflow', async (req:any, reply:any) => {
-  const organizationId=dbOrganizationId(req);
-  if(!organizationId)return reply.code(400).send({error:'Organization context is required'});
-  const workflow=getConnectedWorkflow(String(req.params.workflow));
-  if(!workflow)return reply.code(404).send({error:'Connected workflow not found'});
-  return {data:workflow};
-});
-app.get('/api/events/catalog', async (req:any, reply:any) => {
-  const organizationId=dbOrganizationId(req);
-  if(!organizationId)return reply.code(400).send({error:'Organization context is required'});
-  const data=listEventCatalog();
-  return {data,count:data.length,unmapped:data.filter(x=>!x.mapped).map(x=>x.eventType)};
-});
-app.get('/api/events/health', async (req:any, reply:any) => {
-  const organizationId=dbOrganizationId(req);
-  if(!organizationId)return reply.code(400).send({error:'Organization context is required'});
-  if(!pool)return reply.code(501).send({error:'PostgreSQL required'});
-  const [pending,processing,failed,projected]=await Promise.all([
-    pool.query(`SELECT count(*)::int AS count FROM outbox_events WHERE organization_id=$1 AND status='pending'`,[organizationId]),
-    pool.query(`SELECT count(*)::int AS count FROM outbox_events WHERE organization_id=$1 AND status='processing'`,[organizationId]),
-    pool.query(`SELECT count(*)::int AS count FROM outbox_events WHERE organization_id=$1 AND status='dead_lettered'`,[organizationId]),
-    pool.query(`SELECT count(*)::int AS count FROM clinical_workflow_events WHERE organization_id=$1`,[organizationId])
-  ]);
-  return {data:{map:validateConnectedDataMap(),outbox:{pending:pending.rows[0].count,processing:processing.rows[0].count,deadLettered:failed.rows[0].count},projectedWorkflowEvents:projected.rows[0].count}};
-});
-app.get('/api/events/stream', async (req:any, reply:any) => {
-  const organizationId=dbOrganizationId(req);
-  if(!organizationId)return reply.code(400).send({error:'Organization context is required'});
-  if(!pool)return reply.code(501).send({error:'PostgreSQL required'});
-  const q=req.query||{};
-  const patientId=q.patientId?String(q.patientId):null;
-  const eventType=q.eventType?String(q.eventType):null;
-  const limit=Math.min(Math.max(Number(q.limit||200),1),500);
-  const params:any[]=[organizationId]; const clauses:string[]=['e.organization_id=$1'];
-  if(patientId){params.push(patientId);clauses.push(`e.patient_id=$${params.length}`);}
-  if(eventType){params.push(eventType);clauses.push(`e.event_type=$${params.length}`);}
-  params.push(limit);
-  const r=await pool.query(`SELECT e.id,e.patient_id AS "patientId",e.encounter_id AS "encounterId",e.event_type AS "eventType",e.from_state AS "fromState",e.to_state AS "toState",e.payload,e.actor_id AS "actorId",e.source_event_id AS "sourceEventId",e.correlation_id AS "correlationId",e.causation_id AS "causationId",e.schema_version AS "schemaVersion",e.created_at AS "createdAt" FROM clinical_workflow_events e WHERE ${clauses.join(' AND ')} ORDER BY e.created_at DESC LIMIT $${params.length}`,params);
-  return {data:r.rows,count:r.rowCount};
-});
-
 app.get('/api/care-graph',async(req:any)=>{if(!pool)return {data:[]};const r=await pool.query(`SELECT e.*,p.patient_number AS "patientNumber",p.first_name AS "firstName",p.last_name AS "lastName" FROM care_graph_edges e JOIN patients p ON p.id=e.patient_id WHERE e.organization_id=$1 ORDER BY e.created_at DESC LIMIT 500`,[dbOrganizationId(req)]);return {data:r.rows,count:r.rowCount};});
 
 // Read-only operational/public-health workspaces should not fabricate a generic module_records row.
@@ -2330,7 +2282,6 @@ app.get('/api/smart/authorize', async (req:any, reply:any) => { const q=req.quer
 app.post('/api/smart/token', async (req:any, reply:any) => { if(!pool)return reply.code(503).send({error:'SMART token service requires PostgreSQL.'}); const b=z.object({grant_type:z.enum(['authorization_code','refresh_token']),code:z.string().optional(),client_id:z.string().min(2),redirect_uri:z.string().optional(),refresh_token:z.string().optional(),code_verifier:z.string().optional()}).parse(req.body||{}); if(b.grant_type!=='authorization_code'||!b.code)return reply.code(400).send({error:'Authorization code is required.'}); if(!b.code_verifier)return reply.code(400).send({error:'PKCE code_verifier is required.'}); const hash=createHash('sha256').update(b.code).digest('hex'); const r=await pool.query(`UPDATE smart_authorization_codes SET used_at=now() WHERE code_hash=$1 AND client_id=$2 AND redirect_uri=COALESCE($3,redirect_uri) AND used_at IS NULL AND expires_at>now() RETURNING organization_id,user_id,user_role,scope,patient_id,code_challenge`,[hash,b.client_id,b.redirect_uri||null]); if(!r.rowCount)return reply.code(400).send({error:'Authorization code is invalid, expired or already used.'}); const expected=createHash('sha256').update(b.code_verifier).digest('base64url'); if(expected!==r.rows[0].code_challenge)return reply.code(400).send({error:'PKCE verification failed.'}); const accessToken=await app.jwt.sign({sub:r.rows[0].user_id||`smart:${b.client_id}`,organizationId:r.rows[0].organization_id,role:r.rows[0].user_role||'doctor',scope:r.rows[0].scope||'',smartClientId:b.client_id}, {expiresIn:'15m'}); return {access_token:accessToken,token_type:'Bearer',expires_in:900,scope:r.rows[0].scope||'',patient:r.rows[0].patient_id||undefined}; });
 
 registerWorkstream2DomainRoutes(app,pool,{dbOrganizationId,dbUserId,requireAuthorizedWrite,dbAudit,queueEvent,clinicalEventTypes:CLINICAL_EVENT_TYPES});
-registerWorkstream4JourneyRoutes(app,pool,{dbOrganizationId});
 
 app.listen({port:Number(process.env.PORT||4000),host:'0.0.0.0'});
 

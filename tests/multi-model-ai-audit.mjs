@@ -10,7 +10,9 @@ for (const table of ['ai_providers','ai_models','ai_provider_usage']) assert.ok(
 assert.ok(orch.includes('CLINAI_ALLOW_PUBLIC_AI_WITH_PATIENT_DATA'));
 assert.ok(orch.includes('CLINAI_STRICT_CAPABILITY_ROUTING'));
 assert.ok(orch.includes('AI_CAPABILITY_UNAVAILABLE'));
-assert.ok(orch.includes('clinicalRecordsProvided: false'));
+assert.ok(orch.includes('clinicalRecordsProvided: true'));
+assert.ok(orch.includes('syntheticData: true'));
+assert.ok(/organizationId|patientId|encounterId/.test(orch), 'Public-context identifier stripping policy missing');
 assert.ok(providers.includes('patientDataEligible'));
 assert.ok(providers.includes('modalities'));
 console.log('ClinAI multi-model AI audit passed.');

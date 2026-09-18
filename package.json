@@ -33,7 +33,8 @@
     "test:deployment:layout": "node scripts/deployment-layout-audit.mjs && node scripts/api-build-artifact-audit.mjs",
     "test:deployment:vercel-web": "node scripts/vercel-web-type-safety-audit.mjs",
     "test:frontend-backend:routes": "node tests/frontend-backend-route-audit.mjs",
-    "test:synthetic:coverage": "node tests/synthetic-module-coverage-audit.mjs"
+    "test:synthetic:coverage": "node tests/synthetic-module-coverage-audit.mjs",
+    "test:free-ai": "node tests/free-only-runtime-audit.mjs"
   },
   "devDependencies": {
     "@types/node": "latest",

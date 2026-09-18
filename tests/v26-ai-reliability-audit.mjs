@@ -9,5 +9,5 @@ assert.ok(p.includes('Gemini returned an unusable response'));
 assert.ok(p.includes('for (const model of candidates.slice(0, AI_FALLBACK_ATTEMPTS))'));
 assert.ok(providers.includes("body.response_format = { type: 'json_schema'"));
 assert.ok(p.includes('additionalProperties: false'));
-assert.ok(providers.includes("model.id === 'gpt-oss-120b'"));
+assert.ok(providers.includes("openai/gpt-oss-120b"));
 console.log('V26 AI reliability audit passed.');

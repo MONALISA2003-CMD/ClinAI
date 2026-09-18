@@ -11,7 +11,6 @@ Required environment variables already used by the project:
 - `GEMINI_API_KEY` or `GEMINI_AUTHORIZATION_KEY`
 - `OPENROUTER_API_KEY`
 - `GROQ_API_KEY`
-- `CEREBRAS_API_KEY`
 
 Recommended reliability configuration:
 
@@ -46,3 +45,23 @@ The web application does not contain provider secrets. Provider credentials stay
 ## Important
 
 Do not reset the Neon database. V26 contains no destructive database migration.
+
+## Free-only runtime gate
+Set these on the Render `clinai-api` service:
+
+```dotenv
+CLINAI_FREE_ONLY_RUNTIME=true
+GEMINI_FREE_TIER_MODE=true
+GEMINI_FREE_DAILY_LIMIT=10
+GEMINI_FREE_RPM_LIMIT=4
+GEMINI_FREE_MIN_INTERVAL_MS=15000
+OPENROUTER_FREE_DAILY_LIMIT=45
+OPENROUTER_FREE_RPM_LIMIT=18
+OPENROUTER_FREE_MIN_INTERVAL_MS=3500
+GROQ_FREE_DAILY_LIMIT=20
+GROQ_FREE_RPM_LIMIT=4
+GROQ_FREE_MIN_INTERVAL_MS=15000
+CLINAI_FREE_TOOL_ROUNDS=0
+```
+
+Do not configure a paid OpenAI/Cerebras runtime credential for ClinAI. GPT Astra is a future paid-tier capability and is disabled in the runtime.

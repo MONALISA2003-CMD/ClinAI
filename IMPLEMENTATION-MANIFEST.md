@@ -1,52 +1,41 @@
-ClinAI Workstream 4 implementation manifest
+ClinAI Workstream 5 implementation manifest
 
-This archive contains the source snapshot after Workstream 4 Coherent Synthetic Patient Journeys implementation, including the preserved Workstream 2 and Workstream 3 foundations.
+This archive contains the ClinAI source snapshot after the Workstream 5 free-only AI runtime hardening.
 
-Workstream 4 additions:
-- services/api/src/routes/workstream4Journeys.ts
-- database/migrations/029-workstream-4-coherent-synthetic-journeys.sql
-- docs/WORKSTREAM-4-COHERENT-SYNTHETIC-JOURNEYS.md
-- tests/workstream4-coherent-journeys.mjs
-- 30 TEST patient journey profiles
-- 12 reusable journey templates
-- 31 reusable journey step definitions
-- 354 authoritative journey milestones
-- 354 processed Workstream 4 outbox events with correlation and causation chains
-- 354 clinical workflow projections
-- 354 care graph edges
-- 30 synthetic continuity signals
-- private organization-scoped journey API surfaces
-- public synthetic journey projection API surface
+Implemented:
+- free-only runtime model registry with 16 models
+- 14 existing OpenRouter free models, including the NVIDIA Nemotron family
+- existing Gemini free path retained
+- existing Groq GPT-OSS free path retained
+- Cerebras trial runtime provider removed
+- paid OpenAI/GPT Astra runtime execution disabled and kept only as future governance metadata
+- Python deterministic-first clinical reasoning expanded with duplicate medication detection, missed/no-show appointment patterns and laboratory trend detection
+- hard free-only model-selection and network-call gate
+- provider-global free quota reservation ledger in Neon
+- Gemini, OpenRouter and Groq application safety budgets with conservative headroom
+- cross-instance quota reservations using ai_free_quota_state
+- zero free-tier tool continuations
+- Gemini code execution disabled in the free-only runtime
+- deterministic-first routing and free-provider fallback only
+- OpenRouter public/free models remain blocked from protected patient clinical context by default
+- synthetic/public patient testing remains explicitly marked as synthetic
+- free AI status and quota visibility exposed through existing AI status endpoints
+- updated runtime, deployment and AI architecture documentation
+- regression and free-tier audits updated and passing
+- Python deterministic intelligence audit added
 
-Workstream 4 live verification:
-- 30 journeys and 30 distinct TEST patients verified on Neon.
-- 354 journey steps verified with 0 missing authoritative IDs.
-- 354 Workstream 4 outbox events verified as processed.
-- 354 clinical workflow projections verified.
-- 354 care graph edges verified.
-- 324 causal outbox links verified.
-- 30 synthetic journey signals verified: 24 open, 6 resolved.
-- 30 coverage rows verified with journey step count equal to workflow projection count.
-- TEST-023 includes a synthetic birth event, newborn record and postnatal contact.
-- Signal authoritative IDs and workflow payload authoritative IDs verified for all signal steps.
-- No destructive database operation is used by Workstream 4.
+Live Neon verification was performed against the existing project/branch without resetting or truncating the database.
 
-Workstream 3 preserved:
-- services/api/src/events/connectedDataMap.ts
-- services/api/src/events/clinicalEventWorker.ts
-- database/migrations/028-workstream-3-event-platform-completion.sql
-- docs/CLINAI-CONNECTED-EVENT-DATA-MAP.md
-- docs/WORKSTREAM-3-CONNECTED-DATA-EVENT-ARCHITECTURE.md
-- tests/workstream3-connected-event-map.mjs
+Live free-quota safety rows:
+- Gemini: 10/day, 4/minute
+- OpenRouter: 45/day, 18/minute
+- Groq: 20/day, 4/minute
 
-Workstream 2 preserved:
-- services/api/src/routes/workstream2Domains.ts
-- database/migrations/026-workstream-2-domain-depth.sql
-- database/migrations/027-workstream-2-integrity-hardening.sql
-- tests/workstream2-domain-integrity.mjs
+Live governance verification:
+- astra-clinical-intelligence is draft, free-only and paid runtime disabled
+- active paid/trial capability count is 0
+- free quota usage is currently 0
 
-Verification notes:
-- Workstream 4 static integrity audit passes.
-- Live Neon verification passes for the metrics listed above.
-- Full local TypeScript production build is not claimed in this snapshot because the source workspace does not contain a complete installable dependency tree.
-- Existing deployment and stability artifacts from prior workstreams are preserved in the archive.
+Build note:
+- Full TypeScript build was not claimable in this environment because dependency installation timed out and node type definitions were unavailable locally.
+- Source-level, Python, route and AI regression audits passed.

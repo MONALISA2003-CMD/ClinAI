@@ -7,6 +7,7 @@ import { buildPatientIntelligence, buildEvidenceIndex, buildQuestionIntent, comp
 import { getLanguagePolicy, languageInstruction, SUPPORTED_CLINAI_LANGUAGES } from './language-policy.js';
 import { buildClinicalContext } from '../intelligence/clinicalContext.js';
 import { buildPatientIntelligenceLayer, recordSecurityEvent } from '../intelligence/enterpriseIntelligence.js';
+import { freeAIQuotaStatus, reserveFreeAIRequest } from './free-ai-budget.js';
 
 type Row = Record<string, any>;
 type Deps = {
@@ -23,18 +24,10 @@ const GEMINI_REASONING_MODEL = process.env.GEMINI_REASONING_MODEL || GEMINI_MODE
 const GEMINI_API_VERSION = 'v1';
 const AI_PROMPT_VERSION = 'clinai-intelligence-core-1';
 const INTELLIGENCE_SERVICE_URL = (process.env.INTELLIGENCE_SERVICE_URL || '').replace(/\/$/, '');
-const ENABLE_GEMINI_CODE_EXECUTION = process.env.GEMINI_ENABLE_CODE_EXECUTION === 'true';
-const FREE_TIER_MODE = process.env.GEMINI_FREE_TIER_MODE !== 'false';
-const GEMINI_MAX_TOOL_ROUNDS = FREE_TIER_MODE ? 0 : Math.min(4, Math.max(0, Number(process.env.GEMINI_MAX_TOOL_ROUNDS || 2)));
-const GEMINI_FREE_DAILY_LIMIT = Math.max(1, Number(process.env.GEMINI_FREE_DAILY_LIMIT || 4));
-const GEMINI_FREE_MIN_INTERVAL_MS = Math.max(0, Number(process.env.GEMINI_FREE_MIN_INTERVAL_MS || 0));
+const ENABLE_GEMINI_CODE_EXECUTION = false;
+const FREE_TIER_MODE = true;
+const GEMINI_MAX_TOOL_ROUNDS = 0;
 const GEMINI_FREE_MAX_INPUT_CHARS = Math.max(4000, Number(process.env.GEMINI_FREE_MAX_INPUT_CHARS || 18000));
-let freeTierLastRequestAt = 0;
-let freeTierRequestsToday = 0;
-let freeTierDay = new Date().toISOString().slice(0, 10);
-let freeTierLock: Promise<void> = Promise.resolve();
-const freeTierCache = new Map<string, { expiresAt: number; result: any }>();
-const GEMINI_FREE_CACHE_MS = Math.max(30000, Number(process.env.GEMINI_FREE_CACHE_MS || 300000));
 const ALLOW_PUBLIC_AI_WITH_PATIENT_DATA = process.env.CLINAI_ALLOW_PUBLIC_AI_WITH_PATIENT_DATA === 'true';
 const PUBLIC_TEST_DATA_ENABLED = process.env.CLINAI_PUBLIC_TEST_DATA !== 'false';
 const STRICT_CAPABILITY_ROUTING = process.env.CLINAI_STRICT_CAPABILITY_ROUTING !== 'false';
@@ -46,7 +39,8 @@ const AI_PROVIDER_TIMEOUT_MS = Math.max(2500, Number(process.env.CLINAI_PROVIDER
 const AI_QUICK_MAX_TOKENS = Math.max(180, Number(process.env.CLINAI_QUICK_MAX_TOKENS || 450));
 const AI_STANDARD_MAX_TOKENS = Math.max(500, Number(process.env.CLINAI_STANDARD_MAX_TOKENS || 1800));
 const AI_CONTEXT_CACHE_MS = Math.max(5000, Number(process.env.CLINAI_CONTEXT_CACHE_MS || 30000));
-const AI_FREE_TOOL_ROUNDS = Math.max(0, Math.min(1, Number(process.env.CLINAI_FREE_TOOL_ROUNDS || 1)));
+const AI_FREE_TOOL_ROUNDS = 0;
+const FREE_ONLY_RUNTIME = true;
 const contextCache = new Map<string, { expiresAt: number; value: any }>();
 
 const SECURITY_REFUSAL = 'I can help with ClinAI, patient care information available to you, facility activity, analysis, approved healthcare guidance and other ClinAI tasks. I cannot provide secrets, private instructions, access credentials, internal configuration or instructions for bypassing ClinAI security.';
@@ -55,7 +49,7 @@ const SECURITY_PATTERNS = [
   /(?:system|developer|hidden|private)\s*(?:prompt|instruction|message)/i,
   /(?:reveal|show|print|dump|expose|leak|disclose)\s+(?:the\s+)?(?:secret|secrets|api\s*key|token|password|credential|environment|env|configuration|config|source\s*code)/i,
   /(?:api\s*key|authorization\s*key|access\s*token|password|credential|secret)\s*(?:is|=|:)/i,
-  /(?:process\.env|GEMINI_|OPENROUTER_|GROQ_|CEREBRAS_|DATABASE_URL|JWT_SECRET|SERVICE_ACCOUNT)/i,
+  /(?:process\.env|GEMINI_|OPENROUTER_|GROQ_|DATABASE_URL|JWT_SECRET|SERVICE_ACCOUNT)/i,
   /(?:bypass|disable|evade|circumvent)\s+(?:security|authentication|authorization|tenant|permission|access\s+control)/i,
   /(?:hack|exploit|attack|break\s+into|penetrate)\s+(?:clinai|this\s+system|the\s+system|the\s+api|the\s+database)/i,
   /(?:ignore|disregard|override)\s+(?:all|any|previous|above)\s+(?:instructions|rules|policies)/i,
@@ -111,7 +105,7 @@ function sanitizeClinAIResponse(text: string) {
   let value = String(text || '').trim();
   value = value.replace(/```[\s\S]*?```/g, '');
   value = value.replace(/(?:^|\n)\s*(?:system|developer)\s*(?:prompt|message|instruction)\s*:/gi, '\n');
-  value = value.replace(/(?:GEMINI_AUTHORIZATION_KEY|GEMINI_API_KEY|OPENROUTER_API_KEY|GROQ_API_KEY|CEREBRAS_API_KEY|DATABASE_URL|JWT_SECRET|SERVICE_ACCOUNT)[^\n]*/gi, '[private configuration omitted]');
+  value = value.replace(/(?:GEMINI_AUTHORIZATION_KEY|GEMINI_API_KEY|OPENROUTER_API_KEY|GROQ_API_KEY|DATABASE_URL|JWT_SECRET|SERVICE_ACCOUNT)[^\n]*/gi, '[private configuration omitted]');
   value = value.replace(/AIza[0-9A-Za-z_-]{20,}/g, '[private credential omitted]');
   value = value.replace(/\b(?:sk|pk)_[A-Za-z0-9_-]{16,}\b/g, '[private credential omitted]');
   value = value.replace(/\b(?:Bearer\s+)[A-Za-z0-9._-]{12,}/gi, 'Bearer [private credential omitted]');
@@ -145,23 +139,6 @@ function polishClinAIAnswer(answer: Row, fallback = 'I could not complete that r
   out.reasoningSummary = '';
   out.confidence = out.confidence || 'moderate';
   return out;
-}
-
-async function acquireFreeTierSlot() {
-  if (!FREE_TIER_MODE) return;
-  const current = freeTierLock.then(async () => {
-    const day = new Date().toISOString().slice(0, 10);
-    if (day !== freeTierDay) { freeTierDay = day; freeTierRequestsToday = 0; }
-    if (freeTierRequestsToday >= GEMINI_FREE_DAILY_LIMIT) {
-      throw Object.assign(new Error('ClinAI free AI usage limit has been reached for today. Please try again after the daily quota resets.'), { statusCode: 429, code: 'LOCAL_FREE_TIER_LIMIT' });
-    }
-    const wait = Math.max(0, GEMINI_FREE_MIN_INTERVAL_MS - (Date.now() - freeTierLastRequestAt));
-    if (wait) await new Promise(resolve => setTimeout(resolve, wait));
-    freeTierLastRequestAt = Date.now();
-    freeTierRequestsToday += 1;
-  });
-  freeTierLock = current.catch(() => undefined);
-  return current;
 }
 
 const aiSafety = [
@@ -743,6 +720,7 @@ async function runOpenAICompatibleAgent(deps: Deps, req: any, model: any, input:
       maxTokens: options.mode === 'quick' ? AI_QUICK_MAX_TOKENS : AI_STANDARD_MAX_TOKENS,
       tools: allowTools && round < maxRounds ? (options.publicMode ? publicToolDeclarations() : openAIToolDeclarations()) : undefined,
       messages,
+      pool: deps.pool,
     });
     usage = response.usage || usage;
     const message = response.message || {};
@@ -919,6 +897,7 @@ User request:
 ${input}`;
 
   if (!MULTI_MODEL_MODE) return runGeminiAgent(deps, req, input, effectiveOptions, prompt, context, evidence, cacheKey);
+  if (!FREE_ONLY_RUNTIME) throw Object.assign(new Error('ClinAI is configured to require free-tier runtime models only.'), { statusCode: 503, code: 'AI_FREE_ONLY_REQUIRED' });
 
   const candidates: any[] = [];
   const configured = configuredProviders();
@@ -932,7 +911,7 @@ ${input}`;
   const eligible = AI_MODELS.filter(x => {
     const dataEligible = !patientData || (x.patientDataEligible && !x.noPersonalData && (!x.publicEndpoint || publicPatientPolicy));
     const capabilityEligible = !selectionCapability || modelSupportsCapability(x, selectionCapability);
-    return x.enabled && configured[x.provider] && dataEligible && capabilityEligible;
+    return FREE_ONLY_RUNTIME && x.tier === 'free' && x.enabled && configured[x.provider] && dataEligible && capabilityEligible;
   }).sort((a,b)=>a.priority-b.priority);
   for (const m of eligible) if (!candidates.some(x => x.id === m.id)) candidates.push(m);
   if (!candidates.length) {
@@ -1029,12 +1008,11 @@ async function runGeminiAgent(deps: Deps, req: any, input: string, options: any,
   const tools: any[] = freeGemini ? [] : options.publicMode ? (options.allowResearch ? [{ type: 'google_search' }, { type: 'url_context' }] : options.mode === 'analysis' ? toolDeclarations.filter((t:any) => t.name === 'calculate' || t.name === 'analyze_dataset') : []) : [...toolDeclarations];
   if (!freeGemini && !options.publicMode && options.allowResearch) tools.push({ type: 'google_search' }, { type: 'url_context' });
   if (!freeGemini && !options.publicMode && options.allowCodeExecution && ENABLE_GEMINI_CODE_EXECUTION) tools.push({ type: 'code_execution' });
-  await acquireFreeTierSlot();
   const model = selectedModel || (options.mode === 'quick' ? GEMINI_FAST_MODEL : GEMINI_REASONING_MODEL);
   const geminiContent:any[] = [{ type: 'text', text: aiText(prompt, GEMINI_FREE_MAX_INPUT_CHARS) }];
   for (const a of (options.attachments || [])) { if (a.kind === 'image' && a.dataUrl) geminiContent.push({ type:'image', mime_type:a.mimeType||'image/jpeg', data:a.dataUrl.replace(/^data:[^;]+;base64,/,'') }); }
   const history: any[] = [{ type: 'user_input', content: geminiContent }];
-  let interaction: any = await geminiRequest({ model, input: history, system_instruction: baseSystem, tools, store: false, response_format: { type: 'text', mime_type: 'application/json', schema: responseSchema } });
+  let interaction: any = await geminiRequest({ model, input: history, system_instruction: baseSystem, tools, store: false, response_format: { type: 'text', mime_type: 'application/json', schema: responseSchema } }, deps.pool);
   const toolsUsed: Row[] = [];
   const calculations: Row[] = [];
   let loop = 0;
@@ -1051,7 +1029,7 @@ async function runGeminiAgent(deps: Deps, req: any, input: string, options: any,
       results.push({ type: 'function_result', name: call.name, call_id: call.id, result: [{ type: 'text', text: aiText(result, 12000) }] });
     }
     history.push(...results);
-    interaction = await geminiRequest({ model, input: history, system_instruction: baseSystem, tools, store: false, response_format: { type: 'text', mime_type: 'application/json', schema: responseSchema } });
+    interaction = await geminiRequest({ model, input: history, system_instruction: baseSystem, tools, store: false, response_format: { type: 'text', mime_type: 'application/json', schema: responseSchema } }, deps.pool);
     loop += 1;
   }
   const raw = extractText(interaction.data);
@@ -1063,7 +1041,8 @@ async function runGeminiAgent(deps: Deps, req: any, input: string, options: any,
   return result;
 }
 
-async function geminiRequest(body: any) {
+async function geminiRequest(body: any, pool: Pool | null) {
+  await reserveFreeAIRequest(pool, 'gemini');
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), AI_PROVIDER_TIMEOUT_MS);
   let response: Response;
@@ -1159,7 +1138,7 @@ export function registerPublicAI(deps: Deps) {
 
 export function registerAI(deps: Deps) {
   const { app, pool } = deps;
-  app.get('/api/ai/status', async (req: any) => ({ role: req.user?.role || null, configured: Object.values(configuredProviders()).some(Boolean), intelligenceEngineConfigured: Boolean(INTELLIGENCE_SERVICE_URL), codeExecutionEnabled: ENABLE_GEMINI_CODE_EXECUTION, model: GEMINI_MODEL, apiVersion: GEMINI_API_VERSION, promptVersion: AI_PROMPT_VERSION, mode: FREE_TIER_MODE ? 'free-tier single-call human-reviewed intelligence' : 'tool-using human-reviewed intelligence' }));
+  app.get('/api/ai/status', async (req: any) => ({ role: req.user?.role || null, configured: Object.values(configuredProviders()).some(Boolean), intelligenceEngineConfigured: Boolean(INTELLIGENCE_SERVICE_URL), codeExecutionEnabled: ENABLE_GEMINI_CODE_EXECUTION, freeOnlyRuntime: FREE_ONLY_RUNTIME, model: GEMINI_MODEL, apiVersion: GEMINI_API_VERSION, promptVersion: AI_PROMPT_VERSION, mode: 'free-tier deterministic-first human-reviewed intelligence', quota: await freeAIQuotaStatus(deps.pool) }));
   app.get('/api/ai/providers', async () => ({ data: { multiModelEnabled: MULTI_MODEL_MODE, strictCapabilityRouting: STRICT_CAPABILITY_ROUTING, publicPatientDataAllowed: ALLOW_PUBLIC_AI_WITH_PATIENT_DATA, providers: configuredProviders(), models: availableModels() } }));
   app.post('/api/ai/router', async (req:any, reply:any) => { const body=z.object({ mode:z.string().optional(), patientData:z.boolean().default(false), preferredModel:z.string().optional(), capability:z.enum(['text','multimodal','image','audio','video','agentic','medical','coding','research','fast']).optional() }).parse(req.body||{}); const model=selectModel(body); return model ? { data:model } : reply.code(503).send({error:'No configured AI provider is available for this request.'}); });
 

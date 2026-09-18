@@ -4,7 +4,7 @@ const web=fs.readFileSync('apps/web/app/page.tsx','utf8');
 const checks=[
  ['fast deterministic intent router',/function fastIntent\(/],
  ['simple task fast path',/tryFastPath\(/],
- ['zero default free-tier delay',/GEMINI_FREE_MIN_INTERVAL_MS.*\|\| 0/],
+ ['free-tier quota guard',/reserveFreeAIRequest/],
  ['provider timeout tightened',/CLINAI_PROVIDER_TIMEOUT_MS.*\|\| 9000/],
  ['natural language response rendering',/function responseToPlain\(/],
  ['localized response headings',/responseHeadings\(/],
