@@ -26,6 +26,8 @@ ok('workflow activity endpoint', route.includes('/api/core-clinical/workflows/ac
 ok('triage queues and observations', route.includes('INSERT INTO observations') && route.includes('INSERT INTO queue_entries'));
 ok('workflow events emitted', ['triage.assessment.recorded','diagnosis.recorded','clinical-note.recorded','care-plan.created','referral.created','referral.transfer.created','care-task.created'].every(x=>route.includes(x)));
 ok('legacy triage compatibility writes authoritative table', /app\.post\('\/api\/triage'/.test(main) && /INSERT INTO triage_assessments/.test(main));
+const legacyTriageBlock = main.slice(main.indexOf("app.post('/api/triage'"), main.indexOf("app.get('/api/orders'"));
+ok('legacy triage schema covers persistence fields', ['arrivedAt','arrivalMode','acuity','triageCategory','mentalStatus','mobilityStatus','infectionPrecautions','riskFlags','notes','disposition'].every(field=>new RegExp('\\bt\\.'+field+'\\b').test(legacyTriageBlock)) && ['arrivedAt','arrivalMode','acuity','triageCategory','mentalStatus','mobilityStatus','infectionPrecautions','riskFlags','notes','disposition'].every(field=>new RegExp('\\b'+field+'\\s*:').test(main.slice(main.indexOf('const triage=z.object'), main.indexOf('const generic')))));
 ok('frontend Phase 2 workspace', page.includes('CoreClinicalWorkspace') && page.includes('Phase2Trend') && page.includes('Phase2Bars'));
 ok('frontend Phase 2 API', page.includes('/api/core-clinical/') && page.includes('WorkflowActivity'));
 ok('responsive Phase 2 CSS', css.includes('.phase2-workspace') && css.includes('@media(max-width:620px)'));
