@@ -39,7 +39,7 @@ await loadStore();
 const PUBLIC_PREVIEW = process.env.CLINAI_PUBLIC_PREVIEW === 'true';
 const PRODUCTION = process.env.NODE_ENV === 'production';
 const DEMO_AUTH_ENABLED = process.env.NODE_ENV !== 'production' && process.env.CLINAI_ENABLE_DEMO_AUTH === 'true';
-const PUBLIC_API_PATHS = new Set(['/api/public/feedback','/api/public/preview','/api/public/ai-assist','/api/public/ai-status','/api/public/ai-feedback','/api/public/test-dashboard','/api/public/test-patients','/api/public/test-modules','/api/public/test-intelligence']);
+const PUBLIC_API_PATHS = new Set(['/api/public/feedback','/api/public/preview','/api/public/ai-assist','/api/public/ai-status','/api/public/ai-feedback','/api/public/test-dashboard','/api/public/test-patients','/api/public/test-modules','/api/public/test-intelligence','/api/public/test-session']);
 const PUBLIC_TEST_DATA_ENABLED = process.env.CLINAI_PUBLIC_TEST_DATA !== 'false';
 const WRITE_ROLES = new Set(['admin','doctor','nurse','lab','pharmacist','reception','cashier','inventory','manager']);
 const READ_ONLY_ROLES = new Set(['viewer','analyst']);
@@ -746,6 +746,18 @@ app.get('/api/encounters',async(req:any)=>{
   if(req.query?.patientId){params.push(String(req.query.patientId));where+=' AND e.patient_id=$2';}
   const x=await pool.query(`SELECT e.id,e.organization_id AS "organizationId",e.patient_id AS "patientId",e.appointment_id AS "appointmentId",e.provider_user_id AS "providerId",e.facility_id AS "facilityId",e.type,e.status,e.started_at AS "startedAt",e.ended_at AS "endedAt" FROM encounters e WHERE ${where} ORDER BY e.started_at DESC LIMIT 200`,params); return {data:x.rows,count:x.rowCount};
 });
+app.post('/api/public/test-session',async(req:any,reply:any)=>{
+  if(!pool)return reply.code(503).send({error:'Public synthetic workspace requires PostgreSQL'});
+  if(!PUBLIC_TEST_DATA_ENABLED)return reply.code(403).send({error:'Public test data is currently disabled.'});
+  try{
+    const orgQ=await pool.query(`SELECT p.organization_id AS "organizationId",COUNT(*)::int AS total,COUNT(*) FILTER (WHERE p.is_test_data=true)::int AS synthetic FROM patients p WHERE p.is_test_data=true AND p.email ILIKE '%@clinaidemoemail.com' GROUP BY p.organization_id ORDER BY COUNT(*) DESC LIMIT 1`);
+    if(!orgQ.rowCount || Number(orgQ.rows[0].total)!==Number(orgQ.rows[0].synthetic) || Number(orgQ.rows[0].synthetic)<1) return reply.code(503).send({error:'A dedicated synthetic test workspace is not available.'});
+    const organizationId=orgQ.rows[0].organizationId;
+    const token=await app.jwt.sign({sub:'system',organizationId,role:'admin',publicSynthetic:true}, {expiresIn:'2h'});
+    return {data:{token,expiresInSeconds:7200,synthetic:true}};
+  }catch{ return reply.code(503).send({error:'The public synthetic workspace could not be prepared.'}); }
+});
+
 app.post('/api/patients',async(req:any,reply)=>{
   const p=patient.parse(req.body);
   if(!pool) return reply.code(201).send(add('patients',{...p,patientNumber:`CLN-${String(store.patients.length+1).padStart(6,'0')}`,status:'active'},req));
@@ -755,7 +767,7 @@ app.post('/api/patients',async(req:any,reply)=>{
     if(duplicate.rowCount){ await client.query('ROLLBACK'); return reply.code(409).send({error:'Possible duplicate patient',duplicate:duplicate.rows[0]}); }
     const seq=await client.query("SELECT COALESCE(MAX(CASE WHEN patient_number ~ '^CLN-[0-9]+$' THEN substring(patient_number from 5)::integer ELSE 0 END),0)+1 AS n FROM patients WHERE organization_id=$1",[dbOrganizationId(req)]);
     const number=`CLN-${String(seq.rows[0].n).padStart(6,'0')}`;
-    const r=await client.query(`INSERT INTO patients(organization_id,facility_id,patient_number,first_name,middle_name,last_name,date_of_birth,sex,phone,email,national_identifier,preferred_language,address) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id,organization_id AS "organizationId",facility_id AS "facilityId",patient_number AS "patientNumber",first_name AS "firstName",middle_name AS "middleName",last_name AS "lastName",date_of_birth AS "dateOfBirth",sex,phone,email,national_identifier AS "nationalId",preferred_language AS "preferredLanguage",address,status,created_at AS "createdAt",updated_at AS "updatedAt"`,[dbOrganizationId(req),p.facilityId||null,number,p.firstName,p.middleName||null,p.lastName,p.dateOfBirth||null,p.sex||null,p.phone||null,p.email||null,p.nationalId||null,p.preferredLanguage||null,p.address?JSON.stringify(p.address):null]);
+    const r=await client.query(`INSERT INTO patients(organization_id,facility_id,patient_number,first_name,middle_name,last_name,date_of_birth,sex,phone,email,national_identifier,preferred_language,address,is_test_data) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id,organization_id AS "organizationId",facility_id AS "facilityId",patient_number AS "patientNumber",first_name AS "firstName",middle_name AS "middleName",last_name AS "lastName",date_of_birth AS "dateOfBirth",sex,phone,email,national_identifier AS "nationalId",preferred_language AS "preferredLanguage",address,status,created_at AS "createdAt",updated_at AS "updatedAt"`,[dbOrganizationId(req),p.facilityId||null,number,p.firstName,p.middleName||null,p.lastName,p.dateOfBirth||null,p.sex||null,p.phone||null,p.email||null,p.nationalId||null,p.preferredLanguage||null,p.address?JSON.stringify(p.address):null,Boolean(req.user?.publicSynthetic)]);
     await dbAudit(client,req,'CREATE','patient',r.rows[0].id,{patientNumber:number}); await queueEvent(client,req,CLINICAL_EVENT_TYPES.PATIENT_REGISTERED,{patientId:r.rows[0].id,patientNumber:number}); await client.query('COMMIT'); return reply.code(201).send(r.rows[0]);
   }catch(e:any){ await client.query('ROLLBACK'); if(e.code==='23505') return reply.code(409).send({error:'Patient number already exists'}); throw e; } finally{client.release();}
 });

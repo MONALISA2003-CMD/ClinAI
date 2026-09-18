@@ -533,7 +533,7 @@
         },
         {
           "key": "spo2",
-          "label": "SpO₂",
+          "label": "SpO\u2082",
           "type": "number",
           "required": true
         },
@@ -2527,7 +2527,7 @@
         },
         {
           "key": "spo2",
-          "label": "SpO₂",
+          "label": "SpO\u2082",
           "type": "number",
           "required": true
         }
@@ -2652,7 +2652,7 @@
         },
         {
           "key": "spo2",
-          "label": "SpO₂",
+          "label": "SpO\u2082",
           "type": "number",
           "required": true
         }
@@ -3186,7 +3186,7 @@
       "frontendRoute": "/billing",
       "backend": {
         "endpoint": "/api/contracts/modules/billing",
-        "createEndpoint": "/api/contracts/modules/billing",
+        "createEndpoint": "/api/domains/finance/invoices",
         "contractRoute": "/api/contracts/modules/billing"
       },
       "databaseSource": "invoices",
@@ -3196,14 +3196,16 @@
           "label": "Patient ID",
           "type": "text",
           "format": "uuid",
-          "required": true
+          "required": true,
+          "placeholder": "Patient record ID"
         },
         {
           "key": "encounterId",
           "label": "Encounter ID",
           "type": "text",
           "format": "uuid",
-          "required": true
+          "required": false,
+          "placeholder": "Optional encounter ID"
         },
         {
           "key": "description",
@@ -3213,7 +3215,7 @@
         },
         {
           "key": "total",
-          "label": "Total",
+          "label": "Total amount",
           "type": "number",
           "required": true
         },
@@ -3232,11 +3234,10 @@
         }
       ],
       "requiredFields": [
-        "currency",
-        "description",
-        "encounterId",
         "patientId",
-        "total"
+        "description",
+        "total",
+        "currency"
       ],
       "relationships": [
         {
@@ -3302,7 +3303,7 @@
       "frontendRoute": "/payments",
       "backend": {
         "endpoint": "/api/contracts/modules/payments",
-        "createEndpoint": "/api/contracts/modules/payments",
+        "createEndpoint": "/api/billing/:id/pay",
         "contractRoute": "/api/contracts/modules/payments"
       },
       "databaseSource": "payments",
@@ -3322,7 +3323,7 @@
         },
         {
           "key": "method",
-          "label": "Method",
+          "label": "Payment method",
           "options": [
             "cash",
             "mobile-money",
@@ -3331,11 +3332,17 @@
           ],
           "type": "text",
           "required": true
+        },
+        {
+          "key": "providerReference",
+          "label": "Provider reference",
+          "type": "text",
+          "required": false
         }
       ],
       "requiredFields": [
-        "amount",
         "invoiceId",
+        "amount",
         "method"
       ],
       "relationships": [
@@ -3398,7 +3405,7 @@
       "frontendRoute": "/insurance",
       "backend": {
         "endpoint": "/api/contracts/modules/insurance",
-        "createEndpoint": "/api/contracts/modules/insurance",
+        "createEndpoint": "/api/domains/insurance/policies",
         "contractRoute": "/api/contracts/modules/insurance"
       },
       "databaseSource": "insurance_policies",
@@ -3411,22 +3418,78 @@
           "required": true
         },
         {
-          "key": "provider",
-          "label": "Provider",
+          "key": "providerId",
+          "label": "Insurance provider ID",
           "type": "text",
-          "required": true
+          "format": "uuid",
+          "required": false
+        },
+        {
+          "key": "providerName",
+          "label": "Provider name",
+          "type": "text",
+          "required": false,
+          "placeholder": "Used to create a provider when provider ID is not supplied"
         },
         {
           "key": "policyNumber",
           "label": "Policy number",
-          "type": "number",
+          "type": "text",
           "required": true
+        },
+        {
+          "key": "memberNumber",
+          "label": "Member number",
+          "type": "text",
+          "required": false
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "options": [
+            "active",
+            "inactive",
+            "expired",
+            "suspended"
+          ],
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "effectiveFrom",
+          "label": "Effective from",
+          "type": "date",
+          "required": false
+        },
+        {
+          "key": "effectiveTo",
+          "label": "Effective to",
+          "type": "date",
+          "required": false
+        },
+        {
+          "key": "copayPercent",
+          "label": "Copay percent",
+          "type": "number",
+          "required": false
+        },
+        {
+          "key": "annualLimit",
+          "label": "Annual limit",
+          "type": "number",
+          "required": false
+        },
+        {
+          "key": "coverage",
+          "label": "Coverage details (JSON)",
+          "type": "text",
+          "required": false
         }
       ],
       "requiredFields": [
         "patientId",
         "policyNumber",
-        "provider"
+        "status"
       ],
       "relationships": [
         {
@@ -3488,7 +3551,7 @@
       "frontendRoute": "/claims",
       "backend": {
         "endpoint": "/api/contracts/modules/claims",
-        "createEndpoint": "/api/contracts/modules/claims",
+        "createEndpoint": "/api/domains/claims",
         "contractRoute": "/api/contracts/modules/claims"
       },
       "databaseSource": "claims",
@@ -3501,9 +3564,42 @@
           "required": true
         },
         {
+          "key": "policyId",
+          "label": "Policy ID",
+          "type": "text",
+          "format": "uuid",
+          "required": false
+        },
+        {
+          "key": "invoiceId",
+          "label": "Invoice ID",
+          "type": "text",
+          "format": "uuid",
+          "required": false
+        },
+        {
           "key": "claimNumber",
           "label": "Claim number",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "amount",
+          "label": "Claim amount",
           "type": "number",
+          "required": true
+        },
+        {
+          "key": "currency",
+          "label": "Currency",
+          "options": [
+            "UGX",
+            "USD",
+            "EUR",
+            "KES",
+            "TZS"
+          ],
+          "type": "text",
           "required": true
         },
         {
@@ -3513,15 +3609,36 @@
             "draft",
             "submitted",
             "approved",
-            "rejected"
+            "rejected",
+            "partially-approved"
           ],
           "type": "text",
           "required": true
+        },
+        {
+          "key": "coverageAmount",
+          "label": "Coverage amount",
+          "type": "number",
+          "required": false
+        },
+        {
+          "key": "patientResponsibility",
+          "label": "Patient responsibility",
+          "type": "number",
+          "required": false
+        },
+        {
+          "key": "externalReference",
+          "label": "External reference",
+          "type": "text",
+          "required": false
         }
       ],
       "requiredFields": [
-        "claimNumber",
         "patientId",
+        "claimNumber",
+        "amount",
+        "currency",
         "status"
       ],
       "relationships": [
@@ -3584,14 +3701,37 @@
       "frontendRoute": "/accounting",
       "backend": {
         "endpoint": "/api/contracts/modules/accounting",
-        "createEndpoint": "/api/contracts/modules/accounting",
+        "createEndpoint": "/api/domains/finance/accounting",
         "contractRoute": "/api/contracts/modules/accounting"
       },
       "databaseSource": "accounting_entries",
       "fields": [
         {
+          "key": "entryDate",
+          "label": "Entry date",
+          "type": "date",
+          "required": false
+        },
+        {
+          "key": "accountCode",
+          "label": "Account code",
+          "type": "text",
+          "required": false
+        },
+        {
           "key": "description",
           "label": "Entry description",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "entryType",
+          "label": "Entry type",
+          "options": [
+            "income",
+            "expense",
+            "adjustment"
+          ],
           "type": "text",
           "required": true
         },
@@ -3602,21 +3742,37 @@
           "required": true
         },
         {
-          "key": "type",
-          "label": "Type",
+          "key": "currency",
+          "label": "Currency",
           "options": [
-            "income",
-            "expense",
-            "adjustment"
+            "UGX",
+            "USD",
+            "EUR",
+            "KES",
+            "TZS"
           ],
           "type": "text",
           "required": true
+        },
+        {
+          "key": "referenceType",
+          "label": "Reference type",
+          "type": "text",
+          "required": false
+        },
+        {
+          "key": "referenceId",
+          "label": "Reference ID",
+          "type": "text",
+          "format": "uuid",
+          "required": false
         }
       ],
       "requiredFields": [
-        "amount",
         "description",
-        "type"
+        "entryType",
+        "amount",
+        "currency"
       ],
       "relationships": [],
       "permissions": {
@@ -3673,7 +3829,7 @@
       "frontendRoute": "/inventory",
       "backend": {
         "endpoint": "/api/contracts/modules/inventory",
-        "createEndpoint": "/api/contracts/modules/inventory",
+        "createEndpoint": "/api/domains/inventory/items",
         "contractRoute": "/api/contracts/modules/inventory"
       },
       "databaseSource": "inventory_items + inventory_batches + stock_movements",
@@ -3688,25 +3844,65 @@
           "key": "sku",
           "label": "SKU",
           "type": "text",
-          "required": true
-        },
-        {
-          "key": "quantity",
-          "label": "Quantity",
-          "type": "number",
-          "required": true
+          "required": false
         },
         {
           "key": "unit",
           "label": "Unit",
           "type": "text",
           "required": true
+        },
+        {
+          "key": "category",
+          "label": "Category",
+          "type": "text",
+          "required": false
+        },
+        {
+          "key": "reorderLevel",
+          "label": "Reorder level",
+          "type": "number",
+          "required": false
+        },
+        {
+          "key": "reorderQuantity",
+          "label": "Reorder quantity",
+          "type": "number",
+          "required": false
+        },
+        {
+          "key": "unitCost",
+          "label": "Unit cost",
+          "type": "number",
+          "required": false
+        },
+        {
+          "key": "initialQuantity",
+          "label": "Initial quantity",
+          "type": "number",
+          "required": false
+        },
+        {
+          "key": "batchNumber",
+          "label": "Initial batch number",
+          "type": "text",
+          "required": false
+        },
+        {
+          "key": "expiryDate",
+          "label": "Initial batch expiry",
+          "type": "date",
+          "required": false
+        },
+        {
+          "key": "location",
+          "label": "Initial stock location",
+          "type": "text",
+          "required": false
         }
       ],
       "requiredFields": [
         "name",
-        "quantity",
-        "sku",
         "unit"
       ],
       "relationships": [],
@@ -3764,20 +3960,21 @@
       "frontendRoute": "/procurement",
       "backend": {
         "endpoint": "/api/contracts/modules/procurement",
-        "createEndpoint": "/api/contracts/modules/procurement",
+        "createEndpoint": "/api/domains/procurement/requests",
         "contractRoute": "/api/contracts/modules/procurement"
       },
       "databaseSource": "procurement_requests + purchase_orders",
       "fields": [
         {
-          "key": "supplier",
-          "label": "Supplier",
+          "key": "supplierId",
+          "label": "Supplier ID",
           "type": "text",
-          "required": true
+          "format": "uuid",
+          "required": false
         },
         {
           "key": "description",
-          "label": "Order description",
+          "label": "Request description",
           "type": "text",
           "required": true
         },
@@ -3786,12 +3983,17 @@
           "label": "Quantity",
           "type": "number",
           "required": true
+        },
+        {
+          "key": "notes",
+          "label": "Notes (JSON)",
+          "type": "text",
+          "required": false
         }
       ],
       "requiredFields": [
         "description",
-        "quantity",
-        "supplier"
+        "quantity"
       ],
       "relationships": [],
       "permissions": {
@@ -3848,7 +4050,7 @@
       "frontendRoute": "/suppliers",
       "backend": {
         "endpoint": "/api/contracts/modules/suppliers",
-        "createEndpoint": "/api/contracts/modules/suppliers",
+        "createEndpoint": "/api/domains/procurement/suppliers",
         "contractRoute": "/api/contracts/modules/suppliers"
       },
       "databaseSource": "suppliers",
@@ -3863,19 +4065,41 @@
           "key": "phone",
           "label": "Phone",
           "type": "text",
-          "required": true
+          "required": false
         },
         {
           "key": "email",
           "label": "Email",
           "type": "email",
+          "required": false
+        },
+        {
+          "key": "category",
+          "label": "Category",
+          "type": "text",
+          "required": false
+        },
+        {
+          "key": "paymentTerms",
+          "label": "Payment terms",
+          "type": "text",
+          "required": false
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "options": [
+            "active",
+            "inactive",
+            "suspended"
+          ],
+          "type": "text",
           "required": true
         }
       ],
       "requiredFields": [
-        "email",
         "name",
-        "phone"
+        "status"
       ],
       "relationships": [],
       "permissions": {

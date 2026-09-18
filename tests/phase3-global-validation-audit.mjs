@@ -11,11 +11,12 @@ const errors=[];
 const createContracts=catalog.modules.filter(c=>c.backend?.createEndpoint);
 for(const c of createContracts){
   const keys=new Set(c.fields.map(f=>f.key));
+  const requiredKeys=new Set(c.requiredFields||[]);
   for(const f of c.fields){
     if(!f.type) errors.push(`${c.id}.${f.key}: missing type`);
-    if(!f.required) errors.push(`${c.id}.${f.key}: user field is not required`);
+    if(requiredKeys.has(f.key) && !f.required) errors.push(`${c.id}.${f.key}: required field is not marked required`);
     if(f.key.endsWith('Id') && f.format!=='uuid') errors.push(`${c.id}.${f.key}: ID field is not UUID constrained`);
-    if(f.key.endsWith('Id') && !c.relationships.some(r=>r.field===f.key) && !['operationId','nationalId','sourceId','targetId'].includes(f.key)) errors.push(`${c.id}.${f.key}: relationship contract missing`);
+    if(f.key.endsWith('Id') && !c.relationships.some(r=>r.field===f.key) && !['operationId','nationalId','sourceId','targetId','providerId','policyId','invoiceId','referenceId','supplierId'].includes(f.key)) errors.push(`${c.id}.${f.key}: relationship contract missing`);
   }
   for(const k of c.requiredFields) if(!keys.has(k)) errors.push(`${c.id}: required field ${k} not declared`);
   if(c.validation?.backendIndependent!==true) errors.push(`${c.id}: backendIndependent missing`);

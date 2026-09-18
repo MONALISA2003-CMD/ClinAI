@@ -10,7 +10,7 @@ assert.ok(api.includes('testPatientNumber') && api.includes('publicTestPatient')
 assert.ok(api.includes('is_test_data=true'),'public AI must resolve only synthetic test patients');
 assert.ok(api.includes("allowCodeExecution: false"),'public AI must not enable code execution');
 assert.ok(api.includes("t.name === 'calculate' || t.name === 'analyze_dataset'"),'public tool allowlist missing');
-assert.ok(web.includes('publicMode={!token}'),'web must expose public AI when no session exists');
+assert.ok(web.includes('publicMode={publicWorkspace}') || web.includes('publicMode={!token}'),'web must expose public AI in public testing mode');
 assert.ok(web.includes('/api/public/ai-assist'),'web must call the public AI endpoint');
 assert.ok(web.includes('/api/public/ai-feedback'),'web must collect anonymous AI feedback');
 assert.ok(web.includes('Add synthetic media'),'public multimodal testing control missing');

@@ -113,7 +113,8 @@ function sanitizeClinAIResponse(text: string) {
   // Final user-facing safety boundary: implementation identifiers and SQL-like output never cross it.
   value = value.replace(/\b(?:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\b/gi, '[internal identifier omitted]');
   value = value.replace(/\b(?:organization_id|patient_id|encounter_id|user_id|facility_id|run_id|request_id|capability_id|claim_id|invoice_id|order_id|medication_order_id|provider_key|model_key)\b\s*[:=]\s*[^,\n;]+/gi, '[internal reference omitted]');
-  value = value.replace(/\b(?:SELECT|INSERT|UPDATE|DELETE|FROM|JOIN|WHERE|RETURNING|CREATE TABLE|ALTER TABLE)\b[\s\S]{0,800}?;?/gi, '[internal implementation omitted]');
+  // Only redact code-like SQL statements. Do not redact ordinary clinical prose containing words such as "from" or "where".
+  value = value.replace(/(?:\bSELECT\s+(?:\*|[A-Za-z_][A-Za-z0-9_.$]*(?:\s*,\s*[A-Za-z_][A-Za-z0-9_.$]*)*)\s+FROM\s+[A-Za-z_][A-Za-z0-9_.$]*(?:[\s\S]{0,900}?;|$)|\bINSERT\s+INTO\s+[A-Za-z_][A-Za-z0-9_.$]*[\s\S]{0,900}?(?:;|$)|\bUPDATE\s+[A-Za-z_][A-Za-z0-9_.$]*\s+SET\b[\s\S]{0,900}?(?:;|$)|\bDELETE\s+FROM\s+[A-Za-z_][A-Za-z0-9_.$]*[\s\S]{0,900}?(?:;|$)|\bCREATE\s+TABLE\s+[A-Za-z_][A-Za-z0-9_.$]*[\s\S]{0,900}?(?:;|$)|\bALTER\s+TABLE\s+[A-Za-z_][A-Za-z0-9_.$]*[\s\S]{0,900}?(?:;|$))/gi, '[internal implementation omitted]');
   value = value.split('\n').filter(line => !/^(?:\s*)(?:provider|model|api version|tools used|calculations used|latency|structured response|response schema|raw response|implementation|technical details?|system prompt|developer prompt|internal configuration|internal endpoint|database|sql)\s*[:：]/i.test(line)).join('\n');
   value = value.replace(/\n{3,}/g, '\n\n').trim();
   return value;
@@ -605,7 +606,7 @@ function responseToPlain(answer: any, fallback: string, language = 'English') {
     if (!values.length) return;
     lines.push(`**${heading}**`);
     for (const item of values) {
-      const safe = stripStructuredDisplayLeak(String(item));
+      const safe = sanitizeClinAIResponse(stripStructuredDisplayLeak(String(item))).trim();
       if (safe) lines.push(bullet ? `• ${safe}` : safe);
     }
   };
