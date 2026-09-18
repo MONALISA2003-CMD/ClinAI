@@ -38,14 +38,14 @@ await loadStore();
 const PUBLIC_PREVIEW = process.env.CLINAI_PUBLIC_PREVIEW === 'true';
 const PRODUCTION = process.env.NODE_ENV === 'production';
 const DEMO_AUTH_ENABLED = process.env.NODE_ENV !== 'production' && process.env.CLINAI_ENABLE_DEMO_AUTH === 'true';
-const PUBLIC_API_PATHS = new Set(['/api/public/feedback','/api/public/preview','/api/public/ai-assist','/api/public/ai-status','/api/public/ai-feedback','/api/public/test-dashboard','/api/public/test-patients','/api/public/test-modules']);
+const PUBLIC_API_PATHS = new Set(['/api/public/feedback','/api/public/preview','/api/public/ai-assist','/api/public/ai-status','/api/public/ai-feedback','/api/public/test-dashboard','/api/public/test-patients','/api/public/test-modules','/api/public/test-intelligence']);
 const PUBLIC_TEST_DATA_ENABLED = process.env.CLINAI_PUBLIC_TEST_DATA !== 'false';
 const WRITE_ROLES = new Set(['admin','doctor','nurse','lab','pharmacist','reception','cashier','inventory','manager']);
 const READ_ONLY_ROLES = new Set(['viewer','analyst']);
 function actor(req:any){ return req.user?.sub || 'system'; }
 function org(req:any){ return req.user?.organizationId || null; }
 function canWrite(req:any){ return WRITE_ROLES.has(String(req.user?.role || '').toLowerCase()); }
-function isPublicPath(path:string){ return PUBLIC_API_PATHS.has(path) || path.startsWith('/api/public/test-patients/') || path.startsWith('/api/public/test-modules/'); }
+function isPublicPath(path:string){ return PUBLIC_API_PATHS.has(path) || path.startsWith('/api/public/test-patients/') || path.startsWith('/api/public/test-modules/') || path.startsWith('/api/public/test-intelligence/'); }
 const AI_NON_MUTATING_PATHS = new Set(['/api/ai/assist','/api/ai/patient-intelligence','/api/ai/compute','/api/ai/analyze','/api/ai/research','/api/ai/document','/api/ai/management-brief','/api/ai/cohort','/api/ai/role-briefing','/api/ai/attention','/api/ai/translate','/api/ai/language/analyze','/api/ai/router','/api/ai/feedback']);
 function isClinicalMutation(req:any){
   const path=(req.raw.url||'/').split('?')[0];
@@ -545,19 +545,19 @@ app.get('/api/public/test-dashboard',async(_req:any,reply:any)=>{
     pool.query(`SELECT * FROM (VALUES ('Critical laboratory results',(SELECT count(*) FROM lab_results lr JOIN lab_samples ls ON ls.id=lr.sample_id JOIN clinical_orders co ON co.id=ls.order_id JOIN patients p ON p.id=co.patient_id WHERE p.is_test_data AND lr.critical=true AND lr.status<>'released')),('Pending laboratory review',(SELECT count(*) FROM lab_results lr JOIN lab_samples ls ON ls.id=lr.sample_id JOIN clinical_orders co ON co.id=ls.order_id JOIN patients p ON p.id=co.patient_id WHERE p.is_test_data AND lr.status='preliminary')),('Open care tasks',(SELECT count(*) FROM care_tasks t JOIN patients p ON p.id=t.patient_id WHERE p.is_test_data AND t.status='open')),('Medication reviews',(SELECT count(*) FROM medication_reconciliation mr JOIN patients p ON p.id=mr.patient_id WHERE p.is_test_data AND mr.status='in-review')),('Open referrals',(SELECT count(*) FROM referrals r JOIN patients p ON p.id=r.patient_id WHERE p.is_test_data AND r.status NOT IN ('completed','cancelled')))) v(label,count)`),
     pool.query(`SELECT count(*)::int AS invoices,count(*) FILTER (WHERE i.status='paid')::int AS paid,count(*) FILTER (WHERE i.status<>'paid')::int AS open,coalesce(sum(i.total),0) AS billed FROM invoices i JOIN patients p ON p.id=i.patient_id WHERE p.is_test_data`),
     pool.query(`SELECT f.id,f.name,f.type,coalesce((SELECT count(*) FROM facility_beds b WHERE b.facility_id=f.id AND b.status='occupied' AND b.metadata->>'source'='synthetic-test-data'),0)::int occupied_beds,coalesce((SELECT count(*) FROM facility_beds b WHERE b.facility_id=f.id AND b.status='available' AND b.metadata->>'source'='synthetic-test-data'),0)::int available_beds,coalesce((SELECT count(*) FROM facility_operational_incidents i WHERE i.facility_id=f.id AND i.impact->>'source'='synthetic-test-data' AND i.status NOT IN ('resolved','closed')),0)::int open_incidents FROM facilities f WHERE f.name='Main Facility' LIMIT 10`),
-    pool.query(`SELECT p.patient_number AS "patientNumber",p.first_name AS "firstName",p.last_name AS "lastName",p.date_of_birth AS "dateOfBirth",p.sex,p.email,p.status,(SELECT d.display FROM diagnoses d WHERE d.patient_id=p.id ORDER BY d.id DESC LIMIT 1) AS "currentProblem",(SELECT t.priority FROM care_tasks t WHERE t.patient_id=p.id AND t.status='open' ORDER BY CASE t.priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 ELSE 3 END,t.created_at DESC LIMIT 1) AS priority,(SELECT count(*)::int FROM module_records mr WHERE mr.module='care-gaps' AND mr.payload->>'patientId'=p.id::text) AS "careGaps" FROM patients p WHERE p.is_test_data ORDER BY p.patient_number`)
+    pool.query(`SELECT p.patient_number AS "patientNumber",p.first_name AS "firstName",p.last_name AS "lastName",p.date_of_birth AS "dateOfBirth",p.sex,p.status,(SELECT d.display FROM diagnoses d WHERE d.patient_id=p.id ORDER BY d.id DESC LIMIT 1) AS "currentProblem",(SELECT t.priority FROM care_tasks t WHERE t.patient_id=p.id AND t.status='open' ORDER BY CASE t.priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 ELSE 3 END,t.created_at DESC LIMIT 1) AS priority,(SELECT count(*)::int FROM module_records mr WHERE mr.module='care-gaps' AND mr.payload->>'patientId'=p.id::text) AS "careGaps" FROM patients p WHERE p.is_test_data ORDER BY p.patient_number`)
   ]);
   return {data:{overview:overview.rows[0],queue:queue.rows,trend:trend.rows,clinical:clinical.rows,finance:finance.rows[0],facilities:facilities.rows,patients:patients.rows}};
 });
 
 app.get('/api/public/test-patients',async(_req:any,reply:any)=>{
   if(!pool)return {data:[]}; if(!PUBLIC_TEST_DATA_ENABLED)return reply.code(403).send({error:'Public test data is currently disabled.'});
-  const r=await pool.query(`SELECT p.patient_number AS "patientNumber",p.first_name AS "firstName",p.last_name AS "lastName",p.date_of_birth AS "dateOfBirth",p.sex,p.email,p.status,(SELECT d.display FROM diagnoses d WHERE d.patient_id=p.id ORDER BY d.id DESC LIMIT 1) AS "currentProblem",(SELECT t.priority FROM care_tasks t WHERE t.patient_id=p.id AND t.status='open' ORDER BY CASE t.priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 ELSE 3 END,t.created_at DESC LIMIT 1) AS priority FROM patients p WHERE p.is_test_data ORDER BY p.patient_number`); return {data:r.rows,count:r.rowCount};
+  const r=await pool.query(`SELECT p.patient_number AS "patientNumber",p.first_name AS "firstName",p.last_name AS "lastName",p.date_of_birth AS "dateOfBirth",p.sex,p.status,(SELECT d.display FROM diagnoses d WHERE d.patient_id=p.id ORDER BY d.id DESC LIMIT 1) AS "currentProblem",(SELECT t.priority FROM care_tasks t WHERE t.patient_id=p.id AND t.status='open' ORDER BY CASE t.priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 ELSE 3 END,t.created_at DESC LIMIT 1) AS priority FROM patients p WHERE p.is_test_data ORDER BY p.patient_number`); return {data:r.rows,count:r.rowCount};
 });
 
 app.get('/api/public/test-patients/:patientNumber',async(req:any,reply:any)=>{
   if(!pool)return reply.code(404).send({error:'Synthetic test patient not found.'}); if(!PUBLIC_TEST_DATA_ENABLED)return reply.code(403).send({error:'Public test data is currently disabled.'});
-  const r=await pool.query(`SELECT p.patient_number AS "patientNumber",p.first_name AS "firstName",p.last_name AS "lastName",p.date_of_birth AS "dateOfBirth",p.sex,p.email,p.preferred_language AS "preferredLanguage",p.status,(SELECT d.display FROM diagnoses d WHERE d.patient_id=p.id ORDER BY d.id DESC LIMIT 1) AS "currentProblem",(SELECT count(*)::int FROM encounters e WHERE e.patient_id=p.id) encounters,(SELECT count(*)::int FROM diagnoses d WHERE d.patient_id=p.id) diagnoses,(SELECT count(*)::int FROM clinical_orders o WHERE o.patient_id=p.id) orders,(SELECT count(*)::int FROM referrals x WHERE x.patient_id=p.id AND x.status NOT IN ('completed','cancelled')) open_referrals,(SELECT count(*)::int FROM care_tasks t WHERE t.patient_id=p.id AND t.status='open') open_tasks,(SELECT count(*)::int FROM module_records m WHERE m.module='care-gaps' AND m.payload->>'patientId'=p.id::text) care_gaps FROM patients p WHERE p.is_test_data AND p.patient_number=$1 LIMIT 1`,[req.params.patientNumber]);
+  const r=await pool.query(`SELECT p.patient_number AS "patientNumber",p.first_name AS "firstName",p.last_name AS "lastName",p.date_of_birth AS "dateOfBirth",p.sex,p.preferred_language AS "preferredLanguage",p.status,(SELECT d.display FROM diagnoses d WHERE d.patient_id=p.id ORDER BY d.id DESC LIMIT 1) AS "currentProblem",(SELECT count(*)::int FROM encounters e WHERE e.patient_id=p.id) encounters,(SELECT count(*)::int FROM diagnoses d WHERE d.patient_id=p.id) diagnoses,(SELECT count(*)::int FROM clinical_orders o WHERE o.patient_id=p.id) orders,(SELECT count(*)::int FROM referrals x WHERE x.patient_id=p.id AND x.status NOT IN ('completed','cancelled')) open_referrals,(SELECT count(*)::int FROM care_tasks t WHERE t.patient_id=p.id AND t.status='open') open_tasks,(SELECT count(*)::int FROM module_records m WHERE m.module='care-gaps' AND m.payload->>'patientId'=p.id::text) care_gaps FROM patients p WHERE p.is_test_data AND p.patient_number=$1 LIMIT 1`,[req.params.patientNumber]);
   if(!r.rowCount)return reply.code(404).send({error:'Synthetic test patient not found.'}); return {data:r.rows[0],syntheticTestData:true};
 });
 
@@ -593,7 +593,7 @@ app.get('/api/public/test-patients/:patientNumber/360',async(req:any,reply:any)=
     pool.query(`SELECT id,name,relationship FROM emergency_contacts WHERE patient_id=$1 ORDER BY id`,[id]),
     pool.query(`SELECT id,started_at AS at,'visit' AS kind,concat('Care visit · ',COALESCE(type,'visit')) AS title,status FROM encounters WHERE organization_id=$1 AND patient_id=$2 UNION ALL SELECT id,observed_at,'observation',COALESCE(display,code),COALESCE(value_text,value_numeric::text) FROM observations WHERE patient_id=$2 UNION ALL SELECT id,created_at,'order',COALESCE(details->>'description',order_type),status FROM clinical_orders WHERE patient_id=$2 UNION ALL SELECT id,created_at,'referral',COALESCE(destination,'Referral'),status FROM referrals WHERE patient_id=$2 ORDER BY at DESC LIMIT 150`,[oid,id])
   ]);
-  return {patient:p,contacts:contacts.rows,emergencyContacts:emergencyContacts.rows,allergies:allergies.rows,appointments:appointments.rows,encounters:encounters.rows,orders:orders.rows,diagnoses:diagnoses.rows,observations:observations.rows,clinicalNotes:notes.rows,medications:medications.rows,admissions:admissions.rows,immunizations:immunizations.rows,chronicCare:chronicCare.rows,telemedicine:telemedicine.rows,remoteMonitoring:remoteMonitoring.rows,carePlans:carePlans.rows,referrals:referrals.rows,followUp:followUp.rows,careTasks:careTasks.rows,clinicalAlerts:clinicalAlerts.rows,timeline:timeline.rows,publicTestPatient:true};
+  const publicPatient={patientNumber:p.patientNumber,firstName:p.firstName,middleName:p.middleName,lastName:p.lastName,dateOfBirth:p.dateOfBirth,sex:p.sex,preferredLanguage:p.preferredLanguage,status:p.status}; return {patient:publicPatient,contacts:contacts.rows.map((x:any)=>({type:x.type,isPrimary:x.isPrimary})),emergencyContacts:emergencyContacts.rows.map((x:any)=>({relationship:x.relationship})),allergies:allergies.rows,appointments:appointments.rows,encounters:encounters.rows,orders:orders.rows,diagnoses:diagnoses.rows,observations:observations.rows,clinicalNotes:notes.rows,medications:medications.rows,admissions:admissions.rows,immunizations:immunizations.rows,chronicCare:chronicCare.rows,telemedicine:telemedicine.rows,remoteMonitoring:remoteMonitoring.rows,carePlans:carePlans.rows,referrals:referrals.rows,followUp:followUp.rows,careTasks:careTasks.rows,clinicalAlerts:clinicalAlerts.rows,timeline:timeline.rows,publicTestPatient:true};
 });
 
 // Public module read surface. It never accepts writes and only returns synthetic records.
@@ -611,6 +611,81 @@ app.get('/api/public/test-modules/:module',async(req:any,reply:any)=>{
   }
   const r=await pool.query(`SELECT id,module,status,payload,created_at AS "createdAt",updated_at AS "updatedAt" FROM module_records WHERE organization_id=$1 AND module=$2 AND (payload->>'isTestData'='true' OR payload->>'patientId' IN (SELECT id::text FROM patients WHERE organization_id=$1 AND is_test_data=true)) ORDER BY created_at DESC LIMIT 500`,[oid,moduleId]);
   return {data:r.rows.map((x:any)=>({id:x.id,module:x.module,status:x.status,...x.payload,createdAt:x.createdAt,updatedAt:x.updatedAt})),count:r.rowCount,readOnly:true,synthetic:true,module:moduleId};
+});
+
+
+// Public synthetic intelligence workspaces. Read-only and always limited to is_test_data patients.
+app.get('/api/public/test-intelligence/:workspace',async(req:any,reply:any)=>{
+  if(!pool)return reply.code(503).send({error:'Synthetic intelligence requires PostgreSQL'});
+  if(!PUBLIC_TEST_DATA_ENABLED)return reply.code(404).send({error:'Public test data is disabled.'});
+  const workspace=String(req.params.workspace||'').trim().toLowerCase();
+  const orgQ=await pool.query(`SELECT organization_id AS "organizationId" FROM patients WHERE is_test_data=true AND email ILIKE '%@clinaidemoemail.com' GROUP BY organization_id ORDER BY COUNT(*) DESC LIMIT 1`);
+  if(!orgQ.rowCount)return reply.code(404).send({error:'Synthetic test environment is not configured.'});
+  const organizationId=orgQ.rows[0].organizationId;
+  const days=Math.min(365,Math.max(1,Number(req.query?.days||30)));
+  try {
+    if(workspace==='patient-360'){
+      const number=String(req.query?.patientNumber||'').trim();
+      if(!/^TEST-[0-9]{3}$/.test(number)) return {data:{selectedPatient:null,availablePatients:(await pool.query(`SELECT patient_number AS "patientNumber",first_name AS "firstName",last_name AS "lastName" FROM patients WHERE organization_id=$1 AND is_test_data=true ORDER BY patient_number`,[organizationId])).rows}};
+      const pq=await pool.query(`SELECT id FROM patients WHERE organization_id=$1 AND is_test_data=true AND patient_number=$2 LIMIT 1`,[organizationId,number]);
+      if(!pq.rowCount)return reply.code(404).send({error:'Synthetic test patient not found.'});
+      const d=await buildPatient360Context(intelligenceQuery(),organizationId,pq.rows[0].id,'clinical');
+      return {data:{patientNumber:number,context:d,syntheticTestData:true,readOnly:true}};
+    }
+    if(workspace==='clinical-velocity'){
+      const rows=await pool.query(`WITH signals AS (
+        SELECT e.id,e.event_type,e.patient_id,e.created_at,
+               CASE WHEN e.event_type LIKE '%critical%' THEN 'critical' WHEN e.event_type LIKE '%urgent%' THEN 'urgent' ELSE 'routine' END severity
+        FROM clinical_workflow_events e JOIN patients p ON p.id=e.patient_id
+        WHERE e.organization_id=$1 AND p.is_test_data AND e.created_at>=now()-($2::text||' days')::interval
+      ), actions AS (
+        SELECT s.id,s.severity,s.created_at,MIN(a.created_at) AS action_at
+        FROM signals s LEFT JOIN clinical_workflow_events a ON a.organization_id=$1 AND a.patient_id=s.patient_id AND a.created_at>s.created_at
+          AND a.event_type IN ('result.verified','result.released','task.completed','referral.completed','followup.completed')
+        GROUP BY s.id,s.severity,s.created_at
+      ) SELECT severity,count(*)::int AS total,count(*) FILTER(WHERE action_at IS NOT NULL)::int AS completed,count(*) FILTER(WHERE action_at IS NULL)::int AS unresolved,
+        round(avg(extract(epoch FROM(action_at-created_at))/60.0) FILTER(WHERE action_at IS NOT NULL)::numeric,1) AS "averageMinutes",
+        round(percentile_cont(0.5) WITHIN GROUP(ORDER BY extract(epoch FROM(action_at-created_at))/60.0) FILTER(WHERE action_at IS NOT NULL)::numeric,1) AS "medianMinutes",
+        round(percentile_cont(0.9) WITHIN GROUP(ORDER BY extract(epoch FROM(action_at-created_at))/60.0) FILTER(WHERE action_at IS NOT NULL)::numeric,1) AS "p90Minutes"
+        FROM actions GROUP BY severity ORDER BY severity`,[organizationId,String(days)]);
+      const unresolved=await pool.query(`SELECT count(*)::int AS count FROM clinical_signals s JOIN patients p ON p.id=s.patient_id WHERE p.organization_id=$1 AND p.is_test_data AND s.severity IN ('critical','high') AND s.status NOT IN ('resolved','closed','dismissed')`,[organizationId]);
+      return {data:{workspace:'clinical-velocity',periodDays:days,metrics:rows.rows,unresolvedSignals:Number(unresolved.rows[0]?.count||0),guardrails:{unsafeSpeedNeverRewarded:true,qualitySignalsRequired:true,patientImpactConsidered:true},syntheticTestData:true,readOnly:true}};
+    }
+    if(workspace==='value-based-care'){
+      const measures=await pool.query(`SELECT 'referral-completion' AS measure,count(*) FILTER(WHERE r.status IN ('completed','closed'))::int AS numerator,count(*)::int AS denominator,
+        CASE WHEN count(*)=0 THEN NULL ELSE round(100.0*count(*) FILTER(WHERE r.status IN ('completed','closed'))/count(*),1) END AS "valueNumeric"
+        FROM referrals r JOIN patients p ON p.id=r.patient_id WHERE p.organization_id=$1 AND p.is_test_data`,[organizationId]);
+      const followups=await pool.query(`SELECT count(*) FILTER(WHERE status IN ('completed','closed'))::int AS numerator,count(*)::int AS denominator,
+        CASE WHEN count(*)=0 THEN NULL ELSE round(100.0*count(*) FILTER(WHERE status IN ('completed','closed'))/count(*),1) END AS "valueNumeric"
+        FROM module_records WHERE organization_id=$1 AND module='follow-up' AND payload->>'isTestData'='true'`,[organizationId]);
+      const gaps=await pool.query(`SELECT COALESCE(payload->>'sourceModule',module) AS "sourceModule",COALESCE(payload->>'severity','routine') AS severity,count(*)::int AS count FROM module_records WHERE organization_id=$1 AND module='care-gaps' AND payload->>'isTestData'='true' GROUP BY 1,2 ORDER BY count DESC`,[organizationId]);
+      return {data:{workspace:'value-based-care',period:{days},measures:[{measure:'referral-completion',...measures.rows[0]},{measure:'follow-up-completion',...followups.rows[0]}],careGapDistribution:gaps.rows,outcomeRule:'Operational completion is not treated as a clinical outcome without clinical validation.',syntheticTestData:true,readOnly:true}};
+    }
+    if(workspace==='ai-risk'){
+      const matrix=await pool.query(`SELECT r.risk_level AS "riskLevel",r.risk_type AS "riskType",r.status,count(*)::int AS count FROM ai_risk_assessments r JOIN patients p ON p.id=r.patient_id WHERE r.organization_id=$1 AND p.is_test_data GROUP BY r.risk_level,r.risk_type,r.status ORDER BY r.risk_level,r.risk_type`,[organizationId]);
+      const signals=await pool.query(`SELECT s.severity,s.status,count(*)::int AS count FROM clinical_signals s JOIN patients p ON p.id=s.patient_id WHERE s.organization_id=$1 AND p.is_test_data GROUP BY s.severity,s.status ORDER BY count DESC`,[organizationId]);
+      return {data:{workspace:'ai-risk',riskMatrix:matrix.rows,clinicalSignals:signals.rows,workflow:['risk-classification','evaluation','clinical-validation','approval','monitoring','drift','incident','mitigation','residual-risk','review','retirement'],policy:{deterministicSignalsRemainSourceOfClinicalRisk:true,generativeAIIsInterpretive:true},syntheticTestData:true,readOnly:true}};
+    }
+    if(workspace==='ai-security'){
+      const events=await pool.query(`SELECT event_type AS "eventType",severity,status,source,count(*)::int AS count FROM ai_security_events s JOIN patients p ON p.id=s.patient_id WHERE s.organization_id=$1 AND p.is_test_data AND s.created_at>=now()-($2::text||' days')::interval GROUP BY event_type,severity,status,source ORDER BY count DESC`,[organizationId,String(days)]);
+      const controls=['prompt-injection','indirect-injection','data-disclosure','cross-tenant-access','role-spoofing','unauthorized-patient-lookup','tool-misuse','provider-leakage','unsafe-output','abuse-rate-limit'];
+      const observed=new Set(events.rows.map((x:any)=>String(x.eventType)));
+      return {data:{workspace:'ai-security',periodDays:days,events:events.rows,controls:controls.map(control=>({control,observed:observed.has(control),status:observed.has(control)?'monitored':'no-events-recorded'})),policy:{tenantIsolation:true,serverDerivedRole:true,patientAuthorization:true,providerLeakageBlocked:true,unsafeOutputBlocked:true,rateLimitsEnforced:true},syntheticTestData:true,readOnly:true}};
+    }
+    if(workspace==='ai-governance'){
+      const [caps,evals,incidents,lifecycle]=await Promise.all([
+        pool.query(`SELECT capability_id AS "capabilityId",name,domain,risk_level AS "riskLevel",status,version FROM ai_capabilities WHERE organization_id=$1 OR organization_id IS NULL ORDER BY domain,capability_id`,[organizationId]),
+        pool.query(`SELECT capability_id AS "capabilityId",evaluation_type AS "evaluationType",status,count(*)::int AS count FROM ai_capability_evaluations WHERE organization_id=$1 GROUP BY capability_id,evaluation_type,status ORDER BY capability_id`,[organizationId]),
+        pool.query(`SELECT severity,status,incident_type AS "incidentType",count(*)::int AS count FROM ai_incidents WHERE organization_id=$1 GROUP BY severity,status,incident_type ORDER BY count DESC`,[organizationId]),
+        pool.query(`SELECT model_id AS "modelId",event_type AS "eventType",environment,outcome,count(*)::int AS count FROM ai_model_lifecycle_events WHERE organization_id=$1 GROUP BY model_id,event_type,environment,outcome ORDER BY count DESC`,[organizationId])
+      ]);
+      return {data:{workspace:'ai-governance',capabilities:caps.rows,evaluations:evals.rows,incidents:incidents.rows,lifecycle:lifecycle.rows,lifecycleStates:['design','evaluation','clinical-validation','approval','production','monitoring','incident','mitigation','re-evaluation','retirement'],riskLevels:['level-1','level-2','level-3'],syntheticTestData:true,readOnly:true}};
+    }
+    return reply.code(404).send({error:'Synthetic intelligence workspace not found.'});
+  } catch (e:any) {
+    req.log.error(e);
+    return reply.code(500).send({error:'The synthetic intelligence workspace could not be prepared.'});
+  }
 });
 
 

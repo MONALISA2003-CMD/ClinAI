@@ -22,7 +22,7 @@
     "typecheck:api": "npm --workspace @clinai/api run build",
     "typecheck": "npm run typecheck:api && npm run typecheck:web",
     "test:v27:audit": "node tests/v27-full-page-audit.mjs",
-    "test:all:stability": "node tests/phase1-security-boundary-audit.mjs && node tests/phase2-module-contract-audit.mjs && node tests/phase3-global-validation-audit.mjs && node tests/phase4-5-clinical-intelligence-audit.mjs && node tests/phase6-7-patient360-workspaces-audit.mjs && node tests/public-test-data-audit.mjs && node tests/public-release-audit.mjs && node tests/public-ai-development-audit.mjs && node tests/v28-completion-audit.mjs && node tests/schema-contract-audit.mjs && node tests/ui-responsive-structural-check.mjs && node tests/ai-intelligence-core-audit.mjs && node tests/ai-language-policy-audit.mjs && node tests/ai-security-scope-audit.mjs && node tests/ai-v4-response-speed-audit.mjs",
+    "test:all:stability": "node tests/phase1-security-boundary-audit.mjs && node tests/phase2-module-contract-audit.mjs && node tests/phase3-global-validation-audit.mjs && node tests/phase4-5-clinical-intelligence-audit.mjs && node tests/phase6-7-patient360-workspaces-audit.mjs && node tests/public-test-data-audit.mjs && node tests/public-release-audit.mjs && node tests/public-ai-development-audit.mjs && node tests/v28-completion-audit.mjs && node tests/schema-contract-audit.mjs && node tests/ui-responsive-structural-check.mjs && node tests/ai-intelligence-core-audit.mjs && node tests/ai-language-policy-audit.mjs && node tests/ai-security-scope-audit.mjs && node tests/ai-v4-response-speed-audit.mjs && node tests/frontend-backend-route-audit.mjs",
     "test:v28:completion": "node tests/v28-completion-audit.mjs",
     "test:production-integrity:ai": "node tests/production-integrity-ai-audit.mjs",
     "test:phase1:security": "node tests/phase1-security-boundary-audit.mjs",
@@ -31,7 +31,8 @@
     "test:phase4:5:intelligence": "node tests/phase4-5-clinical-intelligence-audit.mjs",
     "test:phase6:7:intelligence": "node tests/phase6-7-patient360-workspaces-audit.mjs",
     "test:deployment:layout": "node scripts/deployment-layout-audit.mjs && node scripts/api-build-artifact-audit.mjs",
-    "test:deployment:vercel-web": "node scripts/vercel-web-type-safety-audit.mjs"
+    "test:deployment:vercel-web": "node scripts/vercel-web-type-safety-audit.mjs",
+    "test:frontend-backend:routes": "node tests/frontend-backend-route-audit.mjs"
   },
   "devDependencies": {
     "@types/node": "latest",
