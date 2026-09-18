@@ -20,6 +20,7 @@ This workstream deepens the non-clinical domain layer without replacing the exis
 
 - Invoice items are materialized from existing invoices where missing.
 - Patient payments remain linked to invoices.
+- Payment processing now creates a posted accounting entry and updates invoice-level finance reconciliation in the same transaction.
 - Finance reconciliation records connect invoice, claim and payment state.
 - Patient 360 now exposes invoices, paid amount, outstanding amount, claims and insurance policies.
 
@@ -28,6 +29,7 @@ This workstream deepens the non-clinical domain layer without replacing the exis
 - Inventory items support reorder quantity, unit cost, category and metadata.
 - Inventory overview derives on-hand quantities from inventory batches.
 - Receipt workflow updates the batch and records a stock movement in one transaction.
+- Pharmacy dispensing resolves an inventory batch when possible, prevents over-dispensing, decrements stock, and records the stock movement before completing the dispense.
 - Low-stock views are derived from reorder levels rather than decorative counts.
 
 ### Procurement
@@ -36,6 +38,7 @@ This workstream deepens the non-clinical domain layer without replacing the exis
 - Purchase orders contain line items tied to inventory items.
 - Approved requests can become issued purchase orders.
 - Purchase order receipt updates inventory and procurement state transactionally.
+- Receipt processing is line-aware, prevents over-receipt, supports partial receipt status, and updates `purchase_order_items.received_quantity`.
 
 ### Suppliers
 
@@ -57,6 +60,8 @@ New additive migration:
 
 `database/migrations/026-workstream-2-domain-depth.sql`
 
+Integrity hardening: `database/migrations/027-workstream-2-integrity-hardening.sql`
+
 It is safe to apply to an existing deployment and does not reset, truncate or replace data.
 
 ## Verification
@@ -77,7 +82,7 @@ Verified live Neon relationships include:
 - 5 stock movements linked to inventory batches/items
 - 1 purchase order linked to a procurement request
 
-A full local TypeScript compilation was attempted. The environment did not have the repository's Node type definitions installed, and dependency installation timed out. Therefore this package does not claim a successful local production build from this environment.
+Additional source checks were run after the workflow integration changes. The static Workstream 2 audit passed. A full local TypeScript compilation was attempted. The environment did not have the repository's Node type definitions installed, and dependency installation timed out. Therefore this package does not claim a successful local production build from this environment.
 
 ## Architectural rule retained
 
