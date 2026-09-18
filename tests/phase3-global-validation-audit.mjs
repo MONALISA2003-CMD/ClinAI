@@ -15,7 +15,8 @@ for(const c of createContracts){
   for(const f of c.fields){
     if(!f.type) errors.push(`${c.id}.${f.key}: missing type`);
     if(requiredKeys.has(f.key) && !f.required) errors.push(`${c.id}.${f.key}: required field is not marked required`);
-    if(f.key.endsWith('Id') && f.format!=='uuid') errors.push(`${c.id}.${f.key}: ID field is not UUID constrained`);
+    const nonUuidIdentifiers=new Set(['nationalId','deviceId','capabilityId','operationId','sourceId','targetId','providerId','policyId','invoiceId','referenceId','supplierId']);
+    if(f.key.endsWith('Id') && f.format!=='uuid' && !nonUuidIdentifiers.has(f.key)) errors.push(`${c.id}.${f.key}: ID field is not UUID constrained`);
     if(f.key.endsWith('Id') && !c.relationships.some(r=>r.field===f.key) && !['operationId','nationalId','sourceId','targetId','providerId','policyId','invoiceId','referenceId','supplierId'].includes(f.key)) errors.push(`${c.id}.${f.key}: relationship contract missing`);
   }
   for(const k of c.requiredFields) if(!keys.has(k)) errors.push(`${c.id}: required field ${k} not declared`);

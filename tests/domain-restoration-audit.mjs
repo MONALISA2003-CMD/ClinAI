@@ -1,0 +1,14 @@
+import fs from 'node:fs';
+import assert from 'node:assert/strict';
+const main=fs.readFileSync('services/api/src/main.ts','utf8');
+const contracts=JSON.parse(fs.readFileSync('packages/module-contracts/contracts.json','utf8')).modules;
+assert.match(main,/app\.get\('\/api\/domains\/modules\/:module'/,'authoritative module GET adapter missing');
+assert.match(main,/app\.post\('\/api\/domains\/modules\/:module'/,'authoritative module POST adapter missing');
+assert.match(main,/recordPurpose.*connected synthetic testing/,'synthetic coverage isolation missing');
+assert.match(main,/publicSynthetic/,'public synthetic write boundary missing');
+assert.match(main,/app\.get\('\/api\/laboratory'/,'laboratory authoritative read missing');
+assert.match(main,/app\.get\('\/api\/imaging'/,'imaging authoritative read missing');
+assert.match(main,/app\.get\('\/api\/orders'/,'orders authoritative read missing');
+assert.ok(contracts.filter(c=>c.backend?.createEndpoint).length>=65,'Too few writable module contracts');
+assert.ok(contracts.filter(c=>c.fields?.length>=4).length>=65,'Too many shallow module contracts');
+console.log('PASS domain restoration audit: authoritative adapters, public synthetic writes, placeholder isolation, clinical read surfaces, and writable field coverage verified.');

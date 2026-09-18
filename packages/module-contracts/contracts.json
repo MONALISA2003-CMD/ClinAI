@@ -76,82 +76,75 @@
         {
           "key": "firstName",
           "label": "First name",
-          "required": true,
-          "type": "text"
+          "type": "text",
+          "section": "Identity",
+          "required": true
         },
         {
           "key": "middleName",
           "label": "Middle name",
           "type": "text",
-          "required": true
+          "section": "Identity"
         },
         {
           "key": "lastName",
           "label": "Last name",
-          "required": true,
-          "type": "text"
+          "type": "text",
+          "section": "Identity",
+          "required": true
         },
         {
           "key": "dateOfBirth",
           "label": "Date of birth",
           "type": "date",
-          "required": true
+          "section": "Identity"
         },
         {
           "key": "sex",
           "label": "Sex",
+          "type": "text",
+          "section": "Identity",
           "options": [
             "male",
             "female",
             "intersex",
             "unknown"
-          ],
-          "type": "text",
-          "required": true
+          ]
         },
         {
           "key": "phone",
           "label": "Phone",
           "type": "text",
-          "required": true
+          "section": "Contact"
         },
         {
           "key": "email",
           "label": "Email",
-          "type": "email",
-          "required": true
+          "type": "text",
+          "section": "Contact"
         },
         {
           "key": "nationalId",
           "label": "National ID",
           "type": "text",
-          "format": "uuid",
-          "required": true
+          "section": "Identity"
         },
         {
           "key": "preferredLanguage",
           "label": "Preferred language",
           "type": "text",
-          "required": true
+          "section": "Contact"
         },
         {
           "key": "address",
           "label": "Address",
-          "type": "text",
-          "required": true
+          "type": "json",
+          "section": "Contact"
         }
       ],
       "requiredFields": [
-        "address",
-        "dateOfBirth",
-        "email",
         "firstName",
-        "lastName",
-        "middleName",
-        "nationalId",
-        "phone",
-        "preferredLanguage",
-        "sex"
+        "lastName"
       ],
       "relationships": [],
       "permissions": {
@@ -215,33 +208,81 @@
       "fields": [
         {
           "key": "patientId",
-          "label": "Patient ID",
-          "type": "text",
-          "format": "uuid",
-          "required": true
+          "label": "Patient",
+          "type": "uuid",
+          "section": "Appointment",
+          "required": true,
+          "format": "uuid"
+        },
+        {
+          "key": "providerId",
+          "label": "Provider",
+          "type": "uuid",
+          "section": "Appointment",
+          "format": "uuid"
+        },
+        {
+          "key": "facilityId",
+          "label": "Facility",
+          "type": "uuid",
+          "section": "Appointment",
+          "format": "uuid"
         },
         {
           "key": "startAt",
-          "label": "Start date/time",
-          "type": "datetime-local",
+          "label": "Start date and time",
+          "type": "datetime",
+          "section": "Appointment",
+          "required": true
+        },
+        {
+          "key": "endAt",
+          "label": "End date and time",
+          "type": "datetime",
+          "section": "Appointment"
+        },
+        {
+          "key": "type",
+          "label": "Appointment type",
+          "type": "text",
+          "section": "Appointment",
           "required": true
         },
         {
           "key": "reason",
           "label": "Reason",
           "type": "text",
-          "required": true
+          "section": "Clinical context"
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "text",
+          "section": "Appointment",
+          "required": true,
+          "options": [
+            "scheduled",
+            "arrived",
+            "completed",
+            "cancelled",
+            "no-show"
+          ]
         }
       ],
       "requiredFields": [
         "patientId",
-        "reason",
-        "startAt"
+        "startAt",
+        "type",
+        "status"
       ],
       "relationships": [
         {
           "field": "patientId",
           "target": "patients.id"
+        },
+        {
+          "field": "facilityId",
+          "target": "facilities.id"
         }
       ],
       "permissions": {
@@ -305,31 +346,77 @@
       "fields": [
         {
           "key": "patientId",
-          "label": "Patient ID",
-          "type": "text",
+          "label": "Patient",
+          "type": "uuid",
           "format": "uuid",
-          "required": true
+          "required": true,
+          "section": "Identity"
+        },
+        {
+          "key": "facilityId",
+          "label": "Facility",
+          "type": "uuid",
+          "format": "uuid",
+          "section": "Registration"
+        },
+        {
+          "key": "registrationType",
+          "label": "Registration type",
+          "type": "text",
+          "required": true,
+          "section": "Registration",
+          "options": [
+            "new",
+            "returning",
+            "transfer"
+          ]
+        },
+        {
+          "key": "source",
+          "label": "Registration source",
+          "type": "text",
+          "section": "Registration"
+        },
+        {
+          "key": "registeredAt",
+          "label": "Registration date/time",
+          "type": "datetime",
+          "required": true,
+          "section": "Registration"
         },
         {
           "key": "status",
           "label": "Status",
+          "type": "text",
+          "required": true,
+          "section": "Registration",
           "options": [
             "registered",
             "checked-in",
             "completed"
-          ],
+          ]
+        },
+        {
+          "key": "notes",
+          "label": "Registration notes",
           "type": "text",
-          "required": true
+          "section": "Documentation"
         }
       ],
       "requiredFields": [
         "patientId",
+        "registrationType",
+        "registeredAt",
         "status"
       ],
       "relationships": [
         {
           "field": "patientId",
           "target": "patients.id"
+        },
+        {
+          "field": "facilityId",
+          "target": "facilities.id"
         }
       ],
       "permissions": {
@@ -639,29 +726,76 @@
       "fields": [
         {
           "key": "patientId",
-          "label": "Patient ID",
-          "type": "text",
-          "format": "uuid",
-          "required": true
+          "label": "Patient",
+          "type": "uuid",
+          "section": "Visit",
+          "required": true,
+          "format": "uuid"
         },
         {
           "key": "appointmentId",
-          "label": "Appointment ID",
+          "label": "Appointment",
+          "type": "uuid",
+          "section": "Visit",
+          "format": "uuid"
+        },
+        {
+          "key": "providerId",
+          "label": "Provider",
+          "type": "uuid",
+          "section": "Visit",
+          "format": "uuid"
+        },
+        {
+          "key": "facilityId",
+          "label": "Facility",
+          "type": "uuid",
+          "section": "Visit",
+          "format": "uuid"
+        },
+        {
+          "key": "type",
+          "label": "Encounter type",
           "type": "text",
-          "format": "uuid",
+          "section": "Visit",
           "required": true
         },
         {
-          "key": "reason",
-          "label": "Reason",
+          "key": "status",
+          "label": "Status",
           "type": "text",
-          "required": true
+          "section": "Visit",
+          "required": true,
+          "options": [
+            "planned",
+            "in-progress",
+            "completed",
+            "cancelled"
+          ]
+        },
+        {
+          "key": "reason",
+          "label": "Reason for visit",
+          "type": "text",
+          "section": "Clinical context"
+        },
+        {
+          "key": "startedAt",
+          "label": "Start time",
+          "type": "datetime",
+          "section": "Visit"
+        },
+        {
+          "key": "endedAt",
+          "label": "End time",
+          "type": "datetime",
+          "section": "Visit"
         }
       ],
       "requiredFields": [
-        "appointmentId",
         "patientId",
-        "reason"
+        "type",
+        "status"
       ],
       "relationships": [
         {
@@ -671,6 +805,10 @@
         {
           "field": "appointmentId",
           "target": "appointments.id"
+        },
+        {
+          "field": "facilityId",
+          "target": "facilities.id"
         }
       ],
       "permissions": {
@@ -726,63 +864,55 @@
       },
       "frontendRoute": "/clinical-notes",
       "backend": {
-        "endpoint": "/api/contracts/modules/clinical-notes",
-        "createEndpoint": "/api/contracts/modules/clinical-notes",
+        "endpoint": "/api/domains/modules/clinical-notes",
+        "createEndpoint": "/api/domains/modules/clinical-notes",
         "contractRoute": "/api/contracts/modules/clinical-notes"
       },
       "databaseSource": "clinical_notes",
       "fields": [
         {
           "key": "encounterId",
-          "label": "Encounter ID",
-          "type": "text",
-          "format": "uuid",
-          "required": true
+          "label": "Encounter",
+          "type": "uuid",
+          "section": "Note",
+          "required": true,
+          "format": "uuid"
         },
         {
           "key": "noteType",
           "label": "Note type",
-          "options": [
-            "SOAP",
-            "progress",
-            "discharge",
-            "nursing"
-          ],
           "type": "text",
+          "section": "Note",
           "required": true
         },
         {
           "key": "subjective",
           "label": "Subjective",
           "type": "text",
-          "required": true
+          "section": "Clinical note"
         },
         {
           "key": "objective",
           "label": "Objective",
           "type": "text",
-          "required": true
+          "section": "Clinical note"
         },
         {
           "key": "assessment",
           "label": "Assessment",
           "type": "text",
-          "required": true
+          "section": "Clinical note"
         },
         {
           "key": "plan",
           "label": "Plan",
           "type": "text",
-          "required": true
+          "section": "Clinical note"
         }
       ],
       "requiredFields": [
-        "assessment",
         "encounterId",
-        "noteType",
-        "objective",
-        "plan",
-        "subjective"
+        "noteType"
       ],
       "relationships": [
         {
@@ -843,44 +973,65 @@
       },
       "frontendRoute": "/diagnoses",
       "backend": {
-        "endpoint": "/api/contracts/modules/diagnoses",
-        "createEndpoint": "/api/contracts/modules/diagnoses",
+        "endpoint": "/api/domains/modules/diagnoses",
+        "createEndpoint": "/api/domains/modules/diagnoses",
         "contractRoute": "/api/contracts/modules/diagnoses"
       },
       "databaseSource": "diagnoses",
       "fields": [
         {
           "key": "patientId",
-          "label": "Patient ID",
-          "type": "text",
-          "format": "uuid",
-          "required": true
+          "label": "Patient",
+          "type": "uuid",
+          "section": "Diagnosis",
+          "required": true,
+          "format": "uuid"
         },
         {
           "key": "encounterId",
-          "label": "Encounter ID",
-          "type": "text",
-          "format": "uuid",
-          "required": true
+          "label": "Encounter",
+          "type": "uuid",
+          "section": "Diagnosis",
+          "format": "uuid"
         },
         {
           "key": "code",
           "label": "Diagnosis code",
           "type": "text",
+          "section": "Diagnosis",
           "required": true
         },
         {
-          "key": "description",
-          "label": "Diagnosis description",
+          "key": "display",
+          "label": "Diagnosis",
           "type": "text",
+          "section": "Diagnosis",
           "required": true
+        },
+        {
+          "key": "diagnosisType",
+          "label": "Diagnosis type",
+          "type": "text",
+          "section": "Diagnosis"
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "text",
+          "section": "Diagnosis",
+          "required": true,
+          "options": [
+            "active",
+            "resolved",
+            "provisional"
+          ]
         }
       ],
       "requiredFields": [
+        "patientId",
         "code",
-        "description",
-        "encounterId",
-        "patientId"
+        "display",
+        "status"
       ],
       "relationships": [
         {
@@ -945,68 +1096,70 @@
       },
       "frontendRoute": "/orders",
       "backend": {
-        "endpoint": "/api/contracts/modules/orders",
-        "createEndpoint": "/api/contracts/modules/orders",
+        "endpoint": "/api/orders",
+        "createEndpoint": "/api/orders",
         "contractRoute": "/api/contracts/modules/orders"
       },
       "databaseSource": "clinical_orders",
       "fields": [
         {
           "key": "patientId",
-          "label": "Patient ID",
-          "type": "text",
-          "format": "uuid",
-          "required": true
+          "label": "Patient",
+          "type": "uuid",
+          "section": "Order",
+          "required": true,
+          "format": "uuid"
         },
         {
           "key": "encounterId",
-          "label": "Encounter ID",
-          "type": "text",
-          "format": "uuid",
-          "required": true
-        },
-        {
-          "key": "code",
-          "label": "Order code",
-          "type": "text",
-          "required": true
-        },
-        {
-          "key": "description",
-          "label": "Description",
-          "type": "text",
-          "required": true
+          "label": "Encounter",
+          "type": "uuid",
+          "section": "Order",
+          "format": "uuid"
         },
         {
           "key": "category",
-          "label": "Category",
+          "label": "Order type",
+          "type": "text",
+          "section": "Order",
+          "required": true,
           "options": [
             "laboratory",
             "imaging",
             "medication",
             "procedure"
-          ],
+          ]
+        },
+        {
+          "key": "code",
+          "label": "Code",
           "type": "text",
+          "section": "Order",
           "required": true
+        },
+        {
+          "key": "description",
+          "label": "Order details",
+          "type": "json",
+          "section": "Order"
         },
         {
           "key": "priority",
           "label": "Priority",
+          "type": "text",
+          "section": "Order",
+          "required": true,
           "options": [
             "routine",
             "urgent",
             "stat"
-          ],
-          "type": "text",
-          "required": true
+          ]
         }
       ],
       "requiredFields": [
+        "patientId",
         "category",
         "code",
-        "description",
-        "encounterId",
-        "patientId",
         "priority"
       ],
       "relationships": [
@@ -1072,50 +1225,57 @@
       },
       "frontendRoute": "/care-plans",
       "backend": {
-        "endpoint": "/api/contracts/modules/care-plans",
-        "createEndpoint": "/api/contracts/modules/care-plans",
+        "endpoint": "/api/domains/modules/care-plans",
+        "createEndpoint": "/api/domains/modules/care-plans",
         "contractRoute": "/api/contracts/modules/care-plans"
       },
       "databaseSource": "care_plans",
       "fields": [
         {
           "key": "patientId",
-          "label": "Patient ID",
+          "label": "Patient",
+          "type": "uuid",
+          "section": "Patient",
+          "required": true,
+          "format": "uuid"
+        },
+        {
+          "key": "title",
+          "label": "Title",
           "type": "text",
-          "format": "uuid",
+          "section": "Plan",
           "required": true
         },
         {
           "key": "encounterId",
-          "label": "Encounter ID",
-          "type": "text",
-          "format": "uuid",
-          "required": true
+          "label": "Encounter",
+          "type": "uuid",
+          "section": "Plan",
+          "format": "uuid"
         },
         {
-          "key": "problem",
-          "label": "Care problem",
-          "type": "text",
-          "required": true
-        },
-        {
-          "key": "goal",
-          "label": "Goal",
-          "type": "text",
-          "required": true
+          "key": "goals",
+          "label": "Goals",
+          "type": "json",
+          "section": "Plan"
         },
         {
           "key": "status",
           "label": "Status",
           "type": "text",
-          "required": true
+          "section": "Plan",
+          "required": true,
+          "options": [
+            "draft",
+            "active",
+            "completed",
+            "cancelled"
+          ]
         }
       ],
       "requiredFields": [
-        "encounterId",
-        "goal",
         "patientId",
-        "problem",
+        "title",
         "status"
       ],
       "relationships": [
@@ -1181,44 +1341,72 @@
       },
       "frontendRoute": "/referrals",
       "backend": {
-        "endpoint": "/api/contracts/modules/referrals",
-        "createEndpoint": "/api/contracts/modules/referrals",
+        "endpoint": "/api/domains/modules/referrals",
+        "createEndpoint": "/api/domains/modules/referrals",
         "contractRoute": "/api/contracts/modules/referrals"
       },
       "databaseSource": "referrals",
       "fields": [
         {
           "key": "patientId",
-          "label": "Patient ID",
-          "type": "text",
-          "format": "uuid",
-          "required": true
+          "label": "Patient",
+          "type": "uuid",
+          "section": "Referral",
+          "required": true,
+          "format": "uuid"
         },
         {
           "key": "encounterId",
-          "label": "Encounter ID",
-          "type": "text",
-          "format": "uuid",
-          "required": true
-        },
-        {
-          "key": "reason",
-          "label": "Referral reason",
-          "type": "text",
-          "required": true
+          "label": "Encounter",
+          "type": "uuid",
+          "section": "Referral",
+          "format": "uuid"
         },
         {
           "key": "destination",
           "label": "Destination",
           "type": "text",
+          "section": "Referral",
           "required": true
+        },
+        {
+          "key": "reason",
+          "label": "Reason",
+          "type": "text",
+          "section": "Referral",
+          "required": true
+        },
+        {
+          "key": "urgency",
+          "label": "Urgency",
+          "type": "text",
+          "section": "Referral",
+          "options": [
+            "routine",
+            "urgent",
+            "emergency"
+          ]
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "text",
+          "section": "Referral",
+          "required": true,
+          "options": [
+            "draft",
+            "sent",
+            "accepted",
+            "completed",
+            "cancelled"
+          ]
         }
       ],
       "requiredFields": [
-        "destination",
-        "encounterId",
         "patientId",
-        "reason"
+        "destination",
+        "reason",
+        "status"
       ],
       "relationships": [
         {
@@ -1283,14 +1471,90 @@
       },
       "frontendRoute": "/referral-transfers",
       "backend": {
-        "endpoint": "/api/contracts/modules/referral-transfers",
-        "createEndpoint": null,
+        "endpoint": "/api/domains/modules/referral-transfers",
+        "createEndpoint": "/api/domains/modules/referral-transfers",
         "contractRoute": "/api/contracts/modules/referral-transfers"
       },
       "databaseSource": "referral_transfers",
-      "fields": [],
-      "requiredFields": [],
-      "relationships": [],
+      "fields": [
+        {
+          "key": "referralId",
+          "label": "Referral",
+          "type": "uuid",
+          "section": "Transfer",
+          "required": true,
+          "format": "uuid"
+        },
+        {
+          "key": "fromFacilityId",
+          "label": "Sending facility",
+          "type": "uuid",
+          "section": "Transfer",
+          "format": "uuid"
+        },
+        {
+          "key": "toFacilityId",
+          "label": "Receiving facility",
+          "type": "uuid",
+          "section": "Transfer",
+          "format": "uuid"
+        },
+        {
+          "key": "serviceCode",
+          "label": "Service code",
+          "type": "text",
+          "section": "Transfer"
+        },
+        {
+          "key": "urgency",
+          "label": "Urgency",
+          "type": "text",
+          "section": "Transfer",
+          "options": [
+            "routine",
+            "urgent",
+            "emergency"
+          ]
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "text",
+          "section": "Transfer",
+          "required": true,
+          "options": [
+            "requested",
+            "accepted",
+            "in-transit",
+            "arrived",
+            "cancelled"
+          ]
+        },
+        {
+          "key": "handoverNotes",
+          "label": "Handover notes",
+          "type": "text",
+          "section": "Transfer"
+        }
+      ],
+      "requiredFields": [
+        "referralId",
+        "status"
+      ],
+      "relationships": [
+        {
+          "field": "referralId",
+          "target": "referrals.id"
+        },
+        {
+          "field": "fromFacilityId",
+          "target": "facilities.id"
+        },
+        {
+          "field": "toFacilityId",
+          "target": "facilities.id"
+        }
+      ],
       "permissions": {
         "read": [
           "admin",
@@ -1345,33 +1609,85 @@
       "fields": [
         {
           "key": "patientId",
-          "label": "Patient ID",
-          "type": "text",
+          "label": "Patient",
+          "type": "uuid",
           "format": "uuid",
-          "required": true
+          "required": true,
+          "section": "Patient"
+        },
+        {
+          "key": "encounterId",
+          "label": "Encounter",
+          "type": "uuid",
+          "format": "uuid",
+          "section": "Care"
+        },
+        {
+          "key": "appointmentId",
+          "label": "Appointment",
+          "type": "uuid",
+          "format": "uuid",
+          "section": "Care"
         },
         {
           "key": "reason",
           "label": "Follow-up reason",
           "type": "text",
-          "required": true
+          "required": true,
+          "section": "Care"
         },
         {
           "key": "dueAt",
           "label": "Due date/time",
-          "type": "datetime-local",
-          "required": true
+          "type": "datetime",
+          "required": true,
+          "section": "Scheduling"
+        },
+        {
+          "key": "assignedTo",
+          "label": "Assigned to",
+          "type": "uuid",
+          "format": "uuid",
+          "section": "Ownership"
+        },
+        {
+          "key": "outcome",
+          "label": "Outcome",
+          "type": "text",
+          "section": "Outcome"
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "text",
+          "required": true,
+          "section": "Outcome",
+          "options": [
+            "due",
+            "scheduled",
+            "completed",
+            "cancelled"
+          ]
         }
       ],
       "requiredFields": [
-        "dueAt",
         "patientId",
-        "reason"
+        "reason",
+        "dueAt",
+        "status"
       ],
       "relationships": [
         {
           "field": "patientId",
           "target": "patients.id"
+        },
+        {
+          "field": "encounterId",
+          "target": "encounters.id"
+        },
+        {
+          "field": "appointmentId",
+          "target": "appointments.id"
         }
       ],
       "permissions": {
@@ -1435,52 +1751,88 @@
       "fields": [
         {
           "key": "patientId",
-          "label": "Patient ID",
-          "type": "text",
-          "format": "uuid",
-          "required": true
+          "label": "Patient",
+          "type": "uuid",
+          "section": "Task",
+          "required": true,
+          "format": "uuid"
+        },
+        {
+          "key": "encounterId",
+          "label": "Encounter",
+          "type": "uuid",
+          "section": "Task",
+          "format": "uuid"
         },
         {
           "key": "taskType",
           "label": "Task type",
-          "required": true,
-          "type": "text"
+          "type": "text",
+          "section": "Task",
+          "required": true
         },
         {
           "key": "title",
           "label": "Task title",
-          "required": true,
-          "type": "text"
+          "type": "text",
+          "section": "Task",
+          "required": true
         },
         {
           "key": "priority",
           "label": "Priority",
+          "type": "text",
+          "section": "Task",
+          "required": true,
           "options": [
+            "low",
             "normal",
+            "high",
             "urgent",
             "critical"
-          ],
-          "type": "text",
-          "required": true
+          ]
         },
         {
           "key": "dueAt",
-          "label": "Due date/time",
-          "type": "datetime-local",
-          "required": true
+          "label": "Due date",
+          "type": "datetime",
+          "section": "Task"
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "text",
+          "section": "Task",
+          "required": true,
+          "options": [
+            "open",
+            "in-progress",
+            "completed",
+            "cancelled"
+          ]
+        },
+        {
+          "key": "payload",
+          "label": "Task details",
+          "type": "json",
+          "section": "Task"
         }
       ],
       "requiredFields": [
-        "dueAt",
         "patientId",
-        "priority",
         "taskType",
-        "title"
+        "title",
+        "priority",
+        "status"
       ],
       "relationships": [
         {
           "field": "patientId",
           "target": "patients.id"
+        },
+        {
+          "field": "encounterId",
+          "target": "encounters.id"
         }
       ],
       "permissions": {
@@ -1536,9 +1888,9 @@
       },
       "frontendRoute": "/laboratory",
       "backend": {
-        "endpoint": "/api/contracts/modules/laboratory",
-        "createEndpoint": "/api/contracts/modules/laboratory",
-        "contractRoute": "/api/contracts/modules/laboratory"
+        "endpoint": "/api/laboratory",
+        "contractRoute": "/api/contracts/modules/laboratory",
+        "createEndpoint": "/api/orders"
       },
       "databaseSource": "lab_results",
       "fields": [
@@ -1638,9 +1990,9 @@
       },
       "frontendRoute": "/imaging",
       "backend": {
-        "endpoint": "/api/contracts/modules/imaging",
-        "createEndpoint": "/api/contracts/modules/imaging",
-        "contractRoute": "/api/contracts/modules/imaging"
+        "endpoint": "/api/imaging",
+        "contractRoute": "/api/contracts/modules/imaging",
+        "createEndpoint": "/api/orders"
       },
       "databaseSource": "imaging_studies",
       "fields": [
@@ -1740,76 +2092,104 @@
       },
       "frontendRoute": "/pharmacy",
       "backend": {
-        "endpoint": "/api/contracts/modules/pharmacy",
-        "createEndpoint": "/api/contracts/modules/pharmacy",
+        "endpoint": "/api/domains/modules/pharmacy",
+        "createEndpoint": "/api/domains/modules/pharmacy",
         "contractRoute": "/api/contracts/modules/pharmacy"
       },
       "databaseSource": "medication_orders",
       "fields": [
         {
           "key": "patientId",
-          "label": "Patient ID",
-          "type": "text",
-          "format": "uuid",
-          "required": true
+          "label": "Patient",
+          "type": "uuid",
+          "section": "Prescription",
+          "required": true,
+          "format": "uuid"
         },
         {
-          "key": "medicationCode",
-          "label": "Medication code",
-          "type": "text",
-          "required": true
+          "key": "encounterId",
+          "label": "Encounter",
+          "type": "uuid",
+          "section": "Prescription",
+          "format": "uuid"
         },
         {
-          "key": "medicationName",
-          "label": "Medication name",
-          "type": "text",
-          "required": true
+          "key": "medicationId",
+          "label": "Medication",
+          "type": "uuid",
+          "section": "Prescription",
+          "required": true,
+          "format": "uuid"
         },
         {
           "key": "dose",
           "label": "Dose",
           "type": "text",
+          "section": "Prescription",
           "required": true
         },
         {
           "key": "frequency",
           "label": "Frequency",
           "type": "text",
+          "section": "Prescription",
           "required": true
         },
         {
           "key": "route",
           "label": "Route",
           "type": "text",
+          "section": "Prescription",
           "required": true
         },
         {
           "key": "duration",
           "label": "Duration",
           "type": "text",
-          "required": true
+          "section": "Prescription"
         },
         {
           "key": "quantity",
           "label": "Quantity",
           "type": "number",
+          "section": "Prescription",
           "required": true
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "text",
+          "section": "Prescription",
+          "required": true,
+          "options": [
+            "active",
+            "completed",
+            "discontinued",
+            "partially-dispensed"
+          ]
         }
       ],
       "requiredFields": [
-        "dose",
-        "duration",
-        "frequency",
-        "medicationCode",
-        "medicationName",
         "patientId",
+        "medicationId",
+        "dose",
+        "frequency",
+        "route",
         "quantity",
-        "route"
+        "status"
       ],
       "relationships": [
         {
           "field": "patientId",
           "target": "patients.id"
+        },
+        {
+          "field": "encounterId",
+          "target": "encounters.id"
+        },
+        {
+          "field": "medicationId",
+          "target": "medications.id"
         }
       ],
       "permissions": {
@@ -1873,40 +2253,72 @@
       "fields": [
         {
           "key": "patientId",
-          "label": "Patient ID",
-          "type": "text",
-          "format": "uuid",
-          "required": true
+          "label": "Patient",
+          "type": "uuid",
+          "section": "Assessment",
+          "required": true,
+          "format": "uuid"
+        },
+        {
+          "key": "encounterId",
+          "label": "Encounter",
+          "type": "uuid",
+          "section": "Assessment",
+          "format": "uuid"
         },
         {
           "key": "assessmentType",
           "label": "Assessment type",
           "type": "text",
+          "section": "Assessment",
+          "required": true
+        },
+        {
+          "key": "findings",
+          "label": "Findings",
+          "type": "json",
+          "section": "Assessment",
           "required": true
         },
         {
           "key": "painScore",
           "label": "Pain score",
           "type": "number",
-          "required": true
+          "section": "Assessment"
         },
         {
           "key": "riskFlags",
           "label": "Risk flags",
+          "type": "json",
+          "section": "Safety"
+        },
+        {
+          "key": "status",
+          "label": "Status",
           "type": "text",
-          "required": true
+          "section": "Assessment",
+          "required": true,
+          "options": [
+            "draft",
+            "completed",
+            "reviewed"
+          ]
         }
       ],
       "requiredFields": [
-        "assessmentType",
-        "painScore",
         "patientId",
-        "riskFlags"
+        "assessmentType",
+        "findings",
+        "status"
       ],
       "relationships": [
         {
           "field": "patientId",
           "target": "patients.id"
+        },
+        {
+          "field": "encounterId",
+          "target": "encounters.id"
         }
       ],
       "permissions": {
@@ -1970,44 +2382,85 @@
       "fields": [
         {
           "key": "patientId",
-          "label": "Patient ID",
+          "label": "Patient",
+          "type": "uuid",
+          "section": "Emergency",
+          "required": true,
+          "format": "uuid"
+        },
+        {
+          "key": "encounterId",
+          "label": "Encounter",
+          "type": "uuid",
+          "section": "Emergency",
+          "format": "uuid"
+        },
+        {
+          "key": "acuity",
+          "label": "Acuity",
           "type": "text",
-          "format": "uuid",
-          "required": true
+          "section": "Emergency",
+          "required": true,
+          "options": [
+            "routine",
+            "urgent",
+            "emergency"
+          ]
         },
         {
           "key": "chiefComplaint",
           "label": "Chief complaint",
           "type": "text",
-          "required": true
-        },
-        {
-          "key": "acuity",
-          "label": "Acuity",
-          "options": [
-            "urgent",
-            "emergency"
-          ],
-          "type": "text",
+          "section": "Clinical assessment",
           "required": true
         },
         {
           "key": "triageLevel",
           "label": "Triage level",
-          "type": "number",
-          "required": true
+          "type": "text",
+          "section": "Clinical assessment"
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "text",
+          "section": "Emergency",
+          "required": true,
+          "options": [
+            "arrived",
+            "assessed",
+            "treated",
+            "admitted",
+            "discharged"
+          ]
+        },
+        {
+          "key": "disposition",
+          "label": "Disposition",
+          "type": "text",
+          "section": "Disposition"
+        },
+        {
+          "key": "notes",
+          "label": "Clinical notes",
+          "type": "json",
+          "section": "Clinical assessment"
         }
       ],
       "requiredFields": [
+        "patientId",
         "acuity",
         "chiefComplaint",
-        "patientId",
-        "triageLevel"
+        "status"
       ],
       "relationships": [
         {
           "field": "patientId",
           "target": "patients.id"
+        },
+        {
+          "field": "encounterId",
+          "target": "encounters.id"
         }
       ],
       "permissions": {
@@ -2071,33 +2524,76 @@
       "fields": [
         {
           "key": "patientId",
-          "label": "Patient ID",
-          "type": "text",
-          "format": "uuid",
-          "required": true
+          "label": "Patient",
+          "type": "uuid",
+          "section": "Admission",
+          "required": true,
+          "format": "uuid"
+        },
+        {
+          "key": "encounterId",
+          "label": "Encounter",
+          "type": "uuid",
+          "section": "Admission",
+          "format": "uuid"
         },
         {
           "key": "ward",
           "label": "Ward",
           "type": "text",
+          "section": "Admission",
           "required": true
         },
         {
           "key": "bed",
           "label": "Bed",
           "type": "text",
-          "required": true
+          "section": "Admission"
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "text",
+          "section": "Admission",
+          "required": true,
+          "options": [
+            "admitted",
+            "discharged",
+            "transferred"
+          ]
+        },
+        {
+          "key": "admittedAt",
+          "label": "Admission time",
+          "type": "datetime",
+          "section": "Admission"
+        },
+        {
+          "key": "dischargedAt",
+          "label": "Discharge time",
+          "type": "datetime",
+          "section": "Discharge"
+        },
+        {
+          "key": "dischargeSummary",
+          "label": "Discharge summary",
+          "type": "text",
+          "section": "Discharge"
         }
       ],
       "requiredFields": [
-        "bed",
         "patientId",
-        "ward"
+        "ward",
+        "status"
       ],
       "relationships": [
         {
           "field": "patientId",
           "target": "patients.id"
+        },
+        {
+          "field": "encounterId",
+          "target": "encounters.id"
         }
       ],
       "permissions": {
@@ -2153,43 +2649,109 @@
       },
       "frontendRoute": "/beds",
       "backend": {
-        "endpoint": "/api/contracts/modules/beds",
-        "createEndpoint": "/api/contracts/modules/beds",
+        "endpoint": "/api/domains/modules/beds",
+        "createEndpoint": "/api/domains/modules/beds",
         "contractRoute": "/api/contracts/modules/beds"
       },
       "databaseSource": "facility_beds",
       "fields": [
         {
+          "key": "facilityId",
+          "label": "Facility",
+          "type": "uuid",
+          "section": "Bed",
+          "required": true,
+          "format": "uuid"
+        },
+        {
           "key": "ward",
           "label": "Ward",
           "type": "text",
+          "section": "Bed",
           "required": true
+        },
+        {
+          "key": "room",
+          "label": "Room",
+          "type": "text",
+          "section": "Bed"
         },
         {
           "key": "bedNumber",
           "label": "Bed number",
-          "type": "number",
+          "type": "text",
+          "section": "Bed",
+          "required": true
+        },
+        {
+          "key": "bedType",
+          "label": "Bed type",
+          "type": "text",
+          "section": "Bed",
           "required": true
         },
         {
           "key": "status",
           "label": "Status",
+          "type": "text",
+          "section": "Bed",
+          "required": true,
           "options": [
             "available",
             "occupied",
+            "reserved",
             "cleaning",
             "blocked"
-          ],
-          "type": "text",
-          "required": true
+          ]
+        },
+        {
+          "key": "patientId",
+          "label": "Assigned patient",
+          "type": "uuid",
+          "section": "Assignment",
+          "format": "uuid"
+        },
+        {
+          "key": "admissionId",
+          "label": "Admission",
+          "type": "uuid",
+          "section": "Assignment",
+          "format": "uuid"
+        },
+        {
+          "key": "observedAt",
+          "label": "Observed at",
+          "type": "datetime",
+          "section": "Bed"
+        },
+        {
+          "key": "metadata",
+          "label": "Metadata",
+          "type": "json",
+          "section": "Bed"
         }
       ],
       "requiredFields": [
+        "facilityId",
+        "ward",
         "bedNumber",
-        "status",
-        "ward"
+        "bedType",
+        "status"
       ],
-      "relationships": [],
+      "relationships": [
+        {
+          "field": "facilityId",
+          "target": "facilities.id"
+        },
+        {
+          "field": "patientId",
+          "target": "patients.id"
+        },
+        {
+          "field": "admissionId",
+          "target": "admissions.id"
+        }
+      ],
       "permissions": {
         "read": [
           "admin",
@@ -2251,44 +2813,97 @@
       "fields": [
         {
           "key": "patientId",
-          "label": "Patient ID",
-          "type": "text",
-          "format": "uuid",
-          "required": true
+          "label": "Patient",
+          "type": "uuid",
+          "section": "Surgery",
+          "required": true,
+          "format": "uuid"
+        },
+        {
+          "key": "encounterId",
+          "label": "Encounter",
+          "type": "uuid",
+          "section": "Surgery",
+          "format": "uuid"
         },
         {
           "key": "procedureName",
           "label": "Procedure",
           "type": "text",
+          "section": "Surgery",
           "required": true
         },
         {
           "key": "scheduledAt",
-          "label": "Scheduled date/time",
-          "type": "datetime-local",
-          "required": true
+          "label": "Scheduled time",
+          "type": "datetime",
+          "section": "Surgery"
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "text",
+          "section": "Surgery",
+          "required": true,
+          "options": [
+            "planned",
+            "scheduled",
+            "in-progress",
+            "completed",
+            "cancelled"
+          ]
         },
         {
           "key": "consentConfirmed",
           "label": "Consent confirmed",
-          "options": [
-            "true",
-            "false"
-          ],
-          "type": "text",
+          "type": "boolean",
+          "section": "Safety",
           "required": true
+        },
+        {
+          "key": "surgeonUserId",
+          "label": "Surgeon",
+          "type": "uuid",
+          "section": "Surgery",
+          "format": "uuid"
+        },
+        {
+          "key": "anaesthesiaPlan",
+          "label": "Anaesthesia plan",
+          "type": "text",
+          "section": "Surgery"
+        },
+        {
+          "key": "checklist",
+          "label": "Pre-operative checklist",
+          "type": "json",
+          "section": "Safety"
+        },
+        {
+          "key": "notes",
+          "label": "Notes",
+          "type": "json",
+          "section": "Clinical documentation"
         }
       ],
       "requiredFields": [
-        "consentConfirmed",
         "patientId",
         "procedureName",
-        "scheduledAt"
+        "status",
+        "consentConfirmed"
       ],
       "relationships": [
         {
           "field": "patientId",
           "target": "patients.id"
+        },
+        {
+          "field": "encounterId",
+          "target": "encounters.id"
+        },
+        {
+          "field": "surgeonUserId",
+          "target": "users.id"
         }
       ],
       "permissions": {
@@ -2352,75 +2967,94 @@
       "fields": [
         {
           "key": "patientId",
-          "label": "Patient ID",
+          "label": "Patient",
+          "type": "uuid",
+          "section": "Pregnancy",
+          "required": true,
+          "format": "uuid"
+        },
+        {
+          "key": "encounterId",
+          "label": "Encounter",
+          "type": "uuid",
+          "section": "Pregnancy",
+          "format": "uuid"
+        },
+        {
+          "key": "eventType",
+          "label": "Event type",
           "type": "text",
-          "format": "uuid",
-          "required": true
-        },
-        {
-          "key": "contactNumber",
-          "label": "ANC contact number",
-          "type": "number",
-          "required": true
-        },
-        {
-          "key": "contactDate",
-          "label": "Contact date/time",
-          "type": "datetime-local",
+          "section": "Pregnancy",
           "required": true
         },
         {
           "key": "gestationalAgeWeeks",
-          "label": "Gestational age weeks",
+          "label": "Gestational age (weeks)",
           "type": "number",
-          "required": true
+          "section": "Pregnancy"
         },
         {
           "key": "gravida",
           "label": "Gravida",
-          "type": "text",
-          "required": true
+          "type": "number",
+          "section": "Pregnancy"
         },
         {
           "key": "para",
           "label": "Para",
-          "type": "text",
-          "required": true
-        },
-        {
-          "key": "symphysioFundalHeight",
-          "label": "Symphysio-fundal height",
           "type": "number",
-          "required": true
+          "section": "Pregnancy"
         },
         {
-          "key": "assessment",
-          "label": "Assessment",
-          "type": "text",
-          "required": true
+          "key": "maternalObservations",
+          "label": "Maternal observations",
+          "type": "json",
+          "section": "Assessment"
         },
         {
-          "key": "plan",
-          "label": "Plan",
+          "key": "fetalObservations",
+          "label": "Fetal observations",
+          "type": "json",
+          "section": "Assessment"
+        },
+        {
+          "key": "status",
+          "label": "Status",
           "type": "text",
-          "required": true
+          "section": "Pregnancy",
+          "required": true,
+          "options": [
+            "active",
+            "completed",
+            "cancelled"
+          ]
+        },
+        {
+          "key": "eventAt",
+          "label": "Event time",
+          "type": "datetime",
+          "section": "Pregnancy"
+        },
+        {
+          "key": "notes",
+          "label": "Notes",
+          "type": "text",
+          "section": "Clinical documentation"
         }
       ],
       "requiredFields": [
-        "assessment",
-        "contactDate",
-        "contactNumber",
-        "gestationalAgeWeeks",
-        "gravida",
-        "para",
         "patientId",
-        "plan",
-        "symphysioFundalHeight"
+        "eventType",
+        "status"
       ],
       "relationships": [
         {
           "field": "patientId",
           "target": "patients.id"
+        },
+        {
+          "field": "encounterId",
+          "target": "encounters.id"
         }
       ],
       "permissions": {
@@ -2484,68 +3118,73 @@
       "fields": [
         {
           "key": "patientId",
-          "label": "Patient ID",
-          "type": "text",
-          "format": "uuid",
-          "required": true
+          "label": "Patient",
+          "type": "uuid",
+          "section": "Assessment",
+          "required": true,
+          "format": "uuid"
+        },
+        {
+          "key": "encounterId",
+          "label": "Encounter",
+          "type": "uuid",
+          "section": "Assessment",
+          "format": "uuid"
         },
         {
           "key": "ageMonths",
-          "label": "Age months",
+          "label": "Age (months)",
           "type": "number",
-          "required": true
+          "section": "Growth"
         },
         {
           "key": "weightKg",
-          "label": "Weight kg",
+          "label": "Weight (kg)",
           "type": "number",
-          "required": true
+          "section": "Growth"
         },
         {
           "key": "heightCm",
-          "label": "Height cm",
+          "label": "Height (cm)",
           "type": "number",
-          "required": true
+          "section": "Growth"
         },
         {
           "key": "muacMm",
-          "label": "MUAC mm",
+          "label": "MUAC (mm)",
           "type": "number",
-          "required": true
+          "section": "Growth"
         },
         {
           "key": "temperature",
           "label": "Temperature",
           "type": "number",
-          "required": true
+          "section": "Vitals"
         },
         {
           "key": "respiratoryRate",
           "label": "Respiratory rate",
           "type": "number",
-          "required": true
+          "section": "Vitals"
         },
         {
           "key": "spo2",
           "label": "SpO\u2082",
           "type": "number",
-          "required": true
+          "section": "Vitals"
         }
       ],
       "requiredFields": [
-        "ageMonths",
-        "heightCm",
-        "muacMm",
-        "patientId",
-        "respiratoryRate",
-        "spo2",
-        "temperature",
-        "weightKg"
+        "patientId"
       ],
       "relationships": [
         {
           "field": "patientId",
           "target": "patients.id"
+        },
+        {
+          "field": "encounterId",
+          "target": "encounters.id"
         }
       ],
       "permissions": {
@@ -2609,63 +3248,77 @@
       "fields": [
         {
           "key": "patientId",
-          "label": "Patient ID",
+          "label": "Patient",
+          "type": "uuid",
+          "section": "Visit",
           "required": true,
-          "type": "text",
           "format": "uuid"
         },
         {
-          "key": "ageMonths",
-          "label": "Age months",
-          "type": "number",
+          "key": "visitDate",
+          "label": "Visit date",
+          "type": "date",
+          "section": "Visit",
           "required": true
+        },
+        {
+          "key": "ageMonths",
+          "label": "Age (months)",
+          "type": "number",
+          "section": "Growth"
         },
         {
           "key": "weightKg",
-          "label": "Weight kg",
+          "label": "Weight (kg)",
           "type": "number",
-          "required": true
+          "section": "Growth"
         },
         {
-          "key": "heightCm",
-          "label": "Length/height cm",
+          "key": "lengthHeightCm",
+          "label": "Length / height (cm)",
           "type": "number",
-          "required": true
+          "section": "Growth"
         },
         {
           "key": "muacMm",
-          "label": "MUAC mm",
+          "label": "MUAC (mm)",
           "type": "number",
-          "required": true
+          "section": "Growth"
         },
         {
-          "key": "temperature",
-          "label": "Temperature",
+          "key": "temperatureC",
+          "label": "Temperature (\u00b0C)",
           "type": "number",
-          "required": true
+          "section": "Vitals"
         },
         {
           "key": "respiratoryRate",
           "label": "Respiratory rate",
           "type": "number",
-          "required": true
+          "section": "Vitals"
         },
         {
           "key": "spo2",
           "label": "SpO\u2082",
           "type": "number",
-          "required": true
+          "section": "Vitals"
+        },
+        {
+          "key": "assessment",
+          "label": "Assessment",
+          "type": "json",
+          "section": "Clinical review"
+        },
+        {
+          "key": "plan",
+          "label": "Plan",
+          "type": "json",
+          "section": "Clinical review"
         }
       ],
       "requiredFields": [
-        "ageMonths",
-        "heightCm",
-        "muacMm",
         "patientId",
-        "respiratoryRate",
-        "spo2",
-        "temperature",
-        "weightKg"
+        "visitDate"
       ],
       "relationships": [
         {
@@ -2734,70 +3387,83 @@
       "fields": [
         {
           "key": "patientId",
-          "label": "Patient ID",
-          "type": "text",
-          "format": "uuid",
-          "required": true
-        },
-        {
-          "key": "vaccineCode",
-          "label": "Vaccine code",
-          "type": "text",
-          "required": true
+          "label": "Patient",
+          "type": "uuid",
+          "section": "Vaccination",
+          "required": true,
+          "format": "uuid"
         },
         {
           "key": "vaccineName",
-          "label": "Vaccine name",
+          "label": "Vaccine",
           "type": "text",
+          "section": "Vaccination",
           "required": true
         },
         {
           "key": "doseNumber",
           "label": "Dose number",
           "type": "number",
+          "section": "Vaccination",
           "required": true
         },
         {
-          "key": "lotNumber",
-          "label": "Lot number",
-          "type": "number",
+          "key": "administeredAt",
+          "label": "Administered at",
+          "type": "datetime",
+          "section": "Vaccination",
           "required": true
         },
         {
-          "key": "expiryDate",
-          "label": "Expiry date",
-          "type": "date",
-          "required": true
+          "key": "status",
+          "label": "Status",
+          "type": "text",
+          "section": "Vaccination",
+          "required": true,
+          "options": [
+            "given",
+            "due",
+            "missed",
+            "cancelled"
+          ]
+        },
+        {
+          "key": "nextDueAt",
+          "label": "Next due",
+          "type": "datetime",
+          "section": "Vaccination"
         },
         {
           "key": "route",
           "label": "Route",
           "type": "text",
-          "required": true
+          "section": "Vaccination"
         },
         {
           "key": "site",
-          "label": "Site",
+          "label": "Administration site",
           "type": "text",
-          "required": true
+          "section": "Vaccination"
         },
         {
-          "key": "nextDueAt",
-          "label": "Next due",
-          "type": "datetime-local",
-          "required": true
+          "key": "lotNumber",
+          "label": "Lot number",
+          "type": "text",
+          "section": "Product"
+        },
+        {
+          "key": "expiryDate",
+          "label": "Expiry date",
+          "type": "date",
+          "section": "Product"
         }
       ],
       "requiredFields": [
-        "doseNumber",
-        "expiryDate",
-        "lotNumber",
-        "nextDueAt",
         "patientId",
-        "route",
-        "site",
-        "vaccineCode",
-        "vaccineName"
+        "vaccineName",
+        "doseNumber",
+        "administeredAt",
+        "status"
       ],
       "relationships": [
         {
@@ -2866,60 +3532,62 @@
       "fields": [
         {
           "key": "patientId",
-          "label": "Patient ID",
-          "type": "text",
-          "format": "uuid",
-          "required": true
+          "label": "Patient",
+          "type": "uuid",
+          "section": "Condition",
+          "required": true,
+          "format": "uuid"
         },
         {
           "key": "conditionCode",
           "label": "Condition code",
           "type": "text",
+          "section": "Condition",
           "required": true
         },
         {
           "key": "conditionName",
-          "label": "Condition name",
+          "label": "Condition",
           "type": "text",
+          "section": "Condition",
           "required": true
         },
         {
           "key": "status",
           "label": "Status",
+          "type": "text",
+          "section": "Condition",
+          "required": true,
           "options": [
             "active",
             "stable",
             "uncontrolled",
             "resolved"
-          ],
-          "type": "text",
-          "required": true
+          ]
         },
         {
           "key": "riskLevel",
           "label": "Risk level",
-          "options": [
-            "low",
-            "moderate",
-            "high",
-            "critical"
-          ],
           "type": "text",
-          "required": true
+          "section": "Risk"
+        },
+        {
+          "key": "targets",
+          "label": "Care targets",
+          "type": "json",
+          "section": "Plan"
         },
         {
           "key": "nextReviewAt",
           "label": "Next review",
-          "type": "datetime-local",
-          "required": true
+          "type": "datetime",
+          "section": "Plan"
         }
       ],
       "requiredFields": [
+        "patientId",
         "conditionCode",
         "conditionName",
-        "nextReviewAt",
-        "patientId",
-        "riskLevel",
         "status"
       ],
       "relationships": [
@@ -2981,7 +3649,7 @@
       },
       "frontendRoute": "/medication-reconciliation",
       "backend": {
-        "endpoint": "/api/contracts/modules/medication-reconciliation",
+        "endpoint": "/api/medication-reconciliation",
         "createEndpoint": "/api/medication-reconciliation",
         "contractRoute": "/api/contracts/modules/medication-reconciliation"
       },
@@ -2989,36 +3657,48 @@
       "fields": [
         {
           "key": "patientId",
-          "label": "Patient ID",
+          "label": "Patient",
+          "type": "uuid",
+          "section": "Reconciliation",
           "required": true,
-          "type": "text",
           "format": "uuid"
         },
         {
-          "key": "encounterId",
-          "label": "Encounter ID",
+          "key": "status",
+          "label": "Status",
           "type": "text",
-          "format": "uuid",
-          "required": true
+          "section": "Reconciliation",
+          "required": true,
+          "options": [
+            "in-review",
+            "completed",
+            "needs-review"
+          ]
         },
         {
           "key": "medicines",
-          "label": "Medicines JSON",
-          "type": "text",
+          "label": "Medication list",
+          "type": "json",
+          "section": "Medicines",
           "required": true
         },
         {
           "key": "discrepancies",
-          "label": "Discrepancies JSON",
-          "type": "text",
-          "required": true
+          "label": "Discrepancies",
+          "type": "json",
+          "section": "Safety"
+        },
+        {
+          "key": "resolvedCount",
+          "label": "Resolved discrepancies",
+          "type": "number",
+          "section": "Safety"
         }
       ],
       "requiredFields": [
-        "discrepancies",
-        "encounterId",
-        "medicines",
-        "patientId"
+        "patientId",
+        "status",
+        "medicines"
       ],
       "relationships": [
         {
@@ -3083,48 +3763,71 @@
       },
       "frontendRoute": "/consents",
       "backend": {
-        "endpoint": "/api/contracts/modules/consents",
-        "createEndpoint": "/api/consents",
+        "endpoint": "/api/domains/modules/consents",
+        "createEndpoint": "/api/domains/modules/consents",
         "contractRoute": "/api/contracts/modules/consents"
       },
       "databaseSource": "patient_consents",
       "fields": [
         {
           "key": "patientId",
-          "label": "Patient ID",
+          "label": "Patient",
+          "type": "uuid",
+          "section": "Consent",
           "required": true,
-          "type": "text",
           "format": "uuid"
         },
         {
           "key": "consentType",
           "label": "Consent type",
-          "required": true,
-          "type": "text"
+          "type": "text",
+          "section": "Consent",
+          "required": true
         },
         {
           "key": "status",
           "label": "Status",
+          "type": "text",
+          "section": "Consent",
+          "required": true,
           "options": [
             "active",
             "withdrawn",
             "expired"
-          ],
-          "type": "text",
+          ]
+        },
+        {
+          "key": "scope",
+          "label": "Scope",
+          "type": "json",
+          "section": "Consent",
           "required": true
         },
         {
+          "key": "grantedAt",
+          "label": "Granted at",
+          "type": "datetime",
+          "section": "Consent"
+        },
+        {
           "key": "expiresAt",
-          "label": "Expires",
-          "type": "datetime-local",
-          "required": true
+          "label": "Expires at",
+          "type": "datetime",
+          "section": "Consent"
+        },
+        {
+          "key": "recordedBy",
+          "label": "Recorded by",
+          "type": "uuid",
+          "section": "Consent",
+          "format": "uuid"
         }
       ],
       "requiredFields": [
-        "consentType",
-        "expiresAt",
         "patientId",
-        "status"
+        "consentType",
+        "status",
+        "scope"
       ],
       "relationships": [
         {
@@ -3185,59 +3888,79 @@
       },
       "frontendRoute": "/billing",
       "backend": {
-        "endpoint": "/api/contracts/modules/billing",
-        "createEndpoint": "/api/domains/finance/invoices",
+        "endpoint": "/api/domains/modules/billing",
+        "createEndpoint": "/api/domains/modules/billing",
         "contractRoute": "/api/contracts/modules/billing"
       },
       "databaseSource": "invoices",
       "fields": [
         {
           "key": "patientId",
-          "label": "Patient ID",
-          "type": "text",
-          "format": "uuid",
+          "label": "Patient",
+          "type": "uuid",
+          "section": "Invoice",
           "required": true,
-          "placeholder": "Patient record ID"
+          "format": "uuid"
         },
         {
           "key": "encounterId",
-          "label": "Encounter ID",
-          "type": "text",
-          "format": "uuid",
-          "required": false,
-          "placeholder": "Optional encounter ID"
+          "label": "Encounter",
+          "type": "uuid",
+          "section": "Invoice",
+          "format": "uuid"
         },
         {
-          "key": "description",
-          "label": "Charge description",
+          "key": "status",
+          "label": "Status",
           "type": "text",
-          "required": true
-        },
-        {
-          "key": "total",
-          "label": "Total amount",
-          "type": "number",
-          "required": true
+          "section": "Invoice",
+          "required": true,
+          "options": [
+            "draft",
+            "open",
+            "paid",
+            "void",
+            "cancelled"
+          ]
         },
         {
           "key": "currency",
           "label": "Currency",
+          "type": "text",
+          "section": "Invoice",
+          "required": true,
           "options": [
             "UGX",
-            "USD",
-            "EUR",
             "KES",
-            "TZS"
-          ],
-          "type": "text",
+            "TZS",
+            "USD"
+          ]
+        },
+        {
+          "key": "total",
+          "label": "Total",
+          "type": "number",
+          "section": "Invoice",
           "required": true
+        },
+        {
+          "key": "description",
+          "label": "Description",
+          "type": "text",
+          "section": "Invoice"
+        },
+        {
+          "key": "metadata",
+          "label": "Metadata",
+          "type": "json",
+          "section": "Invoice"
         }
       ],
       "requiredFields": [
         "patientId",
-        "description",
-        "total",
-        "currency"
+        "status",
+        "currency",
+        "total"
       ],
       "relationships": [
         {
@@ -3412,82 +4135,80 @@
       "fields": [
         {
           "key": "patientId",
-          "label": "Patient ID",
-          "type": "text",
-          "format": "uuid",
-          "required": true
+          "label": "Patient",
+          "type": "uuid",
+          "section": "Policy",
+          "required": true,
+          "format": "uuid"
         },
         {
           "key": "providerId",
-          "label": "Insurance provider ID",
-          "type": "text",
-          "format": "uuid",
-          "required": false
-        },
-        {
-          "key": "providerName",
-          "label": "Provider name",
-          "type": "text",
-          "required": false,
-          "placeholder": "Used to create a provider when provider ID is not supplied"
+          "label": "Provider",
+          "type": "uuid",
+          "section": "Policy",
+          "required": true,
+          "format": "uuid"
         },
         {
           "key": "policyNumber",
           "label": "Policy number",
           "type": "text",
+          "section": "Policy",
           "required": true
         },
         {
           "key": "memberNumber",
           "label": "Member number",
           "type": "text",
-          "required": false
+          "section": "Policy"
         },
         {
           "key": "status",
           "label": "Status",
+          "type": "text",
+          "section": "Policy",
+          "required": true,
           "options": [
             "active",
             "inactive",
             "expired",
             "suspended"
-          ],
-          "type": "text",
-          "required": true
+          ]
+        },
+        {
+          "key": "coverage",
+          "label": "Coverage details",
+          "type": "json",
+          "section": "Coverage"
         },
         {
           "key": "effectiveFrom",
           "label": "Effective from",
           "type": "date",
-          "required": false
+          "section": "Coverage"
         },
         {
           "key": "effectiveTo",
           "label": "Effective to",
           "type": "date",
-          "required": false
+          "section": "Coverage"
         },
         {
           "key": "copayPercent",
-          "label": "Copay percent",
+          "label": "Copay (%)",
           "type": "number",
-          "required": false
+          "section": "Coverage"
         },
         {
           "key": "annualLimit",
           "label": "Annual limit",
           "type": "number",
-          "required": false
-        },
-        {
-          "key": "coverage",
-          "label": "Coverage details (JSON)",
-          "type": "text",
-          "required": false
+          "section": "Coverage"
         }
       ],
       "requiredFields": [
         "patientId",
+        "providerId",
         "policyNumber",
         "status"
       ],
@@ -3558,80 +4279,115 @@
       "fields": [
         {
           "key": "patientId",
-          "label": "Patient ID",
-          "type": "text",
-          "format": "uuid",
-          "required": true
+          "label": "Patient",
+          "type": "uuid",
+          "section": "Claim",
+          "required": true,
+          "format": "uuid"
         },
         {
           "key": "policyId",
-          "label": "Policy ID",
-          "type": "text",
-          "format": "uuid",
-          "required": false
+          "label": "Policy",
+          "type": "uuid",
+          "section": "Claim",
+          "format": "uuid"
         },
         {
           "key": "invoiceId",
-          "label": "Invoice ID",
-          "type": "text",
-          "format": "uuid",
-          "required": false
+          "label": "Invoice",
+          "type": "uuid",
+          "section": "Claim",
+          "format": "uuid"
         },
         {
           "key": "claimNumber",
           "label": "Claim number",
           "type": "text",
+          "section": "Claim",
           "required": true
         },
         {
           "key": "amount",
           "label": "Claim amount",
           "type": "number",
+          "section": "Claim",
           "required": true
         },
         {
           "key": "currency",
           "label": "Currency",
+          "type": "text",
+          "section": "Claim",
+          "required": true,
           "options": [
             "UGX",
-            "USD",
-            "EUR",
             "KES",
-            "TZS"
-          ],
-          "type": "text",
-          "required": true
+            "TZS",
+            "USD"
+          ]
         },
         {
           "key": "status",
           "label": "Status",
+          "type": "text",
+          "section": "Claim",
+          "required": true,
           "options": [
             "draft",
             "submitted",
             "approved",
+            "partially-approved",
             "rejected",
-            "partially-approved"
-          ],
-          "type": "text",
-          "required": true
+            "paid"
+          ]
+        },
+        {
+          "key": "submittedAt",
+          "label": "Submitted at",
+          "type": "datetime",
+          "section": "Claim"
+        },
+        {
+          "key": "respondedAt",
+          "label": "Payer response at",
+          "type": "datetime",
+          "section": "Claim"
         },
         {
           "key": "coverageAmount",
-          "label": "Coverage amount",
+          "label": "Covered amount",
           "type": "number",
-          "required": false
+          "section": "Settlement"
         },
         {
           "key": "patientResponsibility",
           "label": "Patient responsibility",
           "type": "number",
-          "required": false
+          "section": "Settlement"
         },
         {
           "key": "externalReference",
-          "label": "External reference",
+          "label": "Payer reference",
           "type": "text",
-          "required": false
+          "section": "Settlement"
+        },
+        {
+          "key": "payerReference",
+          "label": "Payer reference detail",
+          "type": "text",
+          "section": "Settlement"
+        },
+        {
+          "key": "rejectionReason",
+          "label": "Rejection reason",
+          "type": "text",
+          "section": "Settlement"
+        },
+        {
+          "key": "metadata",
+          "label": "Metadata",
+          "type": "json",
+          "section": "Claim"
         }
       ],
       "requiredFields": [
@@ -3710,65 +4466,65 @@
           "key": "entryDate",
           "label": "Entry date",
           "type": "date",
-          "required": false
+          "section": "Entry",
+          "required": true
         },
         {
           "key": "accountCode",
           "label": "Account code",
           "type": "text",
-          "required": false
+          "section": "Entry"
         },
         {
           "key": "description",
-          "label": "Entry description",
+          "label": "Description",
           "type": "text",
+          "section": "Entry",
           "required": true
         },
         {
           "key": "entryType",
           "label": "Entry type",
-          "options": [
-            "income",
-            "expense",
-            "adjustment"
-          ],
           "type": "text",
+          "section": "Entry",
           "required": true
         },
         {
           "key": "amount",
           "label": "Amount",
           "type": "number",
+          "section": "Entry",
           "required": true
         },
         {
           "key": "currency",
           "label": "Currency",
+          "type": "text",
+          "section": "Entry",
+          "required": true,
           "options": [
             "UGX",
-            "USD",
-            "EUR",
             "KES",
-            "TZS"
-          ],
-          "type": "text",
-          "required": true
+            "TZS",
+            "USD"
+          ]
         },
         {
           "key": "referenceType",
           "label": "Reference type",
           "type": "text",
-          "required": false
+          "section": "Reference"
         },
         {
           "key": "referenceId",
           "label": "Reference ID",
-          "type": "text",
-          "format": "uuid",
-          "required": false
+          "type": "uuid",
+          "section": "Reference",
+          "format": "uuid"
         }
       ],
       "requiredFields": [
+        "entryDate",
         "description",
         "entryType",
         "amount",
@@ -3838,72 +4594,80 @@
           "key": "name",
           "label": "Item name",
           "type": "text",
+          "section": "Item",
           "required": true
         },
         {
           "key": "sku",
           "label": "SKU",
           "type": "text",
-          "required": false
-        },
-        {
-          "key": "unit",
-          "label": "Unit",
-          "type": "text",
+          "section": "Item",
           "required": true
         },
         {
           "key": "category",
           "label": "Category",
           "type": "text",
-          "required": false
+          "section": "Item",
+          "required": true
+        },
+        {
+          "key": "unit",
+          "label": "Unit",
+          "type": "text",
+          "section": "Item",
+          "required": true
         },
         {
           "key": "reorderLevel",
           "label": "Reorder level",
           "type": "number",
-          "required": false
+          "section": "Stock"
         },
         {
           "key": "reorderQuantity",
           "label": "Reorder quantity",
           "type": "number",
-          "required": false
+          "section": "Stock"
         },
         {
           "key": "unitCost",
           "label": "Unit cost",
           "type": "number",
-          "required": false
+          "section": "Finance"
         },
         {
-          "key": "initialQuantity",
-          "label": "Initial quantity",
-          "type": "number",
-          "required": false
-        },
-        {
-          "key": "batchNumber",
-          "label": "Initial batch number",
+          "key": "currency",
+          "label": "Currency",
           "type": "text",
-          "required": false
+          "section": "Finance",
+          "required": true,
+          "options": [
+            "UGX",
+            "KES",
+            "TZS",
+            "USD"
+          ]
         },
         {
-          "key": "expiryDate",
-          "label": "Initial batch expiry",
-          "type": "date",
-          "required": false
+          "key": "active",
+          "label": "Active",
+          "type": "boolean",
+          "section": "Item"
         },
         {
-          "key": "location",
-          "label": "Initial stock location",
-          "type": "text",
-          "required": false
+          "key": "metadata",
+          "label": "Metadata",
+          "type": "json",
+          "section": "Item"
         }
       ],
       "requiredFields": [
         "name",
-        "unit"
+        "sku",
+        "category",
+        "unit",
+        "currency"
       ],
       "relationships": [],
       "permissions": {
@@ -3967,33 +4731,50 @@
       "fields": [
         {
           "key": "supplierId",
-          "label": "Supplier ID",
-          "type": "text",
-          "format": "uuid",
-          "required": false
+          "label": "Supplier",
+          "type": "uuid",
+          "section": "Request",
+          "format": "uuid"
+        },
+        {
+          "key": "requestedBy",
+          "label": "Requested by",
+          "type": "uuid",
+          "section": "Request",
+          "format": "uuid"
         },
         {
           "key": "description",
           "label": "Request description",
           "type": "text",
+          "section": "Request",
           "required": true
         },
         {
           "key": "quantity",
           "label": "Quantity",
           "type": "number",
+          "section": "Request",
+          "required": true
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "text",
+          "section": "Request",
           "required": true
         },
         {
           "key": "notes",
-          "label": "Notes (JSON)",
-          "type": "text",
-          "required": false
+          "label": "Request details",
+          "type": "json",
+          "section": "Request"
         }
       ],
       "requiredFields": [
         "description",
-        "quantity"
+        "quantity",
+        "status"
       ],
       "relationships": [],
       "permissions": {
@@ -4059,42 +4840,44 @@
           "key": "name",
           "label": "Supplier name",
           "type": "text",
+          "section": "Supplier",
           "required": true
-        },
-        {
-          "key": "phone",
-          "label": "Phone",
-          "type": "text",
-          "required": false
-        },
-        {
-          "key": "email",
-          "label": "Email",
-          "type": "email",
-          "required": false
         },
         {
           "key": "category",
           "label": "Category",
           "type": "text",
-          "required": false
+          "section": "Supplier"
+        },
+        {
+          "key": "contact",
+          "label": "Contact details",
+          "type": "json",
+          "section": "Contact"
         },
         {
           "key": "paymentTerms",
           "label": "Payment terms",
           "type": "text",
-          "required": false
+          "section": "Commercial"
         },
         {
           "key": "status",
           "label": "Status",
+          "type": "text",
+          "section": "Supplier",
+          "required": true,
           "options": [
             "active",
             "inactive",
             "suspended"
-          ],
-          "type": "text",
-          "required": true
+          ]
+        },
+        {
+          "key": "metadata",
+          "label": "Additional details",
+          "type": "json",
+          "section": "Supplier"
         }
       ],
       "requiredFields": [
@@ -4163,27 +4946,55 @@
       "fields": [
         {
           "key": "patientId",
-          "label": "Patient ID",
-          "type": "text",
+          "label": "Patient",
+          "type": "uuid",
           "format": "uuid",
-          "required": true
+          "required": true,
+          "section": "Patient"
         },
         {
           "key": "feature",
           "label": "Portal feature",
           "type": "text",
-          "required": true
+          "required": true,
+          "section": "Access"
+        },
+        {
+          "key": "accessLevel",
+          "label": "Access level",
+          "type": "text",
+          "required": true,
+          "section": "Access",
+          "options": [
+            "view",
+            "manage",
+            "message"
+          ]
         },
         {
           "key": "status",
           "label": "Status",
           "type": "text",
-          "required": true
+          "required": true,
+          "section": "Access",
+          "options": [
+            "pending",
+            "active",
+            "suspended",
+            "closed"
+          ]
+        },
+        {
+          "key": "activatedAt",
+          "label": "Activated at",
+          "type": "datetime",
+          "section": "Access"
         }
       ],
       "requiredFields": [
-        "feature",
         "patientId",
+        "feature",
+        "accessLevel",
         "status"
       ],
       "relationships": [
@@ -4245,65 +5056,93 @@
       },
       "frontendRoute": "/portal-messages",
       "backend": {
-        "endpoint": "/api/contracts/modules/portal-messages",
-        "createEndpoint": "/api/portal/messages",
+        "endpoint": "/api/domains/modules/portal-messages",
+        "createEndpoint": "/api/domains/modules/portal-messages",
         "contractRoute": "/api/contracts/modules/portal-messages"
       },
       "databaseSource": "portal_messages",
       "fields": [
         {
           "key": "patientId",
-          "label": "Patient ID",
+          "label": "Patient",
+          "type": "uuid",
+          "section": "Message",
           "required": true,
-          "type": "text",
           "format": "uuid"
         },
         {
-          "key": "direction",
-          "label": "Direction",
-          "options": [
-            "inbound",
-            "outbound"
-          ],
-          "type": "text",
-          "required": true
+          "key": "senderUserId",
+          "label": "Sender",
+          "type": "uuid",
+          "section": "Message",
+          "format": "uuid"
         },
         {
-          "key": "channel",
-          "label": "Channel",
-          "options": [
-            "portal",
-            "sms",
-            "email",
-            "whatsapp"
-          ],
-          "type": "text",
-          "required": true
+          "key": "recipientUserId",
+          "label": "Recipient",
+          "type": "uuid",
+          "section": "Message",
+          "format": "uuid"
         },
         {
           "key": "subject",
           "label": "Subject",
           "type": "text",
+          "section": "Message",
           "required": true
         },
         {
           "key": "body",
           "label": "Message",
+          "type": "text",
+          "section": "Message",
+          "required": true
+        },
+        {
+          "key": "direction",
+          "label": "Direction",
+          "type": "text",
+          "section": "Message",
           "required": true,
-          "type": "text"
+          "options": [
+            "inbound",
+            "outbound"
+          ]
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "text",
+          "section": "Delivery",
+          "required": true,
+          "options": [
+            "draft",
+            "queued",
+            "sent",
+            "delivered",
+            "failed"
+          ]
         }
       ],
       "requiredFields": [
-        "body",
-        "channel",
-        "direction",
         "patientId",
-        "subject"
+        "subject",
+        "body",
+        "direction",
+        "status"
       ],
       "relationships": [
         {
           "field": "patientId",
           "target": "patients.id"
+        },
+        {
+          "field": "senderUserId",
+          "target": "polymorphic.entity"
+        },
+        {
+          "field": "recipientUserId",
+          "target": "polymorphic.entity"
         }
       ],
       "permissions": {
@@ -4367,44 +5206,87 @@
       "fields": [
         {
           "key": "patientId",
-          "label": "Patient ID",
-          "type": "text",
-          "format": "uuid",
-          "required": true
+          "label": "Patient",
+          "type": "uuid",
+          "section": "Session",
+          "required": true,
+          "format": "uuid"
+        },
+        {
+          "key": "appointmentId",
+          "label": "Appointment",
+          "type": "uuid",
+          "section": "Session",
+          "format": "uuid"
+        },
+        {
+          "key": "encounterId",
+          "label": "Encounter",
+          "type": "uuid",
+          "section": "Session",
+          "format": "uuid"
         },
         {
           "key": "scheduledAt",
-          "label": "Scheduled date/time",
-          "type": "datetime-local",
+          "label": "Scheduled time",
+          "type": "datetime",
+          "section": "Session",
           "required": true
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "text",
+          "section": "Session",
+          "required": true,
+          "options": [
+            "scheduled",
+            "waiting",
+            "active",
+            "completed",
+            "cancelled"
+          ]
         },
         {
           "key": "meetingUrl",
           "label": "Meeting URL",
           "type": "text",
+          "section": "Session"
+        },
+        {
+          "key": "identityVerified",
+          "label": "Identity verified",
+          "type": "boolean",
+          "section": "Safety",
           "required": true
         },
         {
           "key": "consentConfirmed",
           "label": "Consent confirmed",
-          "options": [
-            "true",
-            "false"
-          ],
-          "type": "text",
+          "type": "boolean",
+          "section": "Safety",
           "required": true
         }
       ],
       "requiredFields": [
-        "consentConfirmed",
-        "meetingUrl",
         "patientId",
-        "scheduledAt"
+        "scheduledAt",
+        "status",
+        "identityVerified",
+        "consentConfirmed"
       ],
       "relationships": [
         {
           "field": "patientId",
           "target": "patients.id"
+        },
+        {
+          "field": "appointmentId",
+          "target": "appointments.id"
+        },
+        {
+          "field": "encounterId",
+          "target": "encounters.id"
         }
       ],
       "permissions": {
@@ -4468,50 +5350,75 @@
       "fields": [
         {
           "key": "patientId",
-          "label": "Patient ID",
-          "type": "text",
-          "format": "uuid",
-          "required": true
+          "label": "Patient",
+          "type": "uuid",
+          "section": "Reading",
+          "required": true,
+          "format": "uuid"
         },
         {
           "key": "deviceId",
-          "label": "Device ID",
+          "label": "Device",
           "type": "text",
-          "format": "uuid",
-          "required": true
+          "section": "Reading"
         },
         {
           "key": "metric",
           "label": "Metric",
           "type": "text",
+          "section": "Reading",
           "required": true
         },
         {
           "key": "valueNumeric",
           "label": "Value",
           "type": "number",
+          "section": "Reading",
           "required": true
         },
         {
           "key": "unit",
           "label": "Unit",
           "type": "text",
-          "required": true
+          "section": "Reading"
         },
         {
           "key": "measuredAt",
           "label": "Measured at",
-          "type": "datetime-local",
+          "type": "datetime",
+          "section": "Reading",
+          "required": true
+        },
+        {
+          "key": "source",
+          "label": "Source",
+          "type": "text",
+          "section": "Reading",
+          "required": true
+        },
+        {
+          "key": "validationStatus",
+          "label": "Validation status",
+          "type": "text",
+          "section": "Quality",
+          "required": true
+        },
+        {
+          "key": "alertStatus",
+          "label": "Alert status",
+          "type": "text",
+          "section": "Quality",
           "required": true
         }
       ],
       "requiredFields": [
-        "deviceId",
-        "measuredAt",
-        "metric",
         "patientId",
-        "unit",
-        "valueNumeric"
+        "metric",
+        "valueNumeric",
+        "measuredAt",
+        "source",
+        "validationStatus",
+        "alertStatus"
       ],
       "relationships": [
         {
@@ -4576,42 +5483,64 @@
       },
       "frontendRoute": "/notifications",
       "backend": {
-        "endpoint": "/api/contracts/modules/notifications",
-        "createEndpoint": "/api/contracts/modules/notifications",
+        "endpoint": "/api/domains/modules/notifications",
+        "createEndpoint": "/api/domains/modules/notifications",
         "contractRoute": "/api/contracts/modules/notifications"
       },
       "databaseSource": "notifications",
       "fields": [
         {
           "key": "patientId",
-          "label": "Patient ID",
-          "type": "text",
-          "format": "uuid",
-          "required": true
+          "label": "Patient",
+          "type": "uuid",
+          "section": "Notification",
+          "format": "uuid"
         },
         {
           "key": "channel",
           "label": "Channel",
+          "type": "text",
+          "section": "Notification",
+          "required": true,
           "options": [
             "in-app",
             "sms",
             "email",
-            "whatsapp"
-          ],
+            "whatsapp",
+            "push"
+          ]
+        },
+        {
+          "key": "template",
+          "label": "Template",
           "type": "text",
+          "section": "Notification",
           "required": true
         },
         {
-          "key": "message",
-          "label": "Message",
+          "key": "status",
+          "label": "Status",
           "type": "text",
-          "required": true
+          "section": "Delivery",
+          "required": true,
+          "options": [
+            "queued",
+            "sent",
+            "delivered",
+            "failed"
+          ]
+        },
+        {
+          "key": "payload",
+          "label": "Payload",
+          "type": "json",
+          "section": "Notification"
         }
       ],
       "requiredFields": [
         "channel",
-        "message",
-        "patientId"
+        "template",
+        "status"
       ],
       "relationships": [
         {
@@ -4672,41 +5601,67 @@
       },
       "frontendRoute": "/documents",
       "backend": {
-        "endpoint": "/api/contracts/modules/documents",
-        "createEndpoint": "/api/contracts/modules/documents",
+        "endpoint": "/api/domains/modules/documents",
+        "createEndpoint": "/api/domains/modules/documents",
         "contractRoute": "/api/contracts/modules/documents"
       },
       "databaseSource": "documents",
       "fields": [
         {
           "key": "patientId",
-          "label": "Patient ID",
-          "type": "text",
-          "format": "uuid",
-          "required": true
+          "label": "Patient",
+          "type": "uuid",
+          "section": "Document",
+          "required": true,
+          "format": "uuid"
         },
         {
-          "key": "name",
-          "label": "Document name",
-          "type": "text",
-          "required": true
+          "key": "encounterId",
+          "label": "Encounter",
+          "type": "uuid",
+          "section": "Document",
+          "format": "uuid"
         },
         {
-          "key": "type",
+          "key": "documentType",
           "label": "Document type",
           "type": "text",
+          "section": "Document",
           "required": true
+        },
+        {
+          "key": "storageRef",
+          "label": "Storage reference",
+          "type": "text",
+          "section": "Document",
+          "required": true
+        },
+        {
+          "key": "mimeType",
+          "label": "File type",
+          "type": "text",
+          "section": "Document"
+        },
+        {
+          "key": "metadata",
+          "label": "Metadata",
+          "type": "json",
+          "section": "Document"
         }
       ],
       "requiredFields": [
-        "name",
         "patientId",
-        "type"
+        "documentType",
+        "storageRef"
       ],
       "relationships": [
         {
           "field": "patientId",
           "target": "patients.id"
+        },
+        {
+          "field": "encounterId",
+          "target": "encounters.id"
         }
       ],
       "permissions": {
@@ -4762,84 +5717,91 @@
       },
       "frontendRoute": "/surveillance",
       "backend": {
-        "endpoint": "/api/contracts/modules/surveillance",
-        "createEndpoint": "/api/surveillance/events",
+        "endpoint": "/api/domains/modules/surveillance",
+        "createEndpoint": "/api/domains/modules/surveillance",
         "contractRoute": "/api/contracts/modules/surveillance"
       },
       "databaseSource": "surveillance_events",
       "fields": [
         {
           "key": "patientId",
-          "label": "Patient ID",
-          "type": "text",
-          "format": "uuid",
-          "required": true
+          "label": "Patient",
+          "type": "uuid",
+          "section": "Event",
+          "format": "uuid"
         },
         {
           "key": "eventType",
           "label": "Event type",
-          "required": true,
-          "type": "text"
+          "type": "text",
+          "section": "Event",
+          "required": true
         },
         {
           "key": "diseaseCode",
           "label": "Disease code",
           "type": "text",
-          "required": true
+          "section": "Disease"
         },
         {
           "key": "diseaseName",
           "label": "Disease name",
           "type": "text",
-          "required": true
+          "section": "Disease"
         },
         {
           "key": "eventDate",
-          "label": "Event date/time",
-          "type": "datetime-local",
+          "label": "Event date",
+          "type": "datetime",
+          "section": "Event",
+          "required": true
+        },
+        {
+          "key": "location",
+          "label": "Location",
+          "type": "json",
+          "section": "Location",
           "required": true
         },
         {
           "key": "caseStatus",
           "label": "Case status",
-          "options": [
-            "suspected",
-            "probable",
-            "confirmed",
-            "discarded",
-            "unknown"
-          ],
           "type": "text",
+          "section": "Event",
           "required": true
         },
         {
           "key": "severity",
           "label": "Severity",
-          "options": [
-            "routine",
-            "high",
-            "urgent",
-            "critical"
-          ],
           "type": "text",
+          "section": "Event",
           "required": true
         },
         {
           "key": "source",
           "label": "Source",
           "type": "text",
-          "required": true
+          "section": "Event"
+        },
+        {
+          "key": "evidence",
+          "label": "Evidence",
+          "type": "json",
+          "section": "Event"
+        },
+        {
+          "key": "reportedAt",
+          "label": "Reported at",
+          "type": "datetime",
+          "section": "Event"
         }
       ],
       "requiredFields": [
-        "caseStatus",
-        "diseaseCode",
-        "diseaseName",
-        "eventDate",
         "eventType",
-        "patientId",
-        "severity",
-        "source"
+        "eventDate",
+        "location",
+        "caseStatus",
+        "severity"
       ],
       "relationships": [
         {
@@ -4900,44 +5862,71 @@
       },
       "frontendRoute": "/investigations",
       "backend": {
-        "endpoint": "/api/contracts/modules/investigations",
-        "createEndpoint": "/api/public-health/investigations",
+        "endpoint": "/api/domains/modules/investigations",
+        "createEndpoint": "/api/domains/modules/investigations",
         "contractRoute": "/api/contracts/modules/investigations"
       },
       "databaseSource": "public_health_investigations",
       "fields": [
         {
           "key": "surveillanceCaseId",
-          "label": "Surveillance case ID",
-          "type": "text",
-          "format": "uuid",
-          "required": true
+          "label": "Surveillance case",
+          "type": "uuid",
+          "section": "Investigation",
+          "format": "uuid"
         },
         {
           "key": "eventId",
-          "label": "Event ID",
-          "type": "text",
-          "format": "uuid",
-          "required": true
+          "label": "Event",
+          "type": "uuid",
+          "section": "Investigation",
+          "format": "uuid"
         },
         {
           "key": "investigationType",
           "label": "Investigation type",
-          "required": true,
-          "type": "text"
+          "type": "text",
+          "section": "Investigation",
+          "required": true
         },
         {
-          "key": "sourceGuideline",
-          "label": "Source guideline",
+          "key": "leadUserId",
+          "label": "Lead investigator",
+          "type": "uuid",
+          "section": "Investigation",
+          "format": "uuid"
+        },
+        {
+          "key": "findings",
+          "label": "Findings",
+          "type": "json",
+          "section": "Investigation",
+          "required": true
+        },
+        {
+          "key": "verification",
+          "label": "Verification",
+          "type": "json",
+          "section": "Investigation"
+        },
+        {
+          "key": "riskAssessment",
+          "label": "Risk assessment",
+          "type": "json",
+          "section": "Investigation"
+        },
+        {
+          "key": "status",
+          "label": "Status",
           "type": "text",
+          "section": "Investigation",
           "required": true
         }
       ],
       "requiredFields": [
-        "eventId",
         "investigationType",
-        "sourceGuideline",
-        "surveillanceCaseId"
+        "findings",
+        "status"
       ],
       "relationships": [
         {
@@ -4947,6 +5936,10 @@
         {
           "field": "eventId",
           "target": "surveillance_events.id"
+        },
+        {
+          "field": "leadUserId",
+          "target": "polymorphic.entity"
         }
       ],
       "permissions": {
@@ -5002,64 +5995,85 @@
       },
       "frontendRoute": "/response",
       "backend": {
-        "endpoint": "/api/contracts/modules/response",
-        "createEndpoint": "/api/response",
+        "endpoint": "/api/domains/modules/response",
+        "createEndpoint": "/api/domains/modules/response",
         "contractRoute": "/api/contracts/modules/response"
       },
       "databaseSource": "public_health_response_tasks",
       "fields": [
         {
           "key": "investigationId",
-          "label": "Investigation ID",
-          "type": "text",
-          "format": "uuid",
-          "required": true
+          "label": "Investigation",
+          "type": "uuid",
+          "section": "Response",
+          "format": "uuid"
         },
         {
           "key": "eventId",
-          "label": "Event ID",
-          "type": "text",
-          "format": "uuid",
-          "required": true
+          "label": "Event",
+          "type": "uuid",
+          "section": "Response",
+          "format": "uuid"
         },
         {
           "key": "taskType",
-          "label": "Task type",
-          "required": true,
-          "type": "text"
+          "label": "Response type",
+          "type": "text",
+          "section": "Response",
+          "required": true
         },
         {
           "key": "title",
-          "label": "Task title",
-          "required": true,
-          "type": "text"
+          "label": "Title",
+          "type": "text",
+          "section": "Response",
+          "required": true
         },
         {
           "key": "priority",
           "label": "Priority",
-          "options": [
-            "routine",
-            "high",
-            "urgent",
-            "critical"
-          ],
           "type": "text",
+          "section": "Response",
           "required": true
         },
         {
+          "key": "assignedTo",
+          "label": "Assigned to",
+          "type": "uuid",
+          "section": "Response",
+          "format": "uuid"
+        },
+        {
           "key": "dueAt",
-          "label": "Due date/time",
-          "type": "datetime-local",
+          "label": "Due date",
+          "type": "datetime",
+          "section": "Response"
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "text",
+          "section": "Response",
           "required": true
+        },
+        {
+          "key": "evidence",
+          "label": "Evidence",
+          "type": "json",
+          "section": "Response"
+        },
+        {
+          "key": "requiresHumanApproval",
+          "label": "Human approval required",
+          "type": "boolean",
+          "section": "Safety"
         }
       ],
       "requiredFields": [
-        "dueAt",
-        "eventId",
-        "investigationId",
-        "priority",
         "taskType",
-        "title"
+        "title",
+        "priority",
+        "status"
       ],
       "relationships": [
         {
@@ -5132,78 +6146,73 @@
       "fields": [
         {
           "key": "patientId",
-          "label": "Patient ID",
-          "type": "text",
-          "format": "uuid",
-          "required": true
+          "label": "Patient",
+          "type": "uuid",
+          "section": "Death record",
+          "format": "uuid"
         },
         {
           "key": "facilityId",
-          "label": "Facility ID",
-          "type": "text",
-          "format": "uuid",
-          "required": true
+          "label": "Facility",
+          "type": "uuid",
+          "section": "Death record",
+          "format": "uuid"
         },
         {
           "key": "deathDatetime",
-          "label": "Death date/time",
-          "type": "datetime-local",
+          "label": "Date and time of death",
+          "type": "datetime",
+          "section": "Death record",
           "required": true
         },
         {
           "key": "placeOfDeath",
           "label": "Place of death",
           "type": "text",
-          "required": true
+          "section": "Death record"
         },
         {
           "key": "immediateCause",
           "label": "Immediate cause",
           "type": "text",
+          "section": "Certification",
           "required": true
         },
         {
           "key": "underlyingCause",
           "label": "Underlying cause",
           "type": "text",
+          "section": "Certification",
           "required": true
+        },
+        {
+          "key": "contributingConditions",
+          "label": "Contributing conditions",
+          "type": "json",
+          "section": "Certification"
         },
         {
           "key": "maternalDeath",
           "label": "Maternal death",
-          "options": [
-            "true",
-            "false"
-          ],
-          "type": "text",
-          "required": true
+          "type": "boolean",
+          "section": "Classification"
         },
         {
           "key": "neonatalDeath",
           "label": "Neonatal death",
-          "options": [
-            "true",
-            "false"
-          ],
-          "type": "text",
-          "required": true
+          "type": "boolean",
+          "section": "Classification"
         },
         {
-          "key": "sourceGuideline",
-          "label": "Source guideline",
+          "key": "reviewStatus",
+          "label": "Review status",
           "type": "text",
-          "required": true
+          "section": "Review"
         }
       ],
       "requiredFields": [
         "deathDatetime",
-        "facilityId",
         "immediateCause",
-        "maternalDeath",
-        "neonatalDeath",
-        "patientId",
-        "placeOfDeath",
-        "sourceGuideline",
         "underlyingCause"
       ],
       "relationships": [
@@ -5269,35 +6278,64 @@
       },
       "frontendRoute": "/population-health",
       "backend": {
-        "endpoint": "/api/contracts/modules/population-health",
-        "createEndpoint": "/api/contracts/modules/population-health",
+        "endpoint": "/api/domains/modules/population-health",
+        "createEndpoint": "/api/domains/modules/population-health",
         "contractRoute": "/api/contracts/modules/population-health"
       },
       "databaseSource": "population_cohorts + population_indicators + population_cohort_members",
       "fields": [
         {
-          "key": "name",
-          "label": "Population metric",
+          "key": "indicatorCode",
+          "label": "Indicator code",
           "type": "text",
+          "section": "Indicator",
           "required": true
+        },
+        {
+          "key": "indicatorName",
+          "label": "Indicator name",
+          "type": "text",
+          "section": "Indicator",
+          "required": true
+        },
+        {
+          "key": "periodStart",
+          "label": "Period start",
+          "type": "date",
+          "section": "Period",
+          "required": true
+        },
+        {
+          "key": "periodEnd",
+          "label": "Period end",
+          "type": "date",
+          "section": "Period",
+          "required": true
+        },
+        {
+          "key": "numerator",
+          "label": "Numerator",
+          "type": "number",
+          "section": "Measure"
+        },
+        {
+          "key": "denominator",
+          "label": "Denominator",
+          "type": "number",
+          "section": "Measure"
         },
         {
           "key": "value",
           "label": "Value",
           "type": "number",
-          "required": true
-        },
-        {
-          "key": "period",
-          "label": "Period",
-          "type": "text",
-          "required": true
+          "section": "Measure"
         }
       ],
       "requiredFields": [
-        "name",
-        "period",
-        "value"
+        "indicatorCode",
+        "indicatorName",
+        "periodStart",
+        "periodEnd"
       ],
       "relationships": [],
       "permissions": {
@@ -5353,8 +6391,7 @@
       },
       "frontendRoute": "/district-intelligence",
       "backend": {
-        "endpoint": "/api/contracts/modules/district-intelligence",
-        "createEndpoint": null,
+        "endpoint": "/api/district-intelligence",
         "contractRoute": "/api/contracts/modules/district-intelligence"
       },
       "databaseSource": "districts + facility_service_capacity",
@@ -5407,37 +6444,88 @@
       },
       "frontendRoute": "/staff",
       "backend": {
-        "endpoint": "/api/contracts/modules/staff",
-        "createEndpoint": "/api/contracts/modules/staff",
+        "endpoint": "/api/domains/modules/staff",
+        "createEndpoint": "/api/domains/modules/staff",
         "contractRoute": "/api/staff"
       },
       "databaseSource": "users + health_worker_profiles",
       "fields": [
         {
-          "key": "name",
-          "label": "Staff name",
+          "key": "userId",
+          "label": "User",
+          "type": "uuid",
+          "section": "Staff",
+          "required": true,
+          "format": "uuid"
+        },
+        {
+          "key": "facilityId",
+          "label": "Facility",
+          "type": "uuid",
+          "section": "Staff",
+          "format": "uuid"
+        },
+        {
+          "key": "cadre",
+          "label": "Cadre",
           "type": "text",
+          "section": "Staff",
           "required": true
         },
         {
-          "key": "role",
-          "label": "Role",
+          "key": "profession",
+          "label": "Profession",
           "type": "text",
+          "section": "Staff",
           "required": true
         },
         {
-          "key": "phone",
-          "label": "Phone",
+          "key": "registrationSystem",
+          "label": "Registration system",
           "type": "text",
-          "required": true
+          "section": "Credentials"
+        },
+        {
+          "key": "registrationNumber",
+          "label": "Registration number",
+          "type": "text",
+          "section": "Credentials"
+        },
+        {
+          "key": "specialty",
+          "label": "Specialty",
+          "type": "text",
+          "section": "Credentials"
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "text",
+          "section": "Staff",
+          "required": true,
+          "options": [
+            "active",
+            "inactive",
+            "suspended"
+          ]
         }
       ],
       "requiredFields": [
-        "name",
-        "phone",
-        "role"
+        "userId",
+        "cadre",
+        "profession",
+        "status"
       ],
-      "relationships": [],
+      "relationships": [
+        {
+          "field": "userId",
+          "target": "users.id"
+        },
+        {
+          "field": "facilityId",
+          "target": "facilities.id"
+        }
+      ],
       "permissions": {
         "read": [
           "admin",
@@ -5491,8 +6579,8 @@
       },
       "frontendRoute": "/facilities",
       "backend": {
-        "endpoint": "/api/facilities/operations",
-        "createEndpoint": "/api/contracts/modules/facilities",
+        "endpoint": "/api/domains/modules/facilities",
+        "createEndpoint": "/api/domains/modules/facilities",
         "contractRoute": "/api/facilities"
       },
       "databaseSource": "facilities",
@@ -5501,25 +6589,28 @@
           "key": "name",
           "label": "Facility name",
           "type": "text",
+          "section": "Facility",
           "required": true
         },
         {
           "key": "type",
           "label": "Facility type",
           "type": "text",
+          "section": "Facility",
           "required": true
         },
         {
-          "key": "status",
-          "label": "Status",
+          "key": "timezone",
+          "label": "Time zone",
           "type": "text",
+          "section": "Location",
           "required": true
         }
       ],
       "requiredFields": [
         "name",
-        "status",
-        "type"
+        "type",
+        "timezone"
       ],
       "relationships": [],
       "permissions": {
@@ -5583,62 +6674,81 @@
       "fields": [
         {
           "key": "facilityId",
-          "label": "Facility ID",
+          "label": "Facility",
+          "type": "uuid",
+          "section": "Service",
           "required": true,
-          "type": "text",
           "format": "uuid"
         },
         {
           "key": "serviceCode",
           "label": "Service code",
-          "required": true,
-          "type": "text"
+          "type": "text",
+          "section": "Service",
+          "required": true
         },
         {
           "key": "serviceName",
           "label": "Service name",
-          "required": true,
-          "type": "text"
+          "type": "text",
+          "section": "Service",
+          "required": true
         },
         {
           "key": "status",
           "label": "Status",
+          "type": "text",
+          "section": "Service",
+          "required": true,
           "options": [
             "available",
             "limited",
             "unavailable",
             "planned"
-          ],
-          "type": "text",
-          "required": true
+          ]
         },
         {
           "key": "capacityTotal",
           "label": "Total capacity",
           "type": "number",
-          "required": true
+          "section": "Capacity"
         },
         {
           "key": "capacityAvailable",
           "label": "Available capacity",
           "type": "number",
-          "required": true
+          "section": "Capacity"
         },
         {
           "key": "waitMinutes",
-          "label": "Wait minutes",
+          "label": "Wait time (minutes)",
           "type": "number",
-          "required": true
+          "section": "Capacity"
+        },
+        {
+          "key": "operatingHours",
+          "label": "Operating hours",
+          "type": "json",
+          "section": "Service"
+        },
+        {
+          "key": "metadata",
+          "label": "Metadata",
+          "type": "json",
+          "section": "Service"
+        },
+        {
+          "key": "observedAt",
+          "label": "Observed at",
+          "type": "datetime",
+          "section": "Service"
         }
       ],
       "requiredFields": [
-        "capacityAvailable",
-        "capacityTotal",
         "facilityId",
         "serviceCode",
         "serviceName",
-        "status",
-        "waitMinutes"
+        "status"
       ],
       "relationships": [
         {
@@ -5707,63 +6817,76 @@
       "fields": [
         {
           "key": "facilityId",
-          "label": "Facility ID",
+          "label": "Facility",
+          "type": "uuid",
+          "section": "Resource",
           "required": true,
-          "type": "text",
           "format": "uuid"
         },
         {
           "key": "resourceType",
           "label": "Resource type",
-          "required": true,
-          "type": "text"
+          "type": "text",
+          "section": "Resource",
+          "required": true
         },
         {
           "key": "resourceName",
           "label": "Resource name",
-          "required": true,
-          "type": "text"
+          "type": "text",
+          "section": "Resource",
+          "required": true
         },
         {
           "key": "status",
           "label": "Status",
+          "type": "text",
+          "section": "Resource",
+          "required": true,
           "options": [
             "available",
             "low",
             "critical",
             "unavailable",
             "unknown"
-          ],
-          "type": "text",
-          "required": true
+          ]
         },
         {
           "key": "quantity",
           "label": "Quantity",
           "type": "number",
-          "required": true
+          "section": "Resource"
         },
         {
           "key": "unit",
           "label": "Unit",
           "type": "text",
-          "required": true
+          "section": "Resource"
         },
         {
           "key": "threshold",
           "label": "Threshold",
-          "type": "text",
-          "required": true
+          "type": "number",
+          "section": "Resource"
+        },
+        {
+          "key": "notes",
+          "label": "Notes",
+          "type": "json",
+          "section": "Resource"
+        },
+        {
+          "key": "observedAt",
+          "label": "Observed at",
+          "type": "datetime",
+          "section": "Resource"
         }
       ],
       "requiredFields": [
         "facilityId",
-        "quantity",
-        "resourceName",
         "resourceType",
-        "status",
-        "threshold",
-        "unit"
+        "resourceName",
+        "status"
       ],
       "relationships": [
         {
@@ -5824,7 +6947,7 @@
       },
       "frontendRoute": "/facility-incidents",
       "backend": {
-        "endpoint": "/api/contracts/modules/facility-incidents",
+        "endpoint": "/api/facility-incidents",
         "createEndpoint": "/api/facility-incidents",
         "contractRoute": "/api/contracts/modules/facility-incidents"
       },
@@ -5832,56 +6955,99 @@
       "fields": [
         {
           "key": "facilityId",
-          "label": "Facility ID",
-          "type": "text",
-          "format": "uuid",
-          "required": true
+          "label": "Facility",
+          "type": "uuid",
+          "section": "Incident",
+          "required": true,
+          "format": "uuid"
         },
         {
           "key": "districtId",
-          "label": "District ID",
-          "type": "text",
-          "format": "uuid",
-          "required": true
+          "label": "District",
+          "type": "uuid",
+          "section": "Incident",
+          "format": "uuid"
         },
         {
           "key": "incidentType",
           "label": "Incident type",
-          "required": true,
-          "type": "text"
+          "type": "text",
+          "section": "Incident",
+          "required": true
         },
         {
           "key": "severity",
           "label": "Severity",
+          "type": "text",
+          "section": "Incident",
+          "required": true,
           "options": [
             "low",
             "moderate",
             "high",
             "critical"
-          ],
+          ]
+        },
+        {
+          "key": "status",
+          "label": "Status",
           "type": "text",
-          "required": true
+          "section": "Incident",
+          "required": true,
+          "options": [
+            "open",
+            "investigating",
+            "resolved",
+            "closed"
+          ]
         },
         {
           "key": "title",
           "label": "Title",
-          "required": true,
-          "type": "text"
+          "type": "text",
+          "section": "Incident",
+          "required": true
         },
         {
           "key": "description",
           "label": "Description",
           "type": "text",
+          "section": "Incident",
           "required": true
+        },
+        {
+          "key": "startedAt",
+          "label": "Started at",
+          "type": "datetime",
+          "section": "Incident"
+        },
+        {
+          "key": "resolvedAt",
+          "label": "Resolved at",
+          "type": "datetime",
+          "section": "Resolution"
+        },
+        {
+          "key": "responseOwner",
+          "label": "Response owner",
+          "type": "uuid",
+          "section": "Resolution",
+          "format": "uuid"
+        },
+        {
+          "key": "impact",
+          "label": "Impact assessment",
+          "type": "json",
+          "section": "Resolution"
         }
       ],
       "requiredFields": [
-        "description",
-        "districtId",
         "facilityId",
         "incidentType",
         "severity",
-        "title"
+        "status",
+        "title",
+        "description"
       ],
       "relationships": [
         {
@@ -5946,7 +7112,7 @@
       },
       "frontendRoute": "/facility-performance",
       "backend": {
-        "endpoint": "/api/contracts/modules/facility-performance",
+        "endpoint": "/api/facility-performance",
         "createEndpoint": "/api/facility-performance",
         "contractRoute": "/api/contracts/modules/facility-performance"
       },
@@ -5954,71 +7120,96 @@
       "fields": [
         {
           "key": "facilityId",
-          "label": "Facility ID",
-          "type": "text",
-          "format": "uuid",
-          "required": true
+          "label": "Facility",
+          "type": "uuid",
+          "section": "Performance",
+          "required": true,
+          "format": "uuid"
         },
         {
           "key": "districtId",
-          "label": "District ID",
+          "label": "District",
+          "type": "uuid",
+          "section": "Performance",
+          "format": "uuid"
+        },
+        {
+          "key": "indicatorCode",
+          "label": "Indicator code",
           "type": "text",
-          "format": "uuid",
+          "section": "Performance",
+          "required": true
+        },
+        {
+          "key": "indicatorName",
+          "label": "Indicator name",
+          "type": "text",
+          "section": "Performance",
           "required": true
         },
         {
           "key": "periodStart",
           "label": "Period start",
           "type": "date",
+          "section": "Period",
           "required": true
         },
         {
           "key": "periodEnd",
           "label": "Period end",
           "type": "date",
+          "section": "Period",
           "required": true
-        },
-        {
-          "key": "indicatorCode",
-          "label": "Indicator code",
-          "required": true,
-          "type": "text"
-        },
-        {
-          "key": "indicatorName",
-          "label": "Indicator name",
-          "required": true,
-          "type": "text"
         },
         {
           "key": "numerator",
           "label": "Numerator",
           "type": "number",
-          "required": true
+          "section": "Measure"
         },
         {
           "key": "denominator",
           "label": "Denominator",
           "type": "number",
-          "required": true
+          "section": "Measure"
         },
         {
           "key": "valueNumeric",
           "label": "Value",
           "type": "number",
-          "required": true
+          "section": "Measure"
+        },
+        {
+          "key": "unit",
+          "label": "Unit",
+          "type": "text",
+          "section": "Measure"
+        },
+        {
+          "key": "qualityStatus",
+          "label": "Quality status",
+          "type": "text",
+          "section": "Quality"
+        },
+        {
+          "key": "dimensions",
+          "label": "Dimensions",
+          "type": "json",
+          "section": "Quality"
+        },
+        {
+          "key": "source",
+          "label": "Source",
+          "type": "text",
+          "section": "Provenance"
         }
       ],
       "requiredFields": [
-        "denominator",
-        "districtId",
         "facilityId",
         "indicatorCode",
         "indicatorName",
-        "numerator",
-        "periodEnd",
         "periodStart",
-        "valueNumeric"
+        "periodEnd"
       ],
       "relationships": [
         {
@@ -6083,56 +7274,66 @@
       },
       "frontendRoute": "/referral-network",
       "backend": {
-        "endpoint": "/api/contracts/modules/referral-network",
-        "createEndpoint": "/api/referral-network",
+        "endpoint": "/api/domains/modules/referral-network",
+        "createEndpoint": "/api/domains/modules/referral-network",
         "contractRoute": "/api/contracts/modules/referral-network"
       },
       "databaseSource": "referral_network_nodes",
       "fields": [
         {
           "key": "fromFacilityId",
-          "label": "From facility ID",
+          "label": "From facility",
+          "type": "uuid",
+          "section": "Node",
           "required": true,
-          "type": "text",
           "format": "uuid"
         },
         {
           "key": "toFacilityId",
-          "label": "To facility ID",
+          "label": "To facility",
+          "type": "uuid",
+          "section": "Node",
           "required": true,
-          "type": "text",
           "format": "uuid"
         },
         {
           "key": "serviceCode",
           "label": "Service code",
           "type": "text",
+          "section": "Node",
           "required": true
         },
         {
           "key": "status",
           "label": "Status",
-          "options": [
-            "active",
-            "restricted",
-            "inactive"
-          ],
           "type": "text",
+          "section": "Node",
           "required": true
         },
         {
           "key": "typicalWaitMinutes",
-          "label": "Typical wait minutes",
+          "label": "Typical wait (minutes)",
           "type": "number",
-          "required": true
+          "section": "Node"
+        },
+        {
+          "key": "transportNotes",
+          "label": "Transport notes",
+          "type": "text",
+          "section": "Node"
+        },
+        {
+          "key": "metadata",
+          "label": "Metadata",
+          "type": "json",
+          "section": "Node"
         }
       ],
       "requiredFields": [
         "fromFacilityId",
-        "serviceCode",
-        "status",
         "toFacilityId",
-        "typicalWaitMinutes"
+        "serviceCode",
+        "status"
       ],
       "relationships": [
         {
@@ -6296,14 +7497,91 @@
       },
       "frontendRoute": "/ai-evaluations",
       "backend": {
-        "endpoint": "/api/contracts/modules/ai-evaluations",
-        "createEndpoint": null,
+        "endpoint": "/api/domains/modules/ai-evaluations",
+        "createEndpoint": "/api/domains/modules/ai-evaluations",
         "contractRoute": "/api/contracts/modules/ai-evaluations"
       },
       "databaseSource": "ai_evaluations",
-      "fields": [],
-      "requiredFields": [],
-      "relationships": [],
+      "fields": [
+        {
+          "key": "patientId",
+          "label": "Patient",
+          "type": "uuid",
+          "section": "Evaluation",
+          "format": "uuid"
+        },
+        {
+          "key": "modelVersion",
+          "label": "Model version",
+          "type": "text",
+          "section": "Evaluation"
+        },
+        {
+          "key": "useCase",
+          "label": "Use case",
+          "type": "text",
+          "section": "Evaluation",
+          "required": true
+        },
+        {
+          "key": "inputSummary",
+          "label": "Input summary",
+          "type": "text",
+          "section": "Evidence"
+        },
+        {
+          "key": "outputSummary",
+          "label": "Output summary",
+          "type": "text",
+          "section": "Evidence"
+        },
+        {
+          "key": "expectedResult",
+          "label": "Expected result",
+          "type": "text",
+          "section": "Evaluation"
+        },
+        {
+          "key": "reviewerId",
+          "label": "Reviewer",
+          "type": "uuid",
+          "section": "Review",
+          "format": "uuid"
+        },
+        {
+          "key": "verdict",
+          "label": "Verdict",
+          "type": "text",
+          "section": "Review",
+          "required": true,
+          "options": [
+            "pending",
+            "pass",
+            "fail",
+            "needs-review"
+          ]
+        },
+        {
+          "key": "safetyFlags",
+          "label": "Safety flags",
+          "type": "json",
+          "section": "Review"
+        }
+      ],
+      "requiredFields": [
+        "useCase",
+        "verdict"
+      ],
+      "relationships": [
+        {
+          "field": "patientId",
+          "target": "patients.id"
+        },
+        {
+          "field": "reviewerId",
+          "target": "users.id"
+        }
+      ],
       "permissions": {
         "read": [
           "admin",
@@ -6350,35 +7628,44 @@
       },
       "frontendRoute": "/analytics",
       "backend": {
-        "endpoint": "/api/contracts/modules/analytics",
-        "createEndpoint": "/api/contracts/modules/analytics",
+        "endpoint": "/api/domains/modules/analytics",
+        "createEndpoint": "/api/domains/modules/analytics",
         "contractRoute": "/api/contracts/modules/analytics"
       },
       "databaseSource": "analytics_snapshots",
       "fields": [
         {
-          "key": "name",
-          "label": "Metric name",
-          "type": "text",
+          "key": "snapshotDate",
+          "label": "Snapshot date",
+          "type": "date",
+          "section": "Metric",
           "required": true
         },
         {
-          "key": "value",
+          "key": "metric",
+          "label": "Metric",
+          "type": "text",
+          "section": "Metric",
+          "required": true
+        },
+        {
+          "key": "valueNumeric",
           "label": "Value",
           "type": "number",
+          "section": "Metric",
           "required": true
         },
         {
-          "key": "period",
-          "label": "Period",
-          "type": "text",
-          "required": true
+          "key": "dimensions",
+          "label": "Dimensions",
+          "type": "json",
+          "section": "Metric"
         }
       ],
       "requiredFields": [
-        "name",
-        "period",
-        "value"
+        "snapshotDate",
+        "metric",
+        "valueNumeric"
       ],
       "relationships": [],
       "permissions": {
@@ -6434,69 +7721,61 @@
       },
       "frontendRoute": "/care-gaps",
       "backend": {
-        "endpoint": "/api/intelligence/care-gaps/snapshots",
-        "createEndpoint": "/api/contracts/modules/care-gaps",
+        "endpoint": "/api/domains/modules/care-gaps",
+        "createEndpoint": "/api/domains/modules/care-gaps",
         "contractRoute": "/api/intelligence/care-gaps/snapshots"
       },
       "databaseSource": "care_gap_snapshots + child_care_gaps",
       "fields": [
         {
           "key": "patientId",
-          "label": "Patient ID",
-          "required": true,
-          "type": "text",
+          "label": "Patient",
+          "type": "uuid",
+          "section": "Care gap",
           "format": "uuid"
         },
         {
-          "key": "type",
-          "label": "Care gap type",
-          "required": true,
-          "type": "text"
-        },
-        {
-          "key": "priority",
-          "label": "Priority",
-          "options": [
-            "low",
-            "normal",
-            "high",
-            "critical"
-          ],
-          "required": true,
-          "type": "text"
-        },
-        {
-          "key": "dueAt",
-          "label": "Due date/time",
-          "type": "datetime-local",
+          "key": "gapType",
+          "label": "Gap type",
+          "type": "text",
+          "section": "Care gap",
           "required": true
         },
         {
-          "key": "description",
-          "label": "Description",
-          "required": true,
-          "type": "text"
+          "key": "severity",
+          "label": "Severity",
+          "type": "text",
+          "section": "Care gap",
+          "required": true
         },
         {
           "key": "status",
           "label": "Status",
-          "options": [
-            "open",
-            "in-progress",
-            "resolved",
-            "dismissed"
-          ],
-          "required": true,
-          "type": "text"
+          "type": "text",
+          "section": "Care gap",
+          "required": true
+        },
+        {
+          "key": "sourceModule",
+          "label": "Source module",
+          "type": "text",
+          "section": "Evidence",
+          "required": true
+        },
+        {
+          "key": "evidence",
+          "label": "Evidence",
+          "type": "json",
+          "section": "Evidence",
+          "required": true
         }
       ],
       "requiredFields": [
-        "description",
-        "dueAt",
-        "patientId",
-        "priority",
+        "gapType",
+        "severity",
         "status",
-        "type"
+        "sourceModule",
+        "evidence"
       ],
       "relationships": [
         {
@@ -6558,59 +7837,67 @@
       },
       "frontendRoute": "/care-graph",
       "backend": {
-        "endpoint": "/api/contracts/modules/care-graph",
-        "createEndpoint": "/api/care-graph/edges",
+        "endpoint": "/api/domains/modules/care-graph",
+        "createEndpoint": "/api/domains/modules/care-graph",
         "contractRoute": "/api/contracts/modules/care-graph"
       },
       "databaseSource": "care_graph_edges",
       "fields": [
         {
           "key": "patientId",
-          "label": "Patient ID",
+          "label": "Patient",
+          "type": "uuid",
+          "section": "Relationship",
           "required": true,
-          "type": "text",
           "format": "uuid"
         },
         {
           "key": "sourceType",
           "label": "Source type",
-          "required": true,
-          "type": "text"
+          "type": "text",
+          "section": "Relationship",
+          "required": true
         },
         {
           "key": "sourceId",
-          "label": "Source ID",
-          "type": "text",
-          "format": "uuid",
-          "required": true
+          "label": "Source record",
+          "type": "uuid",
+          "section": "Relationship",
+          "format": "uuid"
         },
         {
           "key": "targetType",
           "label": "Target type",
-          "required": true,
-          "type": "text"
-        },
-        {
-          "key": "targetId",
-          "label": "Target ID",
           "type": "text",
-          "format": "uuid",
+          "section": "Relationship",
           "required": true
         },
         {
-          "key": "relationship",
-          "label": "Relationship",
-          "required": true,
-          "type": "text"
+          "key": "targetId",
+          "label": "Target record",
+          "type": "uuid",
+          "section": "Relationship",
+          "format": "uuid"
+        },
+        {
+          "key": "relationshipType",
+          "label": "Relationship type",
+          "type": "text",
+          "section": "Relationship",
+          "required": true
+        },
+        {
+          "key": "metadata",
+          "label": "Metadata",
+          "type": "json",
+          "section": "Relationship"
         }
       ],
       "requiredFields": [
         "patientId",
-        "relationship",
-        "sourceId",
         "sourceType",
-        "targetId",
-        "targetType"
+        "targetType",
+        "relationshipType"
       ],
       "relationships": [
         {
@@ -6838,14 +8125,88 @@
       },
       "frontendRoute": "/ai-risk-management",
       "backend": {
-        "endpoint": "/api/contracts/modules/ai-risk-management",
-        "createEndpoint": null,
+        "endpoint": "/api/domains/modules/ai-risk-management",
+        "createEndpoint": "/api/domains/modules/ai-risk-management",
         "contractRoute": "/api/contracts/modules/ai-risk-management"
       },
       "databaseSource": "ai_risk_assessments + ai_capability_evaluations + ai_incidents",
-      "fields": [],
-      "requiredFields": [],
-      "relationships": [],
+      "fields": [
+        {
+          "key": "capabilityId",
+          "label": "Capability",
+          "type": "text",
+          "section": "Risk",
+          "required": true
+        },
+        {
+          "key": "patientId",
+          "label": "Patient",
+          "type": "uuid",
+          "section": "Risk",
+          "format": "uuid"
+        },
+        {
+          "key": "riskLevel",
+          "label": "Risk level",
+          "type": "text",
+          "section": "Risk",
+          "required": true
+        },
+        {
+          "key": "riskType",
+          "label": "Risk type",
+          "type": "text",
+          "section": "Risk",
+          "required": true
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "text",
+          "section": "Risk",
+          "required": true
+        },
+        {
+          "key": "source",
+          "label": "Source",
+          "type": "text",
+          "section": "Evidence",
+          "required": true
+        },
+        {
+          "key": "findings",
+          "label": "Findings",
+          "type": "json",
+          "section": "Evidence",
+          "required": true
+        },
+        {
+          "key": "mitigations",
+          "label": "Mitigations",
+          "type": "json",
+          "section": "Mitigation",
+          "required": true
+        }
+      ],
+      "requiredFields": [
+        "capabilityId",
+        "riskLevel",
+        "riskType",
+        "status",
+        "source",
+        "findings",
+        "mitigations"
+      ],
+      "relationships": [
+        {
+          "field": "capabilityId",
+          "target": "polymorphic.entity"
+        },
+        {
+          "field": "patientId",
+          "target": "patients.id"
+        }
+      ],
       "permissions": {
         "read": [
           "admin",
@@ -6893,14 +8254,87 @@
       },
       "frontendRoute": "/ai-security-management",
       "backend": {
-        "endpoint": "/api/contracts/modules/ai-security-management",
-        "createEndpoint": null,
+        "endpoint": "/api/domains/modules/ai-security-management",
+        "createEndpoint": "/api/domains/modules/ai-security-management",
         "contractRoute": "/api/contracts/modules/ai-security-management"
       },
       "databaseSource": "ai_security_events",
-      "fields": [],
-      "requiredFields": [],
-      "relationships": [],
+      "fields": [
+        {
+          "key": "userId",
+          "label": "User",
+          "type": "uuid",
+          "section": "Security",
+          "format": "uuid"
+        },
+        {
+          "key": "patientId",
+          "label": "Patient",
+          "type": "uuid",
+          "section": "Security",
+          "format": "uuid"
+        },
+        {
+          "key": "capabilityId",
+          "label": "Capability",
+          "type": "text",
+          "section": "Security"
+        },
+        {
+          "key": "eventType",
+          "label": "Event type",
+          "type": "text",
+          "section": "Security",
+          "required": true
+        },
+        {
+          "key": "severity",
+          "label": "Severity",
+          "type": "text",
+          "section": "Security",
+          "required": true
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "text",
+          "section": "Security",
+          "required": true
+        },
+        {
+          "key": "source",
+          "label": "Source",
+          "type": "text",
+          "section": "Security",
+          "required": true
+        },
+        {
+          "key": "metadata",
+          "label": "Metadata",
+          "type": "json",
+          "section": "Security"
+        }
+      ],
+      "requiredFields": [
+        "eventType",
+        "severity",
+        "status",
+        "source"
+      ],
+      "relationships": [
+        {
+          "field": "userId",
+          "target": "users.id"
+        },
+        {
+          "field": "patientId",
+          "target": "patients.id"
+        },
+        {
+          "field": "capabilityId",
+          "target": "polymorphic.entity"
+        }
+      ],
       "permissions": {
         "read": [
           "admin",
@@ -7013,31 +8447,77 @@
           "key": "title",
           "label": "Task title",
           "type": "text",
-          "required": true
+          "required": true,
+          "section": "Task"
         },
         {
           "key": "patientId",
-          "label": "Patient ID",
-          "type": "text",
+          "label": "Patient",
+          "type": "uuid",
           "format": "uuid",
-          "required": true
+          "required": true,
+          "section": "Patient"
+        },
+        {
+          "key": "taskType",
+          "label": "Task type",
+          "type": "text",
+          "required": true,
+          "section": "Task"
         },
         {
           "key": "priority",
           "label": "Priority",
+          "type": "text",
+          "required": true,
+          "section": "Task",
           "options": [
+            "low",
             "normal",
+            "high",
             "urgent",
             "critical"
-          ],
+          ]
+        },
+        {
+          "key": "dueAt",
+          "label": "Due date/time",
+          "type": "datetime",
+          "section": "Task"
+        },
+        {
+          "key": "assignedTo",
+          "label": "Assigned to",
+          "type": "uuid",
+          "format": "uuid",
+          "section": "Ownership"
+        },
+        {
+          "key": "status",
+          "label": "Status",
           "type": "text",
-          "required": true
+          "required": true,
+          "section": "Task",
+          "options": [
+            "open",
+            "in-progress",
+            "completed",
+            "cancelled"
+          ]
+        },
+        {
+          "key": "notes",
+          "label": "Task details",
+          "type": "json",
+          "section": "Documentation"
         }
       ],
       "requiredFields": [
+        "title",
         "patientId",
+        "taskType",
         "priority",
-        "title"
+        "status"
       ],
       "relationships": [
         {
@@ -7108,25 +8588,57 @@
           "key": "name",
           "label": "Workflow name",
           "type": "text",
-          "required": true
+          "required": true,
+          "section": "Workflow"
+        },
+        {
+          "key": "description",
+          "label": "Description",
+          "type": "text",
+          "required": true,
+          "section": "Workflow"
         },
         {
           "key": "trigger",
           "label": "Trigger",
           "type": "text",
-          "required": true
+          "required": true,
+          "section": "Workflow"
+        },
+        {
+          "key": "owner",
+          "label": "Owner",
+          "type": "uuid",
+          "format": "uuid",
+          "section": "Ownership"
+        },
+        {
+          "key": "steps",
+          "label": "Workflow steps",
+          "type": "json",
+          "required": true,
+          "section": "Workflow"
         },
         {
           "key": "status",
           "label": "Status",
           "type": "text",
-          "required": true
+          "required": true,
+          "section": "Workflow",
+          "options": [
+            "draft",
+            "active",
+            "paused",
+            "retired"
+          ]
         }
       ],
       "requiredFields": [
         "name",
-        "status",
-        "trigger"
+        "description",
+        "trigger",
+        "steps",
+        "status"
       ],
       "relationships": [],
       "permissions": {
@@ -7192,31 +8704,65 @@
           "key": "system",
           "label": "Connected system",
           "type": "text",
-          "required": true
+          "required": true,
+          "section": "Connection"
         },
         {
           "key": "standard",
           "label": "Standard",
+          "type": "text",
+          "required": true,
+          "section": "Connection",
           "options": [
             "FHIR",
             "HL7v2",
             "DICOM",
             "DHIS2"
-          ],
+          ]
+        },
+        {
+          "key": "endpoint",
+          "label": "Endpoint",
           "type": "text",
-          "required": true
+          "section": "Connection"
+        },
+        {
+          "key": "direction",
+          "label": "Direction",
+          "type": "text",
+          "required": true,
+          "section": "Connection",
+          "options": [
+            "inbound",
+            "outbound",
+            "bidirectional"
+          ]
+        },
+        {
+          "key": "version",
+          "label": "Version",
+          "type": "text",
+          "section": "Connection"
         },
         {
           "key": "status",
           "label": "Status",
           "type": "text",
-          "required": true
+          "required": true,
+          "section": "Connection",
+          "options": [
+            "planned",
+            "connected",
+            "degraded",
+            "disabled"
+          ]
         }
       ],
       "requiredFields": [
+        "system",
         "standard",
-        "status",
-        "system"
+        "direction",
+        "status"
       ],
       "relationships": [],
       "permissions": {
@@ -7272,13 +8818,65 @@
       },
       "frontendRoute": "/health-connections",
       "backend": {
-        "endpoint": "/api/contracts/modules/health-connections",
-        "createEndpoint": null,
+        "endpoint": "/api/domains/modules/health-connections",
+        "createEndpoint": "/api/domains/modules/health-connections",
         "contractRoute": "/api/contracts/modules/health-connections"
       },
       "databaseSource": "hie_connections",
-      "fields": [],
-      "requiredFields": [],
+      "fields": [
+        {
+          "key": "name",
+          "label": "Connection name",
+          "type": "text",
+          "section": "Connection",
+          "required": true
+        },
+        {
+          "key": "jurisdiction",
+          "label": "Jurisdiction",
+          "type": "text",
+          "section": "Connection"
+        },
+        {
+          "key": "protocol",
+          "label": "Protocol",
+          "type": "text",
+          "section": "Connection",
+          "required": true
+        },
+        {
+          "key": "baseUrl",
+          "label": "Base URL",
+          "type": "text",
+          "section": "Connection",
+          "required": true
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "text",
+          "section": "Connection",
+          "required": true
+        },
+        {
+          "key": "capabilities",
+          "label": "Capabilities",
+          "type": "json",
+          "section": "Connection"
+        },
+        {
+          "key": "credentialRef",
+          "label": "Credential reference",
+          "type": "text",
+          "section": "Security"
+        }
+      ],
+      "requiredFields": [
+        "name",
+        "protocol",
+        "baseUrl",
+        "status"
+      ],
       "relationships": [],
       "permissions": {
         "read": [
@@ -7326,8 +8924,8 @@
       },
       "frontendRoute": "/audit",
       "backend": {
-        "endpoint": "/api/contracts/modules/audit",
-        "createEndpoint": null,
+        "endpoint": "/api/domains/modules/audit",
+        "createEndpoint": "/api/domains/modules/audit",
         "contractRoute": "/api/contracts/modules/audit"
       },
       "databaseSource": "audit_logs",
@@ -7335,22 +8933,41 @@
         {
           "key": "action",
           "label": "Action",
-          "type": "text"
+          "type": "text",
+          "section": "Audit",
+          "required": true
         },
         {
           "key": "entityType",
           "label": "Entity type",
-          "type": "text"
+          "type": "text",
+          "section": "Audit",
+          "required": true
         },
         {
           "key": "entityId",
           "label": "Entity ID",
-          "type": "text",
+          "type": "uuid",
+          "section": "Audit",
           "format": "uuid"
+        },
+        {
+          "key": "metadata",
+          "label": "Metadata",
+          "type": "json",
+          "section": "Audit"
         }
       ],
-      "requiredFields": [],
-      "relationships": [],
+      "requiredFields": [
+        "action",
+        "entityType"
+      ],
+      "relationships": [
+        {
+          "field": "entityId",
+          "target": "polymorphic.entity"
+        }
+      ],
       "permissions": {
         "read": [
           "admin",
@@ -7397,14 +9014,67 @@
       },
       "frontendRoute": "/security",
       "backend": {
-        "endpoint": "/api/contracts/modules/security",
-        "createEndpoint": null,
+        "endpoint": "/api/domains/modules/security",
+        "createEndpoint": "/api/domains/modules/security",
         "contractRoute": "/api/contracts/modules/security"
       },
       "databaseSource": "audit_logs + security_events + ai_security_events",
-      "fields": [],
-      "requiredFields": [],
-      "relationships": [],
+      "fields": [
+        {
+          "key": "userId",
+          "label": "User",
+          "type": "uuid",
+          "section": "Security",
+          "format": "uuid"
+        },
+        {
+          "key": "patientId",
+          "label": "Patient",
+          "type": "uuid",
+          "section": "Security",
+          "format": "uuid"
+        },
+        {
+          "key": "eventType",
+          "label": "Event type",
+          "type": "text",
+          "section": "Security",
+          "required": true
+        },
+        {
+          "key": "severity",
+          "label": "Severity",
+          "type": "text",
+          "section": "Security",
+          "required": true
+        },
+        {
+          "key": "reason",
+          "label": "Reason",
+          "type": "text",
+          "section": "Security"
+        },
+        {
+          "key": "metadata",
+          "label": "Metadata",
+          "type": "json",
+          "section": "Security"
+        }
+      ],
+      "requiredFields": [
+        "eventType",
+        "severity"
+      ],
+      "relationships": [
+        {
+          "field": "userId",
+          "target": "users.id"
+        },
+        {
+          "field": "patientId",
+          "target": "patients.id"
+        }
+      ],
       "permissions": {
         "read": [
           "admin",
@@ -7458,21 +9128,51 @@
       "databaseSource": "module_records:settings",
       "fields": [
         {
+          "key": "category",
+          "label": "Setting category",
+          "type": "text",
+          "required": true,
+          "section": "Setting"
+        },
+        {
           "key": "name",
           "label": "Setting name",
           "type": "text",
-          "required": true
+          "required": true,
+          "section": "Setting"
         },
         {
           "key": "value",
           "label": "Value",
-          "type": "number",
-          "required": true
+          "type": "text",
+          "required": true,
+          "section": "Setting"
+        },
+        {
+          "key": "valueType",
+          "label": "Value type",
+          "type": "text",
+          "required": true,
+          "section": "Setting",
+          "options": [
+            "text",
+            "number",
+            "boolean",
+            "json"
+          ]
+        },
+        {
+          "key": "description",
+          "label": "Description",
+          "type": "text",
+          "section": "Setting"
         }
       ],
       "requiredFields": [
+        "category",
         "name",
-        "value"
+        "value",
+        "valueType"
       ],
       "relationships": [],
       "permissions": {
@@ -7528,34 +9228,71 @@
       },
       "frontendRoute": "/terminology",
       "backend": {
-        "endpoint": "/api/contracts/modules/terminology",
-        "createEndpoint": null,
+        "endpoint": "/api/domains/modules/terminology",
+        "createEndpoint": "/api/domains/modules/terminology",
         "contractRoute": "/api/contracts/modules/terminology"
       },
       "databaseSource": "terminology_concepts",
       "fields": [
         {
-          "key": "system",
-          "label": "Terminology system",
-          "type": "text"
+          "key": "systemUri",
+          "label": "System URI",
+          "type": "text",
+          "section": "Concept",
+          "required": true
         },
         {
           "key": "code",
           "label": "Code",
-          "type": "text"
+          "type": "text",
+          "section": "Concept",
+          "required": true
         },
         {
           "key": "display",
           "label": "Display",
-          "type": "text"
+          "type": "text",
+          "section": "Concept",
+          "required": true
         },
         {
           "key": "version",
           "label": "Version",
-          "type": "text"
+          "type": "text",
+          "section": "Concept"
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "text",
+          "section": "Concept",
+          "required": true
+        },
+        {
+          "key": "source",
+          "label": "Source",
+          "type": "text",
+          "section": "Provenance"
+        },
+        {
+          "key": "sourceUrl",
+          "label": "Source URL",
+          "type": "text",
+          "section": "Provenance"
+        },
+        {
+          "key": "properties",
+          "label": "Properties",
+          "type": "json",
+          "section": "Concept"
         }
       ],
-      "requiredFields": [],
+      "requiredFields": [
+        "systemUri",
+        "code",
+        "display",
+        "status"
+      ],
       "relationships": [],
       "permissions": {
         "read": [
@@ -7603,8 +9340,8 @@
       },
       "frontendRoute": "/guidelines",
       "backend": {
-        "endpoint": "/api/contracts/modules/guidelines",
-        "createEndpoint": null,
+        "endpoint": "/api/domains/modules/guidelines",
+        "createEndpoint": "/api/domains/modules/guidelines",
         "contractRoute": "/api/contracts/modules/guidelines"
       },
       "databaseSource": "clinical_guidelines + clinical_guideline_rules",
@@ -7612,34 +9349,82 @@
         {
           "key": "title",
           "label": "Guideline title",
-          "type": "text"
+          "type": "text",
+          "section": "Guideline",
+          "required": true
         },
         {
           "key": "domain",
-          "label": "Domain",
-          "type": "text"
+          "label": "Clinical domain",
+          "type": "text",
+          "section": "Guideline",
+          "required": true
         },
         {
           "key": "jurisdiction",
           "label": "Jurisdiction",
-          "options": [
-            "UG",
-            "INTL"
-          ],
-          "type": "text"
+          "type": "text",
+          "section": "Guideline",
+          "required": true
+        },
+        {
+          "key": "publisher",
+          "label": "Publisher",
+          "type": "text",
+          "section": "Guideline"
         },
         {
           "key": "version",
           "label": "Version",
-          "type": "text"
+          "type": "text",
+          "section": "Guideline",
+          "required": true
         },
         {
           "key": "sourceUrl",
           "label": "Source URL",
-          "type": "url"
+          "type": "text",
+          "section": "Provenance"
+        },
+        {
+          "key": "effectiveFrom",
+          "label": "Effective from",
+          "type": "date",
+          "section": "Guideline"
+        },
+        {
+          "key": "effectiveTo",
+          "label": "Effective to",
+          "type": "date",
+          "section": "Guideline"
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "text",
+          "section": "Guideline",
+          "required": true
+        },
+        {
+          "key": "machineReadable",
+          "label": "Machine readable content",
+          "type": "json",
+          "section": "Guideline"
+        },
+        {
+          "key": "metadata",
+          "label": "Metadata",
+          "type": "json",
+          "section": "Guideline"
         }
       ],
-      "requiredFields": [],
+      "requiredFields": [
+        "title",
+        "domain",
+        "jurisdiction",
+        "version",
+        "status"
+      ],
       "relationships": [],
       "permissions": {
         "read": [
@@ -7687,44 +9472,87 @@
       },
       "frontendRoute": "/care-pathways",
       "backend": {
-        "endpoint": "/api/contracts/modules/care-pathways",
-        "createEndpoint": null,
+        "endpoint": "/api/domains/modules/care-pathways",
+        "createEndpoint": "/api/domains/modules/care-pathways",
         "contractRoute": "/api/contracts/modules/care-pathways"
       },
       "databaseSource": "care_pathways + care_pathway_steps",
       "fields": [
         {
-          "key": "code",
-          "label": "Pathway code",
-          "type": "text"
-        },
-        {
           "key": "name",
           "label": "Pathway name",
-          "type": "text"
+          "type": "text",
+          "section": "Pathway",
+          "required": true
+        },
+        {
+          "key": "code",
+          "label": "Pathway code",
+          "type": "text",
+          "section": "Pathway",
+          "required": true
         },
         {
           "key": "domain",
-          "label": "Domain",
-          "type": "text"
+          "label": "Clinical domain",
+          "type": "text",
+          "section": "Pathway",
+          "required": true
         },
         {
           "key": "jurisdiction",
           "label": "Jurisdiction",
+          "type": "text",
+          "section": "Pathway",
+          "required": true
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "text",
+          "section": "Pathway",
+          "required": true,
           "options": [
-            "UG",
-            "INTL"
-          ],
-          "type": "text"
+            "draft",
+            "active",
+            "retired"
+          ]
         },
         {
           "key": "version",
           "label": "Version",
-          "type": "text"
+          "type": "text",
+          "section": "Pathway",
+          "required": true
+        },
+        {
+          "key": "sourceGuidelineId",
+          "label": "Source guideline",
+          "type": "uuid",
+          "section": "Provenance",
+          "format": "uuid"
+        },
+        {
+          "key": "metadata",
+          "label": "Metadata",
+          "type": "json",
+          "section": "Pathway"
         }
       ],
-      "requiredFields": [],
-      "relationships": [],
+      "requiredFields": [
+        "name",
+        "code",
+        "domain",
+        "jurisdiction",
+        "status",
+        "version"
+      ],
+      "relationships": [
+        {
+          "field": "sourceGuidelineId",
+          "target": "clinical_guidelines.id"
+        }
+      ],
       "permissions": {
         "read": [
           "admin",
@@ -7771,8 +9599,8 @@
       },
       "frontendRoute": "/reporting",
       "backend": {
-        "endpoint": "/api/contracts/modules/reporting",
-        "createEndpoint": null,
+        "endpoint": "/api/domains/modules/reporting",
+        "createEndpoint": "/api/domains/modules/reporting",
         "contractRoute": "/api/contracts/modules/reporting"
       },
       "databaseSource": "reporting_mappings + reporting_submissions",
@@ -7780,32 +9608,59 @@
         {
           "key": "reportingSystem",
           "label": "Reporting system",
-          "type": "text"
+          "type": "text",
+          "section": "Submission",
+          "required": true
         },
         {
-          "key": "indicatorCode",
-          "label": "Indicator code",
-          "type": "text"
+          "key": "periodStart",
+          "label": "Period start",
+          "type": "date",
+          "section": "Period",
+          "required": true
         },
         {
-          "key": "indicatorName",
-          "label": "Indicator name",
-          "type": "text"
+          "key": "periodEnd",
+          "label": "Period end",
+          "type": "date",
+          "section": "Period",
+          "required": true
         },
         {
-          "key": "periodGranularity",
-          "label": "Period",
+          "key": "payload",
+          "label": "Submission payload",
+          "type": "json",
+          "section": "Submission",
+          "required": true
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "text",
+          "section": "Submission",
+          "required": true,
           "options": [
-            "daily",
-            "weekly",
-            "monthly",
-            "quarterly",
-            "annual"
-          ],
-          "type": "text"
+            "draft",
+            "ready",
+            "submitted",
+            "accepted",
+            "rejected"
+          ]
+        },
+        {
+          "key": "externalReference",
+          "label": "External reference",
+          "type": "text",
+          "section": "Submission"
         }
       ],
-      "requiredFields": [],
+      "requiredFields": [
+        "reportingSystem",
+        "periodStart",
+        "periodEnd",
+        "payload",
+        "status"
+      ],
       "relationships": [],
       "permissions": {
         "read": [
@@ -7853,45 +9708,90 @@
       },
       "frontendRoute": "/offline-sync",
       "backend": {
-        "endpoint": "/api/contracts/modules/offline-sync",
-        "createEndpoint": null,
+        "endpoint": "/api/domains/modules/offline-sync",
+        "createEndpoint": "/api/domains/modules/offline-sync",
         "contractRoute": "/api/contracts/modules/offline-sync"
       },
       "databaseSource": "offline_sync_queue + sync_devices",
       "fields": [
         {
           "key": "deviceId",
-          "label": "Device ID",
-          "type": "text",
+          "label": "Device",
+          "type": "uuid",
+          "section": "Sync",
+          "required": true,
           "format": "uuid"
         },
         {
-          "key": "resourceType",
-          "label": "Resource type",
-          "type": "text"
-        },
-        {
-          "key": "operation",
-          "label": "Operation",
-          "options": [
-            "create",
-            "update",
-            "delete"
-          ],
-          "type": "text"
+          "key": "userId",
+          "label": "User",
+          "type": "uuid",
+          "section": "Sync",
+          "format": "uuid"
         },
         {
           "key": "operationId",
           "label": "Operation ID",
           "type": "text",
+          "section": "Sync",
+          "required": true
+        },
+        {
+          "key": "resourceType",
+          "label": "Resource type",
+          "type": "text",
+          "section": "Sync",
+          "required": true
+        },
+        {
+          "key": "resourceId",
+          "label": "Resource ID",
+          "type": "uuid",
+          "section": "Sync",
           "format": "uuid"
+        },
+        {
+          "key": "operation",
+          "label": "Operation",
+          "type": "text",
+          "section": "Sync",
+          "required": true
+        },
+        {
+          "key": "payload",
+          "label": "Payload",
+          "type": "json",
+          "section": "Sync",
+          "required": true
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "text",
+          "section": "Sync",
+          "required": true
         }
       ],
-      "requiredFields": [],
+      "requiredFields": [
+        "deviceId",
+        "operationId",
+        "resourceType",
+        "operation",
+        "payload",
+        "status"
+      ],
       "relationships": [
         {
           "field": "deviceId",
           "target": "sync_devices.id"
+        },
+        {
+          "field": "userId",
+          "target": "users.id"
+        },
+        {
+          "field": "resourceId",
+          "target": "polymorphic.entity"
         }
       ],
       "permissions": {

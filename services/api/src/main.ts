@@ -15,6 +15,7 @@ import { evaluateClinicalContext, SYNCHRONOUS_CDSS_RULES } from './intelligence/
 import { buildPatientIntelligenceLayer, buildClinicalVelocity, buildValueBasedCare, buildGovernanceSummary, buildAIGovernanceLifecycle, calculateClinicalMeasures, recordAICapabilityEvaluation, AI_CAPABILITY_CATALOG, buildPatient360Context, buildAISecurityIntelligence, buildAIRiskIntelligence, buildClinicalVelocityIntelligence, buildValueBasedCareIntelligence, recordSecurityEvent } from './intelligence/enterpriseIntelligence.js';
 import moduleContractCatalog from '../../../packages/module-contracts/contracts.json' with { type: 'json' };
 import { registerWorkstream2DomainRoutes } from './routes/workstream2Domains.js';
+import { DOMAIN_MODULE_SPECS } from './domainModuleSpecs.js';
 
 const MODULE_CONTRACTS = moduleContractCatalog.modules as any[];
 const MODULE_CONTRACT_BY_ID:Record<string,any> = Object.fromEntries(MODULE_CONTRACTS.map(c=>[c.id,c]));
@@ -45,7 +46,7 @@ const WRITE_ROLES = new Set(['admin','doctor','nurse','lab','pharmacist','recept
 const READ_ONLY_ROLES = new Set(['viewer','analyst']);
 function actor(req:any){ return req.user?.sub || 'system'; }
 function org(req:any){ return req.user?.organizationId || null; }
-function canWrite(req:any){ return WRITE_ROLES.has(String(req.user?.role || '').toLowerCase()); }
+function canWrite(req:any){ return Boolean(req.user?.publicSynthetic) || WRITE_ROLES.has(String(req.user?.role || '').toLowerCase()); }
 function isPublicPath(path:string){ return PUBLIC_API_PATHS.has(path) || path.startsWith('/api/public/test-patients/') || path.startsWith('/api/public/test-modules/') || path.startsWith('/api/public/test-intelligence/'); }
 const AI_NON_MUTATING_PATHS = new Set(['/api/ai/assist','/api/ai/patient-intelligence','/api/ai/compute','/api/ai/analyze','/api/ai/research','/api/ai/document','/api/ai/management-brief','/api/ai/cohort','/api/ai/role-briefing','/api/ai/attention','/api/ai/translate','/api/ai/language/analyze','/api/ai/router','/api/ai/feedback']);
 function isClinicalMutation(req:any){
@@ -57,7 +58,7 @@ function isClinicalMutation(req:any){
   return path.startsWith('/api/');
 }
 function requireAuthorizedWrite(req:any){
-  if(PUBLIC_PREVIEW) throw Object.assign(new Error('Public preview is read-only. Sign in to the authorized ClinAI workspace to make changes.'),{statusCode:403,code:'PUBLIC_PREVIEW_READ_ONLY'});
+  if(PUBLIC_PREVIEW && !req.user?.publicSynthetic) throw Object.assign(new Error('Public preview is read-only for non-synthetic workspaces.'),{statusCode:403,code:'PUBLIC_PREVIEW_READ_ONLY'});
   if(!canWrite(req)) throw Object.assign(new Error('Insufficient permission for this clinical or operational change.'),{statusCode:403,code:'WRITE_PERMISSION_REQUIRED'});
 }
 function now(){ return new Date().toISOString(); }
@@ -546,7 +547,7 @@ app.get('/api/public/test-dashboard',async(_req:any,reply:any)=>{
     pool.query(`SELECT * FROM (VALUES ('Critical laboratory results',(SELECT count(*) FROM lab_results lr JOIN lab_samples ls ON ls.id=lr.sample_id JOIN clinical_orders co ON co.id=ls.order_id JOIN patients p ON p.id=co.patient_id WHERE p.is_test_data AND lr.critical=true AND lr.status<>'released')),('Pending laboratory review',(SELECT count(*) FROM lab_results lr JOIN lab_samples ls ON ls.id=lr.sample_id JOIN clinical_orders co ON co.id=ls.order_id JOIN patients p ON p.id=co.patient_id WHERE p.is_test_data AND lr.status='preliminary')),('Open care tasks',(SELECT count(*) FROM care_tasks t JOIN patients p ON p.id=t.patient_id WHERE p.is_test_data AND t.status='open')),('Medication reviews',(SELECT count(*) FROM medication_reconciliation mr JOIN patients p ON p.id=mr.patient_id WHERE p.is_test_data AND mr.status='in-review')),('Open referrals',(SELECT count(*) FROM referrals r JOIN patients p ON p.id=r.patient_id WHERE p.is_test_data AND r.status NOT IN ('completed','cancelled')))) v(label,count)`),
     pool.query(`SELECT count(*)::int AS invoices,count(*) FILTER (WHERE i.status='paid')::int AS paid,count(*) FILTER (WHERE i.status<>'paid')::int AS open,coalesce(sum(i.total),0) AS billed FROM invoices i JOIN patients p ON p.id=i.patient_id WHERE p.is_test_data`),
     pool.query(`SELECT f.id,f.name,f.type,coalesce((SELECT count(*) FROM facility_beds b WHERE b.facility_id=f.id AND b.status='occupied' AND b.metadata->>'source'='synthetic-test-data'),0)::int occupied_beds,coalesce((SELECT count(*) FROM facility_beds b WHERE b.facility_id=f.id AND b.status='available' AND b.metadata->>'source'='synthetic-test-data'),0)::int available_beds,coalesce((SELECT count(*) FROM facility_operational_incidents i WHERE i.facility_id=f.id AND i.impact->>'source'='synthetic-test-data' AND i.status NOT IN ('resolved','closed')),0)::int open_incidents FROM facilities f WHERE f.name='Main Facility' LIMIT 10`),
-    pool.query(`SELECT p.patient_number AS "patientNumber",p.first_name AS "firstName",p.last_name AS "lastName",p.date_of_birth AS "dateOfBirth",p.sex,p.status,(SELECT d.display FROM diagnoses d WHERE d.patient_id=p.id ORDER BY d.id DESC LIMIT 1) AS "currentProblem",(SELECT t.priority FROM care_tasks t WHERE t.patient_id=p.id AND t.status='open' ORDER BY CASE t.priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 ELSE 3 END,t.created_at DESC LIMIT 1) AS priority,(SELECT count(*)::int FROM module_records mr WHERE mr.module='care-gaps' AND mr.payload->>'patientId'=p.id::text) AS "careGaps" FROM patients p WHERE p.is_test_data ORDER BY p.patient_number`)
+    pool.query(`SELECT p.patient_number AS "patientNumber",p.first_name AS "firstName",p.last_name AS "lastName",p.date_of_birth AS "dateOfBirth",p.sex,p.status,(SELECT d.display FROM diagnoses d WHERE d.patient_id=p.id ORDER BY d.id DESC LIMIT 1) AS "currentProblem",(SELECT t.priority FROM care_tasks t WHERE t.patient_id=p.id AND t.status='open' ORDER BY CASE t.priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 ELSE 3 END,t.created_at DESC LIMIT 1) AS priority,(SELECT count(*)::int FROM care_gap_snapshots cg WHERE cg.patient_id=p.id AND cg.status NOT IN ('resolved','dismissed')) AS "careGaps" FROM patients p WHERE p.is_test_data ORDER BY p.patient_number`)
   ]);
   return {data:{overview:overview.rows[0],queue:queue.rows,trend:trend.rows,clinical:clinical.rows,finance:finance.rows[0],facilities:facilities.rows,patients:patients.rows}};
 });
@@ -558,7 +559,7 @@ app.get('/api/public/test-patients',async(_req:any,reply:any)=>{
 
 app.get('/api/public/test-patients/:patientNumber',async(req:any,reply:any)=>{
   if(!pool)return reply.code(404).send({error:'Synthetic test patient not found.'}); if(!PUBLIC_TEST_DATA_ENABLED)return reply.code(403).send({error:'Public test data is currently disabled.'});
-  const r=await pool.query(`SELECT p.patient_number AS "patientNumber",p.first_name AS "firstName",p.last_name AS "lastName",p.date_of_birth AS "dateOfBirth",p.sex,p.preferred_language AS "preferredLanguage",p.status,(SELECT d.display FROM diagnoses d WHERE d.patient_id=p.id ORDER BY d.id DESC LIMIT 1) AS "currentProblem",(SELECT count(*)::int FROM encounters e WHERE e.patient_id=p.id) encounters,(SELECT count(*)::int FROM diagnoses d WHERE d.patient_id=p.id) diagnoses,(SELECT count(*)::int FROM clinical_orders o WHERE o.patient_id=p.id) orders,(SELECT count(*)::int FROM referrals x WHERE x.patient_id=p.id AND x.status NOT IN ('completed','cancelled')) open_referrals,(SELECT count(*)::int FROM care_tasks t WHERE t.patient_id=p.id AND t.status='open') open_tasks,(SELECT count(*)::int FROM module_records m WHERE m.module='care-gaps' AND m.payload->>'patientId'=p.id::text) care_gaps FROM patients p WHERE p.is_test_data AND p.patient_number=$1 LIMIT 1`,[req.params.patientNumber]);
+  const r=await pool.query(`SELECT p.patient_number AS "patientNumber",p.first_name AS "firstName",p.last_name AS "lastName",p.date_of_birth AS "dateOfBirth",p.sex,p.preferred_language AS "preferredLanguage",p.status,(SELECT d.display FROM diagnoses d WHERE d.patient_id=p.id ORDER BY d.id DESC LIMIT 1) AS "currentProblem",(SELECT count(*)::int FROM encounters e WHERE e.patient_id=p.id) encounters,(SELECT count(*)::int FROM diagnoses d WHERE d.patient_id=p.id) diagnoses,(SELECT count(*)::int FROM clinical_orders o WHERE o.patient_id=p.id) orders,(SELECT count(*)::int FROM referrals x WHERE x.patient_id=p.id AND x.status NOT IN ('completed','cancelled')) open_referrals,(SELECT count(*)::int FROM care_tasks t WHERE t.patient_id=p.id AND t.status='open') open_tasks,(SELECT count(*)::int FROM care_gap_snapshots cg WHERE cg.patient_id=p.id AND cg.status NOT IN ('resolved','dismissed')) care_gaps FROM patients p WHERE p.is_test_data AND p.patient_number=$1 LIMIT 1`,[req.params.patientNumber]);
   if(!r.rowCount)return reply.code(404).send({error:'Synthetic test patient not found.'}); return {data:r.rows[0],syntheticTestData:true};
 });
 
@@ -588,8 +589,8 @@ app.get('/api/public/test-patients/:patientNumber/360',async(req:any,reply:any)=
     pool.query(`SELECT id,title,status,goals FROM care_plans WHERE patient_id=$1 ORDER BY id DESC LIMIT 50`,[id]),
     pool.query(`SELECT id,destination,reason,status,created_at AS "createdAt" FROM referrals WHERE patient_id=$1 ORDER BY created_at DESC LIMIT 50`,[id]),
     pool.query(`SELECT id,task_type AS "taskType",title,priority,status,due_at AS "dueAt",created_at AS "createdAt",completed_at AS "completedAt" FROM care_tasks WHERE patient_id=$1 AND organization_id=$2 ORDER BY created_at DESC LIMIT 100`,[id,oid]),
-    pool.query(`SELECT id,status,payload,created_at AS "createdAt",updated_at AS "updatedAt" FROM module_records WHERE organization_id=$2 AND payload->>'patientId'=$1 AND module IN ('follow-up','followup') ORDER BY created_at DESC LIMIT 50`,[id,oid]),
-    pool.query(`SELECT id,COALESCE(payload->>'kind',module) AS kind,COALESCE(payload->>'severity','') AS severity,status,payload,created_at AS "createdAt" FROM module_records WHERE organization_id=$2 AND payload->>'patientId'=$1 AND module IN ('clinical-alerts','care-gaps') AND status NOT IN ('resolved','closed','completed') ORDER BY created_at DESC LIMIT 50`,[id,oid]),
+    pool.query(`SELECT id,status,payload,created_at AS "createdAt",updated_at AS "updatedAt" FROM module_records WHERE organization_id=$2 AND payload->>'patientId'=$1 AND module IN ('follow-up','followup') AND COALESCE(payload->>'coverageVersion','') <> '025' AND COALESCE(payload->>'recordPurpose','') <> 'connected synthetic testing' ORDER BY created_at DESC LIMIT 50`,[id,oid]),
+    pool.query(`SELECT id,COALESCE(payload->>'kind',module) AS kind,COALESCE(payload->>'severity','') AS severity,status,payload,created_at AS "createdAt" FROM module_records WHERE organization_id=$2 AND payload->>'patientId'=$1 AND module IN ('clinical-alerts','care-gaps') AND COALESCE(payload->>'coverageVersion','') <> '025' AND COALESCE(payload->>'recordPurpose','') <> 'connected synthetic testing' AND status NOT IN ('resolved','closed','completed') ORDER BY created_at DESC LIMIT 50`,[id,oid]),
     pool.query(`SELECT id,type,value,is_primary AS "isPrimary" FROM patient_contacts WHERE patient_id=$1 ORDER BY is_primary DESC,id`,[id]),
     pool.query(`SELECT id,name,relationship FROM emergency_contacts WHERE patient_id=$1 ORDER BY id`,[id]),
     pool.query(`SELECT id,started_at AS at,'visit' AS kind,concat('Care visit · ',COALESCE(type,'visit')) AS title,status FROM encounters WHERE organization_id=$1 AND patient_id=$2 UNION ALL SELECT id,observed_at,'observation',COALESCE(display,code),COALESCE(value_text,value_numeric::text) FROM observations WHERE patient_id=$2 UNION ALL SELECT id,created_at,'order',COALESCE(details->>'description',order_type),status FROM clinical_orders WHERE patient_id=$2 UNION ALL SELECT id,created_at,'referral',COALESCE(destination,'Referral'),status FROM referrals WHERE patient_id=$2 ORDER BY at DESC LIMIT 150`,[oid,id])
@@ -621,6 +622,7 @@ app.get('/api/public/test-modules/:module',async(req:any,reply:any)=>{
     FROM module_records mr
     LEFT JOIN patients p ON p.id::text=mr.payload->>'patientId' AND p.organization_id=mr.organization_id AND p.is_test_data=true
     WHERE mr.organization_id=$1 AND mr.module=$2
+      AND COALESCE(mr.payload->>'coverageVersion','') <> '025' AND COALESCE(mr.payload->>'recordPurpose','') <> 'connected synthetic testing'
       AND (mr.payload->>'isTestData'='true' OR mr.payload->>'patientId' IN (SELECT id::text FROM patients WHERE organization_id=$1 AND is_test_data=true))
       ${patientClause}
     ORDER BY mr.created_at DESC LIMIT 500`,params);
@@ -809,6 +811,7 @@ app.post('/api/triage',async(req:any,reply)=>{
     await dbAudit(client,req,'CREATE','triage',tr.rows[0].id,{patientId:t.patientId,acuity:t.acuity}); await enqueueClinicalEvent(client,{organizationId:dbOrganizationId(req),eventType:CLINICAL_EVENT_TYPES.VITAL_RECORDED,aggregateType:'triage',aggregateId:tr.rows[0].id,patientId:t.patientId,encounterId:t.encounterId||null,payload:{triageId:tr.rows[0].id,patientId:t.patientId,encounterId:t.encounterId||null,acuity:t.acuity}}); await client.query('COMMIT'); return reply.code(201).send({id:tr.rows[0].id,...record,queueEntryId:qe.rows[0].id});
   }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
 });
+app.get('/api/orders',async(req:any)=>{if(!pool)return {data:store.orders||[],count:(store.orders||[]).length};const params:any[]=[dbOrganizationId(req)];let where='p.organization_id=$1';if(req.query?.patientId){params.push(String(req.query.patientId));where+=' AND o.patient_id=$2';}const r=await pool.query(`SELECT o.id,o.patient_id AS "patientId",o.encounter_id AS "encounterId",o.order_type AS category,o.priority,o.status,o.details,o.created_at AS "createdAt" FROM clinical_orders o JOIN patients p ON p.id=o.patient_id WHERE ${where} ORDER BY o.created_at DESC LIMIT 500`,params);return {data:r.rows,count:r.rowCount};});
 app.post('/api/orders',async(req:any,reply)=>{
   const o=order.parse(req.body);
   if(!pool){const x=add('orders',{...o,status:'ordered',orderedAt:now()},req);if(o.category==='laboratory')add('laboratory',{orderId:x.id,patientId:o.patientId,status:'ordered',priority:o.priority,code:o.code,description:o.description},req);if(o.category==='imaging')add('imaging',{orderId:x.id,patientId:o.patientId,status:'ordered',priority:o.priority,code:o.code,description:o.description},req);if(o.category==='medication')add('pharmacy',{orderId:x.id,patientId:o.patientId,status:'prescribed',priority:o.priority,medicationCode:o.code,description:o.description},req);if(o.category==='procedure')add('procedures',{orderId:x.id,patientId:o.patientId,status:'ordered',code:o.code,description:o.description},req);return reply.code(201).send(x);}
@@ -828,6 +831,15 @@ app.post('/api/orders',async(req:any,reply)=>{
   }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
 });
 
+
+app.get('/api/laboratory',async(req:any)=>{
+ if(!pool)return {data:store.laboratory||[],count:(store.laboratory||[]).length};
+ const r=await pool.query(`SELECT ls.id,co.patient_id AS "patientId",co.encounter_id AS "encounterId",co.code,co.details->>'description' AS description,co.priority,ls.barcode,ls.specimen_type AS "specimenType",ls.status,ls.collected_at AS "collectedAt",ls.received_at AS "receivedAt",ls.processed_at AS "processedAt",lr.id AS "resultId",lr.value_numeric AS "valueNumeric",lr.value_text AS "valueText",lr.unit,lr.abnormal_flag AS "abnormalFlag",lr.critical,lr.status AS "resultStatus" FROM lab_samples ls JOIN clinical_orders co ON co.id=ls.order_id JOIN patients p ON p.id=co.patient_id LEFT JOIN lab_results lr ON lr.sample_id=ls.id WHERE p.organization_id=$1 ORDER BY ls.id DESC LIMIT 500`,[dbOrganizationId(req)]); return {data:r.rows,count:r.rowCount};
+});
+app.get('/api/imaging',async(req:any)=>{
+ if(!pool)return {data:store.imaging||[],count:(store.imaging||[]).length};
+ const r=await pool.query(`SELECT id,patient_id AS "patientId",encounter_id AS "encounterId",order_id AS "orderId",study_code AS "studyCode",study_name AS "studyName",modality,body_site AS "bodySite",priority,status,scheduled_at AS "scheduledAt",performed_at AS "performedAt",report,critical,report_verified_at AS "reportVerifiedAt",report_released_at AS "reportReleasedAt",created_at AS "createdAt" FROM imaging_studies WHERE organization_id=$1 ORDER BY created_at DESC LIMIT 500`,[dbOrganizationId(req)]); return {data:r.rows,count:r.rowCount};
+});
 app.get('/api/queue',async(req:any)=>{
   if(!pool) return {data:store.queue.filter(x=>x.organizationId===org(req)).sort((a,b)=>String(a.createdAt).localeCompare(String(b.createdAt))),count:store.queue.length};
   const oid=dbOrganizationId(req);
@@ -849,6 +861,105 @@ app.post('/api/queue',async(req:any,reply)=>{
   }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
 });
 
+
+
+// Authoritative domain adapter. Generic module_records is intentionally not used for
+// modules that already have a real PostgreSQL domain table. This keeps the UI, API and
+// database on the same source of truth while preserving existing specialised workflows.
+function camelOutput(value:any){return value}
+function domainInputValue(field:any,value:any){
+  if(value===undefined||value===null)return null;
+  if(field.type==='number'){const n=Number(value);if(!Number.isFinite(n))throw validationError(`${field.label} must be a valid number.`);return n;}
+  if(field.type==='boolean'){if(typeof value==='boolean')return value;if(value==='true')return true;if(value==='false')return false;throw validationError(`${field.label} must be true or false.`)}
+  if(field.type==='uuid'){if(!isUuid(String(value)))throw validationError(`${field.label} must be a valid identifier.`);return String(value)}
+  if(field.type==='date'||field.type==='datetime'){const d=new Date(String(value));if(Number.isNaN(d.getTime()))throw validationError(`${field.label} must be a valid date.`);return field.type==='date'?String(value).slice(0,10):d.toISOString();}
+  if(field.type==='json'){
+    if(typeof value==='object')return value;
+    try{return JSON.parse(String(value))}catch{throw validationError(`${field.label} must contain valid structured data.`)}
+  }
+  const text=String(value).trim(); if(!text)throw validationError(`${field.label} cannot be empty.`); return text;
+}
+function domainSpec(moduleId:string){return DOMAIN_MODULE_SPECS[moduleId]||null}
+function domainSelectFields(spec:any){return ['id','organization_id',...spec.fields.map((f:any)=>f.column),'created_at'].filter((x:string,i:number,a:string[])=>a.indexOf(x)===i)}
+function domainToApi(row:any,spec:any){
+  const out:any={id:row.id};
+  for(const f of spec.fields){const v=row[f.column]; if(v!==undefined)out[f.key]=v}
+  if(row.organization_id)out.organizationId=row.organization_id;
+  if(row.created_at)out.createdAt=row.created_at;
+  if(row.updated_at)out.updatedAt=row.updated_at;
+  return out;
+}
+async function validateDomainPatient(req:any,patientId:string){
+  if(!pool)return;
+  const q=await pool.query(`SELECT id,is_test_data FROM patients WHERE id=$1 AND organization_id=$2 LIMIT 1`,[patientId,dbOrganizationId(req)]);
+  if(!q.rowCount)throw Object.assign(new Error('Patient does not belong to the authorized organization.'),{statusCode:409,code:'PATIENT_RELATIONSHIP_INVALID'});
+  if(req.user?.publicSynthetic && !q.rows[0].is_test_data)throw Object.assign(new Error('Public testing can only use synthetic TEST patients.'),{statusCode:403,code:'SYNTHETIC_DATA_ONLY'});
+}
+async function authoritativeModuleRows(req:any,reply:any){
+  const moduleId=String(req.params.module),spec=domainSpec(moduleId);
+  if(!spec)return reply.code(404).send({error:'Authoritative domain is not registered for this module.'});
+  const oid=dbOrganizationId(req); if(!oid)return reply.code(401).send({error:'Organization context is required'});
+  if(!pool)return {data:(store[moduleId]||[]).filter(x=>x.organizationId===oid),count:(store[moduleId]||[]).length,source:'store',module:moduleId};
+  const columnRows=await pool.query(`SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name=$1`,[spec.table]);
+  const availableColumns=new Set(columnRows.rows.map((x:any)=>String(x.column_name)));
+  const hasOrg=availableColumns.has('organization_id');
+  const hasCreatedAt=availableColumns.has('created_at');
+  const hasObservedAt=availableColumns.has('observed_at');
+  const params:any[]=[oid]; let where=hasOrg?'t.organization_id=$1':'1=1';
+  const patientId=String(req.query?.patientId||'').trim(); const patientNumber=String(req.query?.patientNumber||'').trim();
+  if(spec.patientField && patientId){params.push(patientId);where+=` AND t.${spec.patientField}=$${params.length}`; if(!hasOrg)where+=` AND EXISTS (SELECT 1 FROM patients pp WHERE pp.id=t.${spec.patientField} AND pp.organization_id=$1)`}
+  if(spec.patientField && patientNumber){params.push(patientNumber);where+=` AND EXISTS (SELECT 1 FROM patients pp WHERE pp.id=t.${spec.patientField} AND pp.organization_id=$1 AND pp.patient_number=$${params.length})`}
+  if(!hasOrg && !spec.patientField){const encounterField=spec.fields.find((f:any)=>f.column==='encounter_id'); if(encounterField)where+=` AND EXISTS (SELECT 1 FROM encounters ee WHERE ee.id=t.encounter_id AND ee.organization_id=$1)`; else if(spec.fields.find((f:any)=>f.column==='patient_id'))where+=` AND EXISTS (SELECT 1 FROM patients pp WHERE pp.id=t.patient_id AND pp.organization_id=$1)`;}
+  const columns=domainSelectFields(spec).filter((c:string)=>availableColumns.has(c)).map((c:string)=>`t.${c}`).join(',');
+  const orderColumn=hasCreatedAt?'created_at':hasObservedAt?'observed_at':'id';
+  const r=await pool.query(`SELECT ${columns} FROM ${spec.table} t WHERE ${where} ORDER BY t.${orderColumn} DESC LIMIT 500`,params);
+  return {data:r.rows.map((x:any)=>domainToApi(x,spec)),count:r.rowCount,source:spec.table,module:moduleId};
+}
+async function authoritativeModuleCreate(req:any,reply:any){
+  const moduleId=String(req.params.module),spec=domainSpec(moduleId);
+  if(!spec)return reply.code(404).send({error:'Authoritative domain is not registered for this module.'});
+  requireAuthorizedWrite(req);
+  const body=req.body||{};
+  const values:any[]=[]; const columns:string[]=[];
+  for(const field of spec.fields){
+    const value=body[field.key];
+    if(field.required && (value===undefined||value===null||String(value).trim()===''))throw validationError(`${field.label} is required.`);
+    if(value===undefined||value===null||value==='')continue;
+    if(field.options && !field.options.includes(String(value)))throw validationError(`${field.label} has an unsupported value.`);
+    columns.push(field.column); values.push(domainInputValue(field,value));
+  }
+  const patientField=spec.patientField;
+  if(patientField){
+    const patientKey=spec.fields.find((f:any)=>f.column===patientField)?.key;
+    if(patientKey && body[patientKey])await validateDomainPatient(req,String(body[patientKey]));
+  }
+  if(body.encounterId){
+    const encounter=await pool?.query(`SELECT patient_id FROM encounters WHERE id=$1 AND organization_id=$2 LIMIT 1`,[String(body.encounterId),dbOrganizationId(req)]);
+    if(!encounter?.rowCount)throw Object.assign(new Error('Encounter does not belong to the authorized organization.'),{statusCode:409,code:'ENCOUNTER_RELATIONSHIP_INVALID'});
+    if(body.patientId && encounter.rows[0].patient_id!==String(body.patientId))throw Object.assign(new Error('Patient and encounter do not belong to the same care record.'),{statusCode:409,code:'PATIENT_RELATIONSHIP_INVALID'});
+  }
+  if(!columns.length)throw validationError('At least one meaningful field is required. Empty records are not allowed.');
+  if(!pool){const row=add(moduleId,{...body,status:body.status||'active'},req);return reply.code(201).send({...row,source:'store'});}
+  const hasCreatedBy=await pool.query(`SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name=$1 AND column_name='created_by'`,[spec.table]);
+  if(hasCreatedBy.rowCount){columns.push('created_by');values.push(dbUserId(req));}
+  const orgColumn=await pool.query(`SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name=$1 AND column_name='organization_id'`,[spec.table]);
+  const hasOrg=Boolean(orgColumn.rowCount);
+  if(hasOrg){columns.unshift('organization_id');values.unshift(dbOrganizationId(req));}
+  const placeholders=values.map((_,i)=>`$${i+1}`).join(',');
+  const returning=domainSelectFields(spec).join(',');
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    const r=await client.query(`INSERT INTO ${spec.table} (${columns.join(',')}) VALUES (${placeholders}) RETURNING ${returning}`,values);
+    const row=r.rows[0];
+    await dbAudit(client,req,'CREATE',moduleId,row.id,{source:spec.table});
+    await client.query('COMMIT');
+    return reply.code(201).send({...domainToApi(row,spec),source:spec.table});
+  }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
+}
+app.get('/api/domains/modules/:module', authoritativeModuleRows);
+app.post('/api/domains/modules/:module', authoritativeModuleCreate);
+
 // Phase 2 contract routes: modules without a domain-specific endpoint use an explicit
 // contract endpoint. There is intentionally no /api/:module fallback anymore.
 async function contractModuleRows(req:any, reply:any){
@@ -858,7 +969,7 @@ async function contractModuleRows(req:any, reply:any){
   const organizationId=dbOrganizationId(req);
   if(!organizationId)return reply.code(401).send({error:'Organization context is required'});
   if(!pool)return {data:(store[moduleId]||[]).filter(x=>x.organizationId===organizationId).slice(-500).reverse(),count:(store[moduleId]||[]).filter(x=>x.organizationId===organizationId).length,contractId:contract.id};
-  const r=await pool.query(`SELECT id,organization_id AS "organizationId",module,status,payload,created_by AS "createdBy",created_at AS "createdAt",updated_at AS "updatedAt" FROM module_records WHERE organization_id=$1 AND module=$2 ORDER BY created_at DESC LIMIT 500`,[organizationId,moduleId]);
+  const r=await pool.query(`SELECT id,organization_id AS "organizationId",module,status,payload,created_by AS "createdBy",created_at AS "createdAt",updated_at AS "updatedAt" FROM module_records WHERE organization_id=$1 AND module=$2 AND COALESCE(payload->>'coverageVersion','') <> '025' AND COALESCE(payload->>'recordPurpose','') <> 'connected synthetic testing' ORDER BY created_at DESC LIMIT 500`,[organizationId,moduleId]);
   return {data:r.rows.map((x:any)=>({id:x.id,organizationId:x.organizationId,module:x.module,status:x.status,...x.payload,createdBy:x.createdBy,createdAt:x.createdAt,updatedAt:x.updatedAt})),count:r.rowCount,contractId:contract.id};
 }
 app.get('/api/contracts/modules/:module', contractModuleRows);
@@ -957,9 +1068,9 @@ app.get('/api/patients/:id/360',async(req:any,reply)=>{
     pool.query(`SELECT id,device_id AS "deviceId",metric,value_numeric AS "valueNumeric",unit,measured_at AS "measuredAt",source,validation_status AS "validationStatus",alert_status AS "alertStatus" FROM remote_monitoring_readings WHERE patient_id=$1 AND organization_id=$2 ORDER BY measured_at DESC LIMIT 100`,[id,dbOrganizationId(req)]),
     pool.query(`SELECT id,encounter_id AS "encounterId",title,status,goals FROM care_plans WHERE patient_id=$1 ORDER BY id DESC LIMIT 50`,[id]),
     pool.query(`SELECT id,encounter_id AS "encounterId",destination,reason,status,created_at AS "createdAt" FROM referrals WHERE patient_id=$1 ORDER BY created_at DESC LIMIT 50`,[id]),
-    pool.query(`SELECT id,module,status,payload,created_at AS "createdAt",updated_at AS "updatedAt" FROM module_records WHERE organization_id=$2 AND payload->>'patientId'=$1 AND module IN ('follow-up','followup') ORDER BY created_at DESC LIMIT 50`,[id,dbOrganizationId(req)]),
+    pool.query(`SELECT id,module,status,payload,created_at AS "createdAt",updated_at AS "updatedAt" FROM module_records WHERE organization_id=$2 AND payload->>'patientId'=$1 AND module IN ('follow-up','followup') AND COALESCE(payload->>'coverageVersion','') <> '025' AND COALESCE(payload->>'recordPurpose','') <> 'connected synthetic testing' ORDER BY created_at DESC LIMIT 50`,[id,dbOrganizationId(req)]),
     pool.query(`SELECT id,encounter_id AS "encounterId",task_type AS "taskType",title,priority,status,due_at AS "dueAt",assigned_to AS "assignedTo",created_at AS "createdAt",completed_at AS "completedAt" FROM care_tasks WHERE patient_id=$1 AND organization_id=$2 ORDER BY created_at DESC LIMIT 100`,[id,dbOrganizationId(req)]),
-    pool.query(`SELECT id,COALESCE(payload->>'kind',module) AS kind,COALESCE(payload->>'severity','') AS severity,status,payload,created_at AS "createdAt" FROM module_records WHERE organization_id=$2 AND payload->>'patientId'=$1 AND module IN ('clinical-alerts','care-gaps') AND status NOT IN ('resolved','closed','completed') ORDER BY created_at DESC LIMIT 50`,[id,dbOrganizationId(req)]),
+    pool.query(`SELECT id,COALESCE(payload->>'kind',module) AS kind,COALESCE(payload->>'severity','') AS severity,status,payload,created_at AS "createdAt" FROM module_records WHERE organization_id=$2 AND payload->>'patientId'=$1 AND module IN ('clinical-alerts','care-gaps') AND COALESCE(payload->>'coverageVersion','') <> '025' AND COALESCE(payload->>'recordPurpose','') <> 'connected synthetic testing' AND status NOT IN ('resolved','closed','completed') ORDER BY created_at DESC LIMIT 50`,[id,dbOrganizationId(req)]),
     pool.query(`SELECT i.id,i.encounter_id AS "encounterId",i.status,i.currency,i.total,i.created_at AS "createdAt",COALESCE((SELECT SUM(p.amount) FROM payments p WHERE p.invoice_id=i.id AND p.status='completed'),0)::numeric AS "paidAmount",GREATEST(i.total-COALESCE((SELECT SUM(p.amount) FROM payments p WHERE p.invoice_id=i.id AND p.status='completed'),0),0)::numeric AS "outstandingAmount" FROM invoices i WHERE i.patient_id=$1 AND i.organization_id=$2 ORDER BY i.created_at DESC LIMIT 50`,[id,dbOrganizationId(req)]),
     pool.query(`SELECT c.id,c.policy_id AS "policyId",c.invoice_id AS "invoiceId",c.status,c.amount,c.coverage_amount AS "coverageAmount",c.patient_responsibility AS "patientResponsibility",c.submitted_at AS "submittedAt",c.responded_at AS "respondedAt",ip.policy_number AS "policyNumber",pr.name AS "providerName" FROM claims c LEFT JOIN insurance_policies ip ON ip.id=c.policy_id LEFT JOIN insurance_providers pr ON pr.id=ip.provider_id WHERE c.patient_id=$1 ORDER BY c.submitted_at DESC NULLS LAST LIMIT 50`,[id]),
     pool.query(`SELECT ip.id,ip.policy_number AS "policyNumber",ip.member_number AS "memberNumber",ip.status,ip.effective_from AS "effectiveFrom",ip.effective_to AS "effectiveTo",ip.copay_percent AS "copayPercent",pr.name AS "providerName" FROM insurance_policies ip JOIN insurance_providers pr ON pr.id=ip.provider_id WHERE ip.patient_id=$1 ORDER BY ip.id DESC LIMIT 20`,[id]),
@@ -1528,14 +1639,14 @@ app.post('/api/governance/:kind',async(req:any,reply)=>{
 app.get('/api/governance/:kind',async(req:any,reply)=>{
   const allowed=['forms','order-sets','protocols','workflow-rules','terminology']; if(!allowed.includes(req.params.kind)) return reply.code(404).send({error:'Governance resource not supported'});
   const module=`governance-${req.params.kind}`; if(!pool)return {data:store[module]||[],count:(store[module]||[]).length};
-  const r=await pool.query(`SELECT id,status,payload,created_at AS "createdAt",updated_at AS "updatedAt" FROM module_records WHERE organization_id=$1 AND module=$2 ORDER BY created_at DESC LIMIT 500`,[dbOrganizationId(req),module]); return {data:r.rows.map((x:any)=>({id:x.id,...x.payload,status:x.status,createdAt:x.createdAt,updatedAt:x.updatedAt})),count:r.rowCount};
+  const r=await pool.query(`SELECT id,status,payload,created_at AS "createdAt",updated_at AS "updatedAt" FROM module_records WHERE organization_id=$1 AND module=$2 AND COALESCE(payload->>'coverageVersion','') <> '025' AND COALESCE(payload->>'recordPurpose','') <> 'connected synthetic testing' ORDER BY created_at DESC LIMIT 500`,[dbOrganizationId(req),module]); return {data:r.rows.map((x:any)=>({id:x.id,...x.payload,status:x.status,createdAt:x.createdAt,updatedAt:x.updatedAt})),count:r.rowCount};
 });
 app.post('/api/care-gaps',async(req:any,reply)=>{const b=gapRecord.parse(req.body||{}); return reply.code(201).send(await moduleCreate(req,'care-gaps',b,b.status));});
-app.get('/api/care-gaps',async(req:any)=>{if(!pool)return {data:store['care-gaps']||[],count:(store['care-gaps']||[]).length};const r=await pool.query(`SELECT id,status,payload,created_at AS "createdAt",updated_at AS "updatedAt" FROM module_records WHERE organization_id=$1 AND module='care-gaps' ORDER BY created_at DESC LIMIT 500`,[dbOrganizationId(req)]);return {data:r.rows.map((x:any)=>({id:x.id,...x.payload,status:x.status,createdAt:x.createdAt,updatedAt:x.updatedAt})),count:r.rowCount};});
+app.get('/api/care-gaps',async(req:any)=>{if(!pool)return {data:store['care-gaps']||[],count:(store['care-gaps']||[]).length};const r=await pool.query(`SELECT id,status,payload,created_at AS "createdAt",updated_at AS "updatedAt" FROM module_records WHERE organization_id=$1 AND module='care-gaps' AND COALESCE(payload->>'coverageVersion','') <> '025' AND COALESCE(payload->>'recordPurpose','') <> 'connected synthetic testing' ORDER BY created_at DESC LIMIT 500`,[dbOrganizationId(req)]);return {data:r.rows.map((x:any)=>({id:x.id,...x.payload,status:x.status,createdAt:x.createdAt,updatedAt:x.updatedAt})),count:r.rowCount};});
 app.post('/api/alerts',async(req:any,reply)=>{const b=alertRecord.parse(req.body||{}); const x=await moduleCreate(req,'clinical-alerts',b,b.severity==='CRITICAL'?'critical':'open'); if(pool) await pool.query(`INSERT INTO notifications(organization_id,patient_id,channel,template,status,payload) VALUES($1,$2,'in-app','clinical-alert','queued',$3)`,[dbOrganizationId(req),b.patientId,JSON.stringify({alertId:x.id,severity:b.severity,title:b.title})]); return reply.code(201).send(x);});
-app.get('/api/alerts',async(req:any)=>{if(!pool)return {data:store['clinical-alerts']||[],count:(store['clinical-alerts']||[]).length};const r=await pool.query(`SELECT id,status,payload,created_at AS "createdAt" FROM module_records WHERE organization_id=$1 AND module='clinical-alerts' ORDER BY created_at DESC LIMIT 500`,[dbOrganizationId(req)]);return {data:r.rows.map((x:any)=>({id:x.id,...x.payload,status:x.status,createdAt:x.createdAt})),count:r.rowCount};});
+app.get('/api/alerts',async(req:any)=>{if(!pool)return {data:store['clinical-alerts']||[],count:(store['clinical-alerts']||[]).length};const r=await pool.query(`SELECT id,status,payload,created_at AS "createdAt" FROM module_records WHERE organization_id=$1 AND module='clinical-alerts' AND COALESCE(payload->>'coverageVersion','') <> '025' AND COALESCE(payload->>'recordPurpose','') <> 'connected synthetic testing' ORDER BY created_at DESC LIMIT 500`,[dbOrganizationId(req)]);return {data:r.rows.map((x:any)=>({id:x.id,...x.payload,status:x.status,createdAt:x.createdAt})),count:r.rowCount};});
 app.post('/api/messages',async(req:any,reply)=>{const b=messageRecord.parse(req.body||{});if(b.patientId&&!b.consentConfirmed&&['sms','email','whatsapp','push'].includes(b.channel))return reply.code(409).send({error:'Patient communication consent must be confirmed before external delivery'});return reply.code(201).send(await moduleCreate(req,'messages',b,'queued'));});
-app.get('/api/messages',async(req:any)=>{if(!pool)return {data:store.messages||[],count:(store.messages||[]).length};const r=await pool.query(`SELECT id,status,payload,created_at AS "createdAt" FROM module_records WHERE organization_id=$1 AND module='messages' ORDER BY created_at DESC LIMIT 500`,[dbOrganizationId(req)]);return {data:r.rows.map((x:any)=>({id:x.id,...x.payload,status:x.status,createdAt:x.createdAt})),count:r.rowCount};});
+app.get('/api/messages',async(req:any)=>{if(!pool)return {data:store.messages||[],count:(store.messages||[]).length};const r=await pool.query(`SELECT id,status,payload,created_at AS "createdAt" FROM module_records WHERE organization_id=$1 AND module='messages' AND COALESCE(payload->>'coverageVersion','') <> '025' AND COALESCE(payload->>'recordPurpose','') <> 'connected synthetic testing' ORDER BY created_at DESC LIMIT 500`,[dbOrganizationId(req)]);return {data:r.rows.map((x:any)=>({id:x.id,...x.payload,status:x.status,createdAt:x.createdAt})),count:r.rowCount};});
 app.get('/api/analytics/operations',async(req:any,reply)=>{
   if(!pool) return {patients:store.patients.length,appointments:store.appointments.length,openTasks:(store.tasks||[]).filter((x:any)=>x.status!=='completed').length,careGaps:(store['care-gaps']||[]).filter((x:any)=>x.status!=='resolved').length};
   const oid=dbOrganizationId(req);
@@ -1545,9 +1656,9 @@ app.get('/api/analytics/operations',async(req:any,reply)=>{
     pool.query("SELECT count(*)::int n FROM queue_entries qe JOIN queues q ON q.id=qe.queue_id WHERE q.organization_id=$1 AND qe.status NOT IN ('completed','cancelled','no-show')",[oid]),
     pool.query('SELECT count(*)::int n FROM encounters WHERE organization_id=$1',[oid]),
     pool.query('SELECT count(*)::int n FROM lab_results lr JOIN lab_samples ls ON ls.id=lr.sample_id JOIN clinical_orders co ON co.id=ls.order_id JOIN patients p ON p.id=co.patient_id WHERE p.organization_id=$1',[oid]),
-    pool.query("SELECT count(*)::int n FROM module_records WHERE organization_id=$1 AND module='tasks' AND status NOT IN ('completed','cancelled')",[oid]),
-    pool.query("SELECT count(*)::int n FROM module_records WHERE organization_id=$1 AND module='care-gaps' AND status NOT IN ('resolved','dismissed')",[oid]),
-    pool.query("SELECT count(*)::int n FROM module_records WHERE organization_id=$1 AND module='beds' AND status='occupied'",[oid]),
+    pool.query("SELECT count(*)::int n FROM module_records WHERE organization_id=$1 AND module='tasks' AND COALESCE(payload->>'coverageVersion','') <> '025' AND COALESCE(payload->>'recordPurpose','') <> 'connected synthetic testing' AND status NOT IN ('completed','cancelled')",[oid]),
+    pool.query("SELECT count(*)::int n FROM module_records WHERE organization_id=$1 AND module='care-gaps' AND COALESCE(payload->>'coverageVersion','') <> '025' AND COALESCE(payload->>'recordPurpose','') <> 'connected synthetic testing' AND status NOT IN ('resolved','dismissed')",[oid]),
+    pool.query("SELECT count(*)::int n FROM module_records WHERE organization_id=$1 AND module='beds' AND COALESCE(payload->>'coverageVersion','') <> '025' AND COALESCE(payload->>'recordPurpose','') <> 'connected synthetic testing' AND status='occupied'",[oid]),
     pool.query("SELECT count(*)::int n FROM invoices WHERE organization_id=$1 AND status <> 'paid'",[oid])
   ]);
   return {patients:patients.rows[0].n,appointments:appointments.rows[0].n,waiting:waiting.rows[0].n,encounters:encounters.rows[0].n,labResults:labs.rows[0].n,openTasks:openTasks.rows[0].n,careGaps:gaps.rows[0].n,occupiedBeds:beds.rows[0].n,unpaidInvoices:unpaid.rows[0].n};
@@ -1663,7 +1774,7 @@ app.get('/api/child-intelligence/:patientId', async(req:any,reply)=>{
   const [growth,gaps,refs,imm] = await Promise.all([
     pool.query(`SELECT id,measured_at AS "measuredAt",age_days AS "ageDays",weight_kg AS "weightKg",length_height_cm AS "lengthHeightCm",head_circumference_cm AS "headCircumferenceCm",muac_mm AS "muacMm",z_scores AS "zScores",growth_interpretation AS "growthInterpretation",source_standard AS "sourceStandard" FROM child_growth_measurements WHERE organization_id=$1 AND patient_id=$2 ORDER BY measured_at DESC LIMIT 24`,[o,p]),
     pool.query(`SELECT * FROM child_care_gaps WHERE organization_id=$1 AND patient_id=$2 AND status IN ('open','acknowledged') ORDER BY CASE priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 ELSE 3 END,detected_at DESC`,[o,p]),
-    pool.query(`SELECT id,status,payload,created_at AS "createdAt" FROM module_records WHERE organization_id=$1 AND module='referrals' AND payload->>'patientId'=$2 ORDER BY created_at DESC LIMIT 50`,[o,p]),
+    pool.query(`SELECT id,status,payload,created_at AS "createdAt" FROM module_records WHERE organization_id=$1 AND module='referrals' AND COALESCE(payload->>'coverageVersion','') <> '025' AND COALESCE(payload->>'recordPurpose','') <> 'connected synthetic testing' AND payload->>'patientId'=$2 ORDER BY created_at DESC LIMIT 50`,[o,p]),
     pool.query(`SELECT * FROM immunization_reviews WHERE organization_id=$1 AND patient_id=$2 ORDER BY reviewed_at DESC LIMIT 1`,[o,p])
   ]);
   const series=growth.rows.slice().reverse();
@@ -1723,7 +1834,7 @@ app.get('/api/care-graph/:patientId', async(req:any)=>{
     pool.query(`SELECT id,measured_at AS "measuredAt",weight_kg AS "weightKg",length_height_cm AS "lengthHeightCm" FROM child_growth_measurements WHERE organization_id=$1 AND patient_id=$2 ORDER BY measured_at DESC LIMIT 30`,[o,p]),
     pool.query(`SELECT id,assessed_at AS "assessedAt",classifications,referral_required AS "referralRequired" FROM child_imci_assessments WHERE organization_id=$1 AND patient_id=$2 ORDER BY assessed_at DESC LIMIT 30`,[o,p]),
     pool.query(`SELECT id,reviewed_at AS "reviewedAt",due_items AS "dueItems",overdue_items AS "overdueItems" FROM immunization_reviews WHERE organization_id=$1 AND patient_id=$2 ORDER BY reviewed_at DESC LIMIT 20`,[o,p]),
-    pool.query(`SELECT id,status,payload,created_at AS "createdAt" FROM module_records WHERE organization_id=$1 AND module='referrals' AND payload->>'patientId'=$2 ORDER BY created_at DESC LIMIT 30`,[o,p])
+    pool.query(`SELECT id,status,payload,created_at AS "createdAt" FROM module_records WHERE organization_id=$1 AND module='referrals' AND COALESCE(payload->>'coverageVersion','') <> '025' AND COALESCE(payload->>'recordPurpose','') <> 'connected synthetic testing' AND payload->>'patientId'=$2 ORDER BY created_at DESC LIMIT 30`,[o,p])
   ]);
   const groups:any[]=[['maternal-record',maternal.rows],['birth-event',births.rows],['newborn',newborn.rows],['postnatal-contact',pnc.rows],['child-visit',child.rows],['growth',growth.rows],['imci',imci.rows],['immunization-review',imm.rows],['referral',refs.rows]];
   const nodes=groups.flatMap(([type,rows])=>rows.map((x:any)=>({id:`${type}:${x.id}`,type,data:x})));
@@ -1956,7 +2067,7 @@ app.get('/api/patients/:id/timeline',async(req:any,reply)=>{
     UNION ALL SELECT co.id,co.created_at,'order',COALESCE(co.details->>'description',co.order_type),co.status,co.patient_id FROM clinical_orders co JOIN patients cop ON cop.id=co.patient_id WHERE cop.organization_id=$1 AND co.patient_id=$2
     UNION ALL SELECT mo.id,e.started_at,'medication',m.name,mo.status,mo.patient_id FROM medication_orders mo JOIN medications m ON m.id=mo.medication_id JOIN patients p ON p.id=mo.patient_id LEFT JOIN encounters e ON e.id=mo.encounter_id WHERE p.organization_id=$1 AND mo.patient_id=$2
     UNION ALL SELECT r.id,r.created_at,'referral',COALESCE(r.destination,'Referral'),r.status,r.patient_id FROM referrals r JOIN patients rp ON rp.id=r.patient_id WHERE rp.organization_id=$1 AND r.patient_id=$2
-    UNION ALL SELECT mr.id,mr.created_at,'follow-up',COALESCE(mr.payload->>'reason','Follow-up'),mr.status,$2::uuid FROM module_records mr WHERE mr.organization_id=$1 AND mr.module IN ('follow-up','followup') AND mr.payload->>'patientId'=$2
+    UNION ALL SELECT mr.id,mr.created_at,'follow-up',COALESCE(mr.payload->>'reason','Follow-up'),mr.status,$2::uuid FROM module_records mr WHERE mr.organization_id=$1 AND mr.module IN ('follow-up','followup') AND COALESCE(mr.payload->>'coverageVersion','') <> '025' AND COALESCE(mr.payload->>'recordPurpose','') <> 'connected synthetic testing' AND mr.payload->>'patientId'=$2
     UNION ALL SELECT id,created_at,'workflow',event_type,COALESCE(to_state,from_state,'recorded'),patient_id FROM clinical_workflow_events WHERE organization_id=$1 AND patient_id=$2
     ORDER BY at DESC LIMIT 150`,[o,p]);
   return {data:q.rows};
@@ -1973,7 +2084,7 @@ app.get('/api/patients/:id/flow',async(req:any)=>{
     pool.query(`SELECT co.id,co.status,co.order_type AS "orderType",co.created_at AS "createdAt" FROM clinical_orders co JOIN patients cp ON cp.id=co.patient_id WHERE cp.organization_id=$1 AND co.patient_id=$2 ORDER BY co.created_at DESC LIMIT 10`,[o,p]),
     pool.query(`SELECT r.id,r.status,r.reason,r.destination,r.created_at AS "createdAt" FROM referrals r JOIN patients rp ON rp.id=r.patient_id WHERE rp.organization_id=$1 AND r.patient_id=$2 ORDER BY r.created_at DESC LIMIT 10`,[o,p]),
     pool.query(`SELECT id,status,admitted_at AS "admittedAt",discharged_at AS "dischargedAt" FROM admissions WHERE organization_id=$1 AND patient_id=$2 ORDER BY admitted_at DESC LIMIT 5`,[o,p]),
-    pool.query(`SELECT id,status,due_at AS "dueAt",payload FROM module_records WHERE organization_id=$1 AND module='follow-up' AND payload->>'patientId'=$2 ORDER BY created_at DESC LIMIT 10`,[o,p])
+    pool.query(`SELECT id,status,due_at AS "dueAt",payload FROM module_records WHERE organization_id=$1 AND module='follow-up' AND COALESCE(payload->>'coverageVersion','') <> '025' AND COALESCE(payload->>'recordPurpose','') <> 'connected synthetic testing' AND payload->>'patientId'=$2 ORDER BY created_at DESC LIMIT 10`,[o,p])
   ]);
   return {data:{appointments:appt.rows,queue:queue.rows,triage:triage.rows,encounters:enc.rows,orders:orders.rows,referrals:ref.rows,admissions:adm.rows,followUp:follow.rows}};
 });
