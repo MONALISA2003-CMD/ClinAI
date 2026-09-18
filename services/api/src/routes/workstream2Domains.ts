@@ -12,21 +12,24 @@ export function registerWorkstream2DomainRoutes(app:FastifyInstance,pool:Pool|nu
 
   app.get('/api/domains/finance/overview',async(req:any,reply:any)=>{
     if(!requireDb(reply))return; const organizationId=oid(req); if(!organizationId)return reply.code(400).send({error:'Organization context is required'});
-    const [summary,recent,recon]=await Promise.all([
+    const [summary,recent,recon,payments,accounting]=await Promise.all([
       pool!.query(`SELECT count(*)::int AS invoice_count,count(*) FILTER(WHERE status='paid')::int AS paid_count,count(*) FILTER(WHERE status<>'paid')::int AS open_count,COALESCE(sum(total),0)::numeric AS billed FROM invoices WHERE organization_id=$1`,[organizationId]),
       pool!.query(`SELECT i.id,i.patient_id AS "patientId",p.patient_number AS "patientNumber",i.total,i.currency,i.status,i.created_at AS "createdAt",COALESCE((SELECT sum(amount) FROM payments py WHERE py.invoice_id=i.id AND py.status='completed'),0)::numeric AS paid FROM invoices i LEFT JOIN patients p ON p.id=i.patient_id WHERE i.organization_id=$1 ORDER BY i.created_at DESC LIMIT 100`,[organizationId]),
-      pool!.query(`SELECT fr.*,p.patient_number AS "patientNumber",c.status AS "claimStatus" FROM finance_reconciliations fr JOIN invoices i ON i.id=fr.invoice_id LEFT JOIN patients p ON p.id=i.patient_id LEFT JOIN claims c ON c.id=fr.claim_id WHERE fr.organization_id=$1 ORDER BY fr.created_at DESC LIMIT 100`,[organizationId])
-    ]); return {summary:summary.rows[0],invoices:recent.rows,reconciliations:recon.rows};
+      pool!.query(`SELECT fr.*,p.patient_number AS "patientNumber",c.status AS "claimStatus" FROM finance_reconciliations fr JOIN invoices i ON i.id=fr.invoice_id LEFT JOIN patients p ON p.id=i.patient_id LEFT JOIN claims c ON c.id=fr.claim_id WHERE fr.organization_id=$1 ORDER BY fr.created_at DESC LIMIT 100`,[organizationId]),
+      pool!.query(`SELECT py.*,i.patient_id AS "patientId",p.patient_number AS "patientNumber",i.total AS "invoiceTotal",i.currency FROM payments py JOIN invoices i ON i.id=py.invoice_id LEFT JOIN patients p ON p.id=i.patient_id WHERE i.organization_id=$1 ORDER BY COALESCE(py.paid_at,now()) DESC LIMIT 100`,[organizationId]),
+      pool!.query(`SELECT ae.*,p.patient_number AS "patientNumber" FROM accounting_entries ae LEFT JOIN patients p ON p.id=(SELECT i.patient_id FROM invoices i WHERE ae.reference_type='invoice' AND ae.reference_id=i.id LIMIT 1) WHERE ae.organization_id=$1 ORDER BY ae.created_at DESC LIMIT 100`,[organizationId])
+    ]); return {summary:summary.rows[0],invoices:recent.rows,reconciliations:recon.rows,payments:payments.rows,accounting:accounting.rows};
   });
 
   app.get('/api/domains/insurance/overview',async(req:any,reply:any)=>{
     if(!requireDb(reply))return; const organizationId=oid(req); if(!organizationId)return reply.code(400).send({error:'Organization context is required'});
-    const [providers,policies,eligibility,authorizations]=await Promise.all([
+    const [providers,policies,eligibility,authorizations,claims]=await Promise.all([
       pool!.query(`SELECT id,name,status,contact FROM insurance_providers WHERE organization_id=$1 ORDER BY name`,[organizationId]),
       pool!.query(`SELECT ip.id,ip.patient_id AS "patientId",p.patient_number AS "patientNumber",ip.provider_id AS "providerId",pr.name AS "providerName",ip.policy_number AS "policyNumber",ip.member_number AS "memberNumber",ip.status,ip.effective_from AS "effectiveFrom",ip.effective_to AS "effectiveTo",ip.copay_percent AS "copayPercent",ip.annual_limit AS "annualLimit",ip.coverage FROM insurance_policies ip JOIN patients p ON p.id=ip.patient_id JOIN insurance_providers pr ON pr.id=ip.provider_id WHERE ip.organization_id=$1 ORDER BY ip.id DESC LIMIT 500`,[organizationId]),
       pool!.query(`SELECT e.*,p.patient_number AS "patientNumber",ip.policy_number AS "policyNumber" FROM insurance_eligibility_checks e JOIN patients p ON p.id=e.patient_id JOIN insurance_policies ip ON ip.id=e.policy_id WHERE e.organization_id=$1 ORDER BY e.checked_at DESC LIMIT 100`,[organizationId]),
-      pool!.query(`SELECT a.*,p.patient_number AS "patientNumber",ip.policy_number AS "policyNumber" FROM insurance_authorizations a JOIN patients p ON p.id=a.patient_id JOIN insurance_policies ip ON ip.id=a.policy_id WHERE a.organization_id=$1 ORDER BY a.requested_at DESC LIMIT 100`,[organizationId])
-    ]); return {providers:providers.rows,policies:policies.rows,eligibility:eligibility.rows,authorizations:authorizations.rows};
+      pool!.query(`SELECT a.*,p.patient_number AS "patientNumber",ip.policy_number AS "policyNumber" FROM insurance_authorizations a JOIN patients p ON p.id=a.patient_id JOIN insurance_policies ip ON ip.id=a.policy_id WHERE a.organization_id=$1 ORDER BY a.requested_at DESC LIMIT 100`,[organizationId]),
+      pool!.query(`SELECT c.id,c.patient_id AS "patientId",p.patient_number AS "patientNumber",c.claim_number AS "claimNumber",c.status,c.amount,c.coverage_amount AS "coverageAmount",c.patient_responsibility AS "patientResponsibility",c.submitted_at AS "submittedAt",c.responded_at AS "respondedAt",ip.policy_number AS "policyNumber",pr.name AS "providerName" FROM claims c LEFT JOIN patients p ON p.id=c.patient_id LEFT JOIN insurance_policies ip ON ip.id=c.policy_id LEFT JOIN insurance_providers pr ON pr.id=ip.provider_id WHERE p.organization_id=$1 ORDER BY c.submitted_at DESC NULLS LAST LIMIT 100`,[organizationId])
+    ]); return {providers:providers.rows,policies:policies.rows,eligibility:eligibility.rows,authorizations:authorizations.rows,claims:claims.rows};
   });
 
   app.post('/api/domains/insurance/eligibility',async(req:any,reply:any)=>{
@@ -48,11 +51,12 @@ export function registerWorkstream2DomainRoutes(app:FastifyInstance,pool:Pool|nu
   });
 
   app.get('/api/domains/inventory/overview',async(req:any,reply:any)=>{
-    if(!requireDb(reply))return; const organizationId=oid(req); if(!organizationId)return reply.code(400).send({error:'Organization context is required'}); const [items,movements,low]=await Promise.all([
+    if(!requireDb(reply))return; const organizationId=oid(req); if(!organizationId)return reply.code(400).send({error:'Organization context is required'}); const [items,movements,low,batches]=await Promise.all([
       pool!.query(`SELECT ii.*,COALESCE((SELECT sum(ib.quantity) FROM inventory_batches ib WHERE ib.item_id=ii.id),0)::numeric AS "onHand",COALESCE((SELECT min(ib.expiry_date) FROM inventory_batches ib WHERE ib.item_id=ii.id AND ib.quantity>0),NULL) AS "nearestExpiry" FROM inventory_items ii WHERE ii.organization_id=$1 ORDER BY ii.name`,[organizationId]),
       pool!.query(`SELECT sm.*,ii.name AS "itemName",ii.sku,ib.batch_number AS "batchNumber" FROM stock_movements sm JOIN inventory_items ii ON ii.id=sm.item_id LEFT JOIN inventory_batches ib ON ib.id=sm.batch_id WHERE ii.organization_id=$1 ORDER BY sm.created_at DESC LIMIT 200`,[organizationId]),
-      pool!.query(`SELECT ii.id,ii.name,ii.sku,ii.reorder_level,COALESCE(sum(ib.quantity),0)::numeric AS "onHand" FROM inventory_items ii LEFT JOIN inventory_batches ib ON ib.item_id=ii.id WHERE ii.organization_id=$1 GROUP BY ii.id HAVING COALESCE(sum(ib.quantity),0)<=ii.reorder_level ORDER BY "onHand"`,[organizationId])
-    ]); return {items:items.rows,movements:movements.rows,lowStock:low.rows};
+      pool!.query(`SELECT ii.id,ii.name,ii.sku,ii.reorder_level,COALESCE(sum(ib.quantity),0)::numeric AS "onHand" FROM inventory_items ii LEFT JOIN inventory_batches ib ON ib.item_id=ii.id WHERE ii.organization_id=$1 GROUP BY ii.id HAVING COALESCE(sum(ib.quantity),0)<=ii.reorder_level ORDER BY "onHand"`,[organizationId]),
+      pool!.query(`SELECT ib.*,ii.name AS "itemName",ii.sku FROM inventory_batches ib JOIN inventory_items ii ON ii.id=ib.item_id WHERE ii.organization_id=$1 ORDER BY ib.expiry_date NULLS LAST,ib.quantity DESC LIMIT 300`,[organizationId])
+    ]); return {items:items.rows,movements:movements.rows,lowStock:low.rows,batches:batches.rows};
   });
 
   app.post('/api/domains/inventory/receive',async(req:any,reply:any)=>{
