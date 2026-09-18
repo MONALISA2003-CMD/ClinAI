@@ -1,0 +1,484 @@
+import { z } from 'zod';
+export function registerWorkstream2DomainRoutes(app, pool, ctx) {
+    const oid = (req) => ctx.dbOrganizationId(req);
+    const write = (req) => ctx.requireAuthorizedWrite(req);
+    const requireDb = (reply) => { if (!pool) {
+        reply.code(501).send({ error: 'PostgreSQL required' });
+        return false;
+    } return true; };
+    app.get('/api/domains/finance/overview', async (req, reply) => {
+        if (!requireDb(reply))
+            return;
+        const organizationId = oid(req);
+        if (!organizationId)
+            return reply.code(400).send({ error: 'Organization context is required' });
+        const [summary, recent, recon, payments, accounting] = await Promise.all([
+            pool.query(`SELECT count(*)::int AS invoice_count,count(*) FILTER(WHERE status='paid')::int AS paid_count,count(*) FILTER(WHERE status<>'paid')::int AS open_count,COALESCE(sum(total),0)::numeric AS billed FROM invoices WHERE organization_id=$1`, [organizationId]),
+            pool.query(`SELECT i.id,i.patient_id AS "patientId",p.patient_number AS "patientNumber",i.total,i.currency,i.status,i.created_at AS "createdAt",COALESCE((SELECT sum(amount) FROM payments py WHERE py.invoice_id=i.id AND py.status='completed'),0)::numeric AS paid FROM invoices i LEFT JOIN patients p ON p.id=i.patient_id WHERE i.organization_id=$1 ORDER BY i.created_at DESC LIMIT 100`, [organizationId]),
+            pool.query(`SELECT fr.*,p.patient_number AS "patientNumber",c.status AS "claimStatus" FROM finance_reconciliations fr JOIN invoices i ON i.id=fr.invoice_id LEFT JOIN patients p ON p.id=i.patient_id LEFT JOIN claims c ON c.id=fr.claim_id WHERE fr.organization_id=$1 ORDER BY fr.created_at DESC LIMIT 100`, [organizationId]),
+            pool.query(`SELECT py.*,i.patient_id AS "patientId",p.patient_number AS "patientNumber",i.total AS "invoiceTotal",i.currency FROM payments py JOIN invoices i ON i.id=py.invoice_id LEFT JOIN patients p ON p.id=i.patient_id WHERE i.organization_id=$1 ORDER BY COALESCE(py.paid_at,now()) DESC LIMIT 100`, [organizationId]),
+            pool.query(`SELECT ae.*,p.patient_number AS "patientNumber" FROM accounting_entries ae LEFT JOIN patients p ON p.id=(SELECT i.patient_id FROM invoices i WHERE ae.reference_type='invoice' AND ae.reference_id=i.id LIMIT 1) WHERE ae.organization_id=$1 ORDER BY ae.created_at DESC LIMIT 100`, [organizationId])
+        ]);
+        return { summary: summary.rows[0], invoices: recent.rows, reconciliations: recon.rows, payments: payments.rows, accounting: accounting.rows };
+    });
+    app.get('/api/domains/insurance/overview', async (req, reply) => {
+        if (!requireDb(reply))
+            return;
+        const organizationId = oid(req);
+        if (!organizationId)
+            return reply.code(400).send({ error: 'Organization context is required' });
+        const [providers, policies, eligibility, authorizations, claims] = await Promise.all([
+            pool.query(`SELECT id,name,status,contact FROM insurance_providers WHERE organization_id=$1 ORDER BY name`, [organizationId]),
+            pool.query(`SELECT ip.id,ip.patient_id AS "patientId",p.patient_number AS "patientNumber",ip.provider_id AS "providerId",pr.name AS "providerName",ip.policy_number AS "policyNumber",ip.member_number AS "memberNumber",ip.status,ip.effective_from AS "effectiveFrom",ip.effective_to AS "effectiveTo",ip.copay_percent AS "copayPercent",ip.annual_limit AS "annualLimit",ip.coverage FROM insurance_policies ip JOIN patients p ON p.id=ip.patient_id JOIN insurance_providers pr ON pr.id=ip.provider_id WHERE ip.organization_id=$1 ORDER BY ip.id DESC LIMIT 500`, [organizationId]),
+            pool.query(`SELECT e.*,p.patient_number AS "patientNumber",ip.policy_number AS "policyNumber" FROM insurance_eligibility_checks e JOIN patients p ON p.id=e.patient_id JOIN insurance_policies ip ON ip.id=e.policy_id WHERE e.organization_id=$1 ORDER BY e.checked_at DESC LIMIT 100`, [organizationId]),
+            pool.query(`SELECT a.*,p.patient_number AS "patientNumber",ip.policy_number AS "policyNumber" FROM insurance_authorizations a JOIN patients p ON p.id=a.patient_id JOIN insurance_policies ip ON ip.id=a.policy_id WHERE a.organization_id=$1 ORDER BY a.requested_at DESC LIMIT 100`, [organizationId]),
+            pool.query(`SELECT c.id,c.patient_id AS "patientId",p.patient_number AS "patientNumber",c.claim_number AS "claimNumber",c.status,c.amount,c.coverage_amount AS "coverageAmount",c.patient_responsibility AS "patientResponsibility",c.submitted_at AS "submittedAt",c.responded_at AS "respondedAt",ip.policy_number AS "policyNumber",pr.name AS "providerName" FROM claims c LEFT JOIN patients p ON p.id=c.patient_id LEFT JOIN insurance_policies ip ON ip.id=c.policy_id LEFT JOIN insurance_providers pr ON pr.id=ip.provider_id WHERE p.organization_id=$1 ORDER BY c.submitted_at DESC NULLS LAST LIMIT 100`, [organizationId])
+        ]);
+        return { providers: providers.rows, policies: policies.rows, eligibility: eligibility.rows, authorizations: authorizations.rows, claims: claims.rows };
+    });
+    app.post('/api/domains/insurance/eligibility', async (req, reply) => {
+        write(req);
+        if (!requireDb(reply))
+            return;
+        const b = z.object({ policyId: z.string().uuid(), patientId: z.string().uuid(), encounterId: z.string().uuid().optional(), serviceCode: z.string().optional(), status: z.enum(['eligible', 'ineligible', 'pending']).default('eligible'), expiresAt: z.string().optional(), response: z.record(z.any()).default({}) }).parse(req.body || {});
+        const organizationId = oid(req);
+        const r = await pool.query(`INSERT INTO insurance_eligibility_checks(organization_id,policy_id,patient_id,encounter_id,service_code,status,expires_at,response,created_by) SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9 WHERE EXISTS(SELECT 1 FROM insurance_policies WHERE id=$2 AND patient_id=$3 AND organization_id=$1) RETURNING *`, [organizationId, b.policyId, b.patientId, b.encounterId || null, b.serviceCode || null, b.status, b.expiresAt || null, JSON.stringify(b.response), ctx.dbUserId(req)]);
+        if (!r.rowCount)
+            return reply.code(409).send({ error: 'Policy, patient and organization relationship is invalid' });
+        return reply.code(201).send(r.rows[0]);
+    });
+    app.post('/api/domains/insurance/authorizations', async (req, reply) => {
+        write(req);
+        if (!requireDb(reply))
+            return;
+        const b = z.object({ policyId: z.string().uuid(), patientId: z.string().uuid(), encounterId: z.string().uuid().optional(), serviceCode: z.string().min(1), requestedAmount: z.number().nonnegative(), status: z.enum(['requested', 'approved', 'rejected']).default('requested'), approvedAmount: z.number().nonnegative().optional(), authorizationNumber: z.string().optional(), response: z.record(z.any()).default({}) }).parse(req.body || {});
+        const organizationId = oid(req);
+        const r = await pool.query(`INSERT INTO insurance_authorizations(organization_id,policy_id,patient_id,encounter_id,service_code,requested_amount,approved_amount,status,authorization_number,decided_at,response,created_by) SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,CASE WHEN $8 IN ('approved','rejected') THEN now() ELSE NULL END,$10,$11 WHERE EXISTS(SELECT 1 FROM insurance_policies WHERE id=$2 AND patient_id=$3 AND organization_id=$1) RETURNING *`, [organizationId, b.policyId, b.patientId, b.encounterId || null, b.serviceCode, b.requestedAmount, b.approvedAmount ?? null, b.status, b.authorizationNumber || null, JSON.stringify(b.response), ctx.dbUserId(req)]);
+        if (!r.rowCount)
+            return reply.code(409).send({ error: 'Policy, patient and organization relationship is invalid' });
+        return reply.code(201).send(r.rows[0]);
+    });
+    app.get('/api/domains/claims', async (req, reply) => {
+        if (!requireDb(reply))
+            return;
+        const organizationId = oid(req);
+        if (!organizationId)
+            return reply.code(400).send({ error: 'Organization context is required' });
+        const r = await pool.query(`SELECT c.*,p.patient_number AS "patientNumber",i.total AS "invoiceTotal",i.currency,ip.policy_number AS "policyNumber",pr.name AS "providerName",COALESCE((SELECT jsonb_agg(ci ORDER BY ci.created_at) FROM claim_items ci WHERE ci.claim_id=c.id),'[]'::jsonb) AS items,COALESCE((SELECT jsonb_agg(cr ORDER BY cr.received_at DESC) FROM claim_responses cr WHERE cr.claim_id=c.id),'[]'::jsonb) AS responses FROM claims c LEFT JOIN patients p ON p.id=c.patient_id LEFT JOIN invoices i ON i.id=c.invoice_id LEFT JOIN insurance_policies ip ON ip.id=c.policy_id LEFT JOIN insurance_providers pr ON pr.id=ip.provider_id WHERE (p.organization_id=$1 OR i.organization_id=$1) ORDER BY c.submitted_at DESC NULLS LAST,c.id DESC LIMIT 500`, [organizationId]);
+        return { data: r.rows, count: r.rowCount };
+    });
+    app.post('/api/domains/claims/:id/respond', async (req, reply) => {
+        write(req);
+        if (!requireDb(reply))
+            return;
+        const b = z.object({ status: z.enum(['approved', 'rejected', 'partially-approved']), approvedAmount: z.number().nonnegative().optional(), rejectedAmount: z.number().nonnegative().optional(), payerReference: z.string().optional(), reason: z.string().optional(), response: z.record(z.any()).default({}) }).parse(req.body || {});
+        const organizationId = oid(req);
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            const c = await client.query(`SELECT c.id,c.invoice_id AS "invoiceId",c.policy_id AS "policyId",c.patient_id AS "patientId",COALESCE(c.amount,i.total) AS amount FROM claims c LEFT JOIN invoices i ON i.id=c.invoice_id JOIN patients p ON p.id=c.patient_id WHERE c.id=$1 AND p.organization_id=$2 FOR UPDATE`, [req.params.id, organizationId]);
+            if (!c.rowCount) {
+                await client.query('ROLLBACK');
+                return reply.code(404).send({ error: 'Claim not found' });
+            }
+            const approved = b.status === 'approved' ? Number(b.approvedAmount ?? c.rows[0].amount) : b.status === 'partially-approved' ? Number(b.approvedAmount ?? 0) : 0;
+            const response = await client.query(`INSERT INTO claim_responses(claim_id,response_type,status,payer_reference,approved_amount,rejected_amount,reason,payload,created_by) VALUES($1,'payer-response',$2,$3,$4,$5,$6,$7,$8) RETURNING *`, [req.params.id, b.status, b.payerReference || null, approved, Number(b.rejectedAmount ?? Math.max(Number(c.rows[0].amount) - approved, 0)), b.reason || null, JSON.stringify(b.response), ctx.dbUserId(req)]);
+            await client.query(`UPDATE claims SET status=$1,responded_at=now(),payer_reference=COALESCE($2,payer_reference),rejection_reason=$3,coverage_amount=$4,patient_responsibility=GREATEST(COALESCE(amount,0)-$4,0) WHERE id=$5`, [b.status, b.payerReference || null, b.reason || null, approved, req.params.id]);
+            const existingRec = await client.query(`SELECT id FROM finance_reconciliations WHERE invoice_id=$1 AND claim_id=$2 AND payment_id IS NULL FOR UPDATE`, [c.rows[0].invoiceId, req.params.id]);
+            let reconciliationId = existingRec.rows[0]?.id || null;
+            if (existingRec.rowCount) {
+                await client.query(`UPDATE finance_reconciliations SET claimed_amount=$1,approved_amount=$2,patient_responsibility=$3,status=$4 WHERE id=$5`, [Number(c.rows[0].amount || 0), approved, Math.max(Number(c.rows[0].amount || 0) - approved, 0), b.status === 'approved' ? 'awaiting-settlement' : 'exception', reconciliationId]);
+            }
+            else {
+                const rec = await client.query(`INSERT INTO finance_reconciliations(organization_id,invoice_id,claim_id,invoice_amount,claimed_amount,approved_amount,patient_responsibility,status,created_by) SELECT $1,c.invoice_id,c.id,COALESCE(i.total,0),COALESCE(c.amount,i.total),$2,GREATEST(COALESCE(c.amount,i.total)-$2,0),CASE WHEN $3='approved' THEN 'awaiting-settlement' ELSE 'exception' END,$4 FROM claims c LEFT JOIN invoices i ON i.id=c.invoice_id WHERE c.id=$5 RETURNING id`, [organizationId, c.rows[0].invoiceId, approved, b.status, ctx.dbUserId(req), req.params.id]);
+                reconciliationId = rec.rows[0]?.id || null;
+            }
+            await ctx.dbAudit(client, req, 'CLAIM_RESPONSE', 'claim', req.params.id, { status: b.status, approvedAmount: approved });
+            await ctx.queueEvent(client, req, 'insurance.claim.responded', { claimId: req.params.id, patientId: c.rows[0].patientId, status: b.status, approvedAmount: approved, reconciliationId });
+            await client.query('COMMIT');
+            return { claimId: req.params.id, status: b.status, response: response.rows[0], reconciliationId };
+        }
+        catch (e) {
+            await client.query('ROLLBACK');
+            throw e;
+        }
+        finally {
+            client.release();
+        }
+    });
+    app.get('/api/domains/inventory/overview', async (req, reply) => {
+        if (!requireDb(reply))
+            return;
+        const organizationId = oid(req);
+        if (!organizationId)
+            return reply.code(400).send({ error: 'Organization context is required' });
+        const [items, movements, low, batches] = await Promise.all([
+            pool.query(`SELECT ii.*,COALESCE((SELECT sum(ib.quantity) FROM inventory_batches ib WHERE ib.item_id=ii.id),0)::numeric AS "onHand",COALESCE((SELECT min(ib.expiry_date) FROM inventory_batches ib WHERE ib.item_id=ii.id AND ib.quantity>0),NULL) AS "nearestExpiry" FROM inventory_items ii WHERE ii.organization_id=$1 ORDER BY ii.name`, [organizationId]),
+            pool.query(`SELECT sm.*,ii.name AS "itemName",ii.sku,ib.batch_number AS "batchNumber" FROM stock_movements sm JOIN inventory_items ii ON ii.id=sm.item_id LEFT JOIN inventory_batches ib ON ib.id=sm.batch_id WHERE ii.organization_id=$1 ORDER BY sm.created_at DESC LIMIT 200`, [organizationId]),
+            pool.query(`SELECT ii.id,ii.name,ii.sku,ii.reorder_level,COALESCE(sum(ib.quantity),0)::numeric AS "onHand" FROM inventory_items ii LEFT JOIN inventory_batches ib ON ib.item_id=ii.id WHERE ii.organization_id=$1 GROUP BY ii.id HAVING COALESCE(sum(ib.quantity),0)<=ii.reorder_level ORDER BY "onHand"`, [organizationId]),
+            pool.query(`SELECT ib.*,ii.name AS "itemName",ii.sku FROM inventory_batches ib JOIN inventory_items ii ON ii.id=ib.item_id WHERE ii.organization_id=$1 ORDER BY ib.expiry_date NULLS LAST,ib.quantity DESC LIMIT 300`, [organizationId])
+        ]);
+        return { items: items.rows, movements: movements.rows, lowStock: low.rows, batches: batches.rows };
+    });
+    app.post('/api/domains/inventory/receive', async (req, reply) => {
+        write(req);
+        if (!requireDb(reply))
+            return;
+        const b = z.object({ itemId: z.string().uuid(), batchNumber: z.string().min(1), quantity: z.number().positive(), expiryDate: z.string().optional(), location: z.string().optional(), referenceType: z.string().default('purchase_order'), referenceId: z.string().uuid().optional() }).parse(req.body || {});
+        const organizationId = oid(req);
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            const item = await client.query(`SELECT id,name,sku FROM inventory_items WHERE id=$1 AND organization_id=$2 FOR UPDATE`, [b.itemId, organizationId]);
+            if (!item.rowCount) {
+                await client.query('ROLLBACK');
+                return reply.code(404).send({ error: 'Inventory item not found' });
+            }
+            const batch = await client.query(`INSERT INTO inventory_batches(item_id,batch_number,expiry_date,quantity,location) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING RETURNING *`, [b.itemId, b.batchNumber, b.expiryDate || null, b.quantity, b.location || null]);
+            let batchRow = batch.rows[0];
+            if (!batchRow) {
+                const existing = await client.query(`SELECT * FROM inventory_batches WHERE item_id=$1 AND batch_number=$2 FOR UPDATE`, [b.itemId, b.batchNumber]);
+                if (!existing.rowCount) {
+                    await client.query('ROLLBACK');
+                    return reply.code(409).send({ error: 'Unable to create inventory batch' });
+                }
+                await client.query(`UPDATE inventory_batches SET quantity=quantity+$1 WHERE id=$2`, [b.quantity, existing.rows[0].id]);
+                batchRow = (await client.query(`SELECT * FROM inventory_batches WHERE id=$1`, [existing.rows[0].id])).rows[0];
+            }
+            const movement = await client.query(`INSERT INTO stock_movements(item_id,batch_id,movement_type,quantity,reference_type,reference_id,created_by) VALUES($1,$2,'receipt',$3,$4,$5,$6) RETURNING *`, [b.itemId, batchRow.id, b.quantity, b.referenceType, b.referenceId || null, ctx.dbUserId(req)]);
+            await ctx.dbAudit(client, req, 'RECEIVE', 'inventory_batch', batchRow.id, { itemId: b.itemId, quantity: b.quantity });
+            await ctx.queueEvent(client, req, 'inventory.stock.received', { itemId: b.itemId, batchId: batchRow.id, quantity: b.quantity, referenceId: b.referenceId || null });
+            await client.query('COMMIT');
+            return reply.code(201).send({ item: item.rows[0], batch: batchRow, movement: movement.rows[0] });
+        }
+        catch (e) {
+            await client.query('ROLLBACK');
+            throw e;
+        }
+        finally {
+            client.release();
+        }
+    });
+    app.get('/api/domains/procurement/overview', async (req, reply) => {
+        if (!requireDb(reply))
+            return;
+        const organizationId = oid(req);
+        if (!organizationId)
+            return reply.code(400).send({ error: 'Organization context is required' });
+        const [requests, orders, suppliers] = await Promise.all([
+            pool.query(`SELECT pr.*,s.name AS "supplierName" FROM procurement_requests pr LEFT JOIN suppliers s ON s.id=pr.supplier_id WHERE pr.organization_id=$1 ORDER BY pr.requested_at DESC LIMIT 200`, [organizationId]),
+            pool.query(`SELECT po.*,s.name AS "supplierName",pr.description AS "requestDescription",COALESCE((SELECT jsonb_agg(poi ORDER BY poi.created_at) FROM purchase_order_items poi WHERE poi.purchase_order_id=po.id),'[]'::jsonb) AS items FROM purchase_orders po LEFT JOIN suppliers s ON s.id=po.supplier_id LEFT JOIN procurement_requests pr ON pr.id=po.procurement_request_id WHERE po.organization_id=$1 ORDER BY po.created_at DESC LIMIT 200`, [organizationId]),
+            pool.query(`SELECT s.*,COALESCE((SELECT count(*) FROM purchase_orders po WHERE po.supplier_id=s.id),0)::int AS "orderCount",COALESCE((SELECT sum(poi.total) FROM purchase_order_items poi JOIN purchase_orders po ON po.id=poi.purchase_order_id WHERE po.supplier_id=s.id),0)::numeric AS "orderValue" FROM suppliers s WHERE s.organization_id=$1 ORDER BY s.name`, [organizationId])
+        ]);
+        return { requests: requests.rows, orders: orders.rows, suppliers: suppliers.rows };
+    });
+    app.post('/api/domains/procurement/:id/approve', async (req, reply) => {
+        write(req);
+        if (!requireDb(reply))
+            return;
+        const organizationId = oid(req);
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            const r = await client.query(`UPDATE procurement_requests SET status='approved',approved_at=COALESCE(approved_at,now()) WHERE id=$1 AND organization_id=$2 AND status IN ('requested','pending') RETURNING *`, [req.params.id, organizationId]);
+            if (!r.rowCount) {
+                await client.query('ROLLBACK');
+                return reply.code(404).send({ error: 'Procurement request not found or already approved' });
+            }
+            await ctx.dbAudit(client, req, 'APPROVE', 'procurement_request', req.params.id, {});
+            await ctx.queueEvent(client, req, 'procurement.request.approved', { procurementRequestId: req.params.id, supplierId: r.rows[0].supplier_id, quantity: r.rows[0].quantity });
+            await client.query('COMMIT');
+            return r.rows[0];
+        }
+        catch (e) {
+            await client.query('ROLLBACK');
+            throw e;
+        }
+        finally {
+            client.release();
+        }
+    });
+    app.post('/api/domains/procurement/:id/purchase-order', async (req, reply) => {
+        write(req);
+        if (!requireDb(reply))
+            return;
+        const b = z.object({ items: z.array(z.object({ inventoryItemId: z.string().uuid().optional(), description: z.string().min(1), quantity: z.number().positive(), unitPrice: z.number().nonnegative() })).min(1) }).parse(req.body || {});
+        const organizationId = oid(req);
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            const pr = await client.query(`SELECT * FROM procurement_requests WHERE id=$1 AND organization_id=$2 AND status='approved' FOR UPDATE`, [req.params.id, organizationId]);
+            if (!pr.rowCount) {
+                await client.query('ROLLBACK');
+                return reply.code(409).send({ error: 'Only an approved procurement request can become a purchase order' });
+            }
+            const po = await client.query(`INSERT INTO purchase_orders(organization_id,supplier_id,status,procurement_request_id,issued_at,notes) VALUES($1,$2,'issued',$3,now(),$4) RETURNING *`, [organizationId, pr.rows[0].supplier_id, req.params.id, JSON.stringify({ createdFrom: 'procurement-request' })]);
+            for (const item of b.items)
+                await client.query(`INSERT INTO purchase_order_items(purchase_order_id,inventory_item_id,description,quantity,unit_price,total) VALUES($1,$2,$3,$4,$5,$6)`, [po.rows[0].id, item.inventoryItemId || null, item.description, item.quantity, item.unitPrice, item.quantity * item.unitPrice]);
+            await ctx.dbAudit(client, req, 'CREATE', 'purchase_order', po.rows[0].id, { procurementRequestId: req.params.id });
+            await ctx.queueEvent(client, req, 'procurement.purchase_order.issued', { purchaseOrderId: po.rows[0].id, procurementRequestId: req.params.id, supplierId: pr.rows[0].supplier_id });
+            await client.query('COMMIT');
+            return reply.code(201).send(po.rows[0]);
+        }
+        catch (e) {
+            await client.query('ROLLBACK');
+            throw e;
+        }
+        finally {
+            client.release();
+        }
+    });
+    app.post('/api/domains/purchase-orders/:id/receive', async (req, reply) => {
+        write(req);
+        if (!requireDb(reply))
+            return;
+        const b = z.object({ receipts: z.array(z.object({ purchaseOrderItemId: z.string().uuid().optional(), itemId: z.string().uuid(), batchNumber: z.string().min(1), quantity: z.number().positive(), expiryDate: z.string().optional(), location: z.string().optional() })).min(1) }).parse(req.body || {});
+        const organizationId = oid(req);
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            const po = await client.query(`SELECT * FROM purchase_orders WHERE id=$1 AND organization_id=$2 FOR UPDATE`, [req.params.id, organizationId]);
+            if (!po.rowCount) {
+                await client.query('ROLLBACK');
+                return reply.code(404).send({ error: 'Purchase order not found' });
+            }
+            if (['cancelled', 'received'].includes(String(po.rows[0].status))) {
+                await client.query('ROLLBACK');
+                return reply.code(409).send({ error: `Purchase order is already ${po.rows[0].status}` });
+            }
+            for (const rec of b.receipts) {
+                const item = await client.query(`SELECT id FROM inventory_items WHERE id=$1 AND organization_id=$2`, [rec.itemId, organizationId]);
+                if (!item.rowCount)
+                    throw Object.assign(new Error('Inventory item does not belong to the organization'), { statusCode: 409 });
+                let line;
+                if (rec.purchaseOrderItemId) {
+                    const q = await client.query(`SELECT * FROM purchase_order_items WHERE id=$1 AND purchase_order_id=$2 FOR UPDATE`, [rec.purchaseOrderItemId, req.params.id]);
+                    if (!q.rowCount)
+                        throw Object.assign(new Error('Purchase order line not found'), { statusCode: 404 });
+                    line = q.rows[0];
+                }
+                else {
+                    const q = await client.query(`SELECT * FROM purchase_order_items WHERE purchase_order_id=$1 AND inventory_item_id=$2 AND received_quantity<quantity ORDER BY created_at LIMIT 1 FOR UPDATE`, [req.params.id, rec.itemId]);
+                    if (q.rowCount !== 1)
+                        throw Object.assign(new Error(q.rowCount ? 'Multiple open purchase order lines match this inventory item; provide purchaseOrderItemId' : 'No open purchase order line matches this inventory item'), { statusCode: 409 });
+                    line = q.rows[0];
+                }
+                const remainingLine = Number(line.quantity) - Number(line.received_quantity || 0);
+                if (rec.quantity > remainingLine + 0.0001)
+                    throw Object.assign(new Error(`Receipt exceeds remaining quantity on purchase order line (${remainingLine})`), { statusCode: 409 });
+                let batch = await client.query(`SELECT * FROM inventory_batches WHERE item_id=$1 AND batch_number=$2 FOR UPDATE`, [rec.itemId, rec.batchNumber]);
+                let batchRow;
+                if (batch.rowCount) {
+                    await client.query(`UPDATE inventory_batches SET quantity=quantity+$1,expiry_date=COALESCE($2,expiry_date),location=COALESCE($3,location) WHERE id=$4`, [rec.quantity, rec.expiryDate || null, rec.location || null, batch.rows[0].id]);
+                    batchRow = (await client.query(`SELECT * FROM inventory_batches WHERE id=$1`, [batch.rows[0].id])).rows[0];
+                }
+                else {
+                    batchRow = (await client.query(`INSERT INTO inventory_batches(item_id,batch_number,expiry_date,quantity,location) VALUES($1,$2,$3,$4,$5) RETURNING *`, [rec.itemId, rec.batchNumber, rec.expiryDate || null, rec.quantity, rec.location || null])).rows[0];
+                }
+                await client.query(`INSERT INTO stock_movements(item_id,batch_id,movement_type,quantity,reference_type,reference_id,created_by) VALUES($1,$2,'receipt',$3,'purchase_order',$4,$5)`, [rec.itemId, batchRow.id, rec.quantity, req.params.id, ctx.dbUserId(req)]);
+                const received = Number(line.received_quantity || 0) + rec.quantity;
+                await client.query(`UPDATE purchase_order_items SET received_quantity=$1,status=CASE WHEN $1>=quantity THEN 'received' ELSE 'partially-received' END WHERE id=$2`, [received, line.id]);
+            }
+            const pending = await client.query(`SELECT count(*)::int AS open_lines FROM purchase_order_items WHERE purchase_order_id=$1 AND received_quantity<quantity`, [req.params.id]);
+            const nextStatus = Number(pending.rows[0].open_lines) > 0 ? 'partially-received' : 'received';
+            await client.query(`UPDATE purchase_orders SET status=$1,received_at=CASE WHEN $1='received' THEN now() ELSE received_at END WHERE id=$2`, [nextStatus, req.params.id]);
+            if (nextStatus === 'received')
+                await client.query(`UPDATE procurement_requests SET status='received',received_at=now() WHERE id=(SELECT procurement_request_id FROM purchase_orders WHERE id=$1)`, [req.params.id]);
+            await ctx.dbAudit(client, req, 'RECEIVE', 'purchase_order', req.params.id, { receiptCount: b.receipts.length, status: nextStatus });
+            await ctx.queueEvent(client, req, 'procurement.purchase_order.received', { purchaseOrderId: req.params.id, receiptCount: b.receipts.length, status: nextStatus });
+            await client.query('COMMIT');
+            return { purchaseOrderId: req.params.id, status: nextStatus, receiptCount: b.receipts.length };
+        }
+        catch (e) {
+            await client.query('ROLLBACK');
+            throw e;
+        }
+        finally {
+            client.release();
+        }
+    });
+    // Full domain write surfaces. These write to the authoritative domain tables rather than
+    // the generic module_records projection, so dashboards and intelligence see new records immediately.
+    app.post('/api/domains/finance/invoices', async (req, reply) => {
+        write(req);
+        if (!requireDb(reply))
+            return;
+        const b = z.object({ patientId: z.string().uuid(), encounterId: z.string().uuid().optional(), description: z.string().min(1), total: z.number().nonnegative(), currency: z.enum(['UGX', 'USD', 'EUR', 'KES', 'TZS']).default('UGX') }).parse(req.body || {});
+        const organizationId = oid(req);
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            const p = await client.query(`SELECT id FROM patients WHERE id=$1 AND organization_id=$2`, [b.patientId, organizationId]);
+            if (!p.rowCount)
+                throw Object.assign(new Error('Patient does not belong to the workspace.'), { statusCode: 409 });
+            if (b.encounterId) {
+                const e = await client.query(`SELECT id,patient_id FROM encounters WHERE id=$1 AND organization_id=$2`, [b.encounterId, organizationId]);
+                if (!e.rowCount)
+                    throw Object.assign(new Error('Encounter does not belong to the workspace.'), { statusCode: 409 });
+                if (e.rows[0].patient_id !== b.patientId)
+                    throw Object.assign(new Error('Patient and encounter must belong to the same care record.'), { statusCode: 409 });
+            }
+            const inv = await client.query(`INSERT INTO invoices(organization_id,patient_id,encounter_id,status,currency,total,description) VALUES($1,$2,$3,'open',$4,$5,$6) RETURNING id,patient_id AS "patientId",encounter_id AS "encounterId",status,currency,total,description,created_at AS "createdAt"`, [organizationId, b.patientId, b.encounterId || null, b.currency, b.total, b.description]);
+            await client.query(`INSERT INTO invoice_items(invoice_id,description,quantity,unit_price,total) VALUES($1,$2,1,$3,$3)`, [inv.rows[0].id, b.description, b.total]);
+            await ctx.dbAudit(client, req, 'CREATE', 'invoice', inv.rows[0].id, { patientId: b.patientId, total: b.total });
+            await ctx.queueEvent(client, req, 'finance.invoice.created', { invoiceId: inv.rows[0].id, patientId: b.patientId, total: b.total, currency: b.currency });
+            await client.query('COMMIT');
+            return reply.code(201).send(inv.rows[0]);
+        }
+        catch (e) {
+            await client.query('ROLLBACK');
+            throw e;
+        }
+        finally {
+            client.release();
+        }
+    });
+    app.post('/api/domains/finance/accounting', async (req, reply) => {
+        write(req);
+        if (!requireDb(reply))
+            return;
+        const b = z.object({ entryDate: z.string().optional(), accountCode: z.string().optional(), description: z.string().min(1), entryType: z.enum(['income', 'expense', 'adjustment']), amount: z.number().nonnegative(), currency: z.enum(['UGX', 'USD', 'EUR', 'KES', 'TZS']).default('UGX'), referenceType: z.string().optional(), referenceId: z.string().uuid().optional() }).parse(req.body || {});
+        const organizationId = oid(req);
+        const r = await pool.query(`INSERT INTO accounting_entries(organization_id,entry_date,account_code,description,entry_type,amount,currency,reference_type,reference_id,status,created_by) VALUES($1,COALESCE($2::date,CURRENT_DATE),$3,$4,$5,$6,$7,$8,$9,'posted',$10) RETURNING *`, [organizationId, b.entryDate || null, b.accountCode || null, b.description, b.entryType, b.amount, b.currency, b.referenceType || null, b.referenceId || null, ctx.dbUserId(req)]);
+        return reply.code(201).send(r.rows[0]);
+    });
+    app.post('/api/domains/insurance/policies', async (req, reply) => {
+        write(req);
+        if (!requireDb(reply))
+            return;
+        const b = z.object({ patientId: z.string().uuid(), providerId: z.string().uuid().optional(), providerName: z.string().trim().min(1).optional(), policyNumber: z.string().min(1), memberNumber: z.string().optional(), status: z.enum(['active', 'inactive', 'expired', 'suspended']).default('active'), effectiveFrom: z.string().optional(), effectiveTo: z.string().optional(), copayPercent: z.number().min(0).max(100).default(0), annualLimit: z.number().nonnegative().optional(), coverage: z.record(z.any()).optional() }).parse(req.body || {});
+        const organizationId = oid(req);
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            const p = await client.query(`SELECT id FROM patients WHERE id=$1 AND organization_id=$2`, [b.patientId, organizationId]);
+            if (!p.rowCount)
+                throw Object.assign(new Error('Patient does not belong to the workspace.'), { statusCode: 409 });
+            let providerId = b.providerId || null;
+            if (providerId) {
+                const q = await client.query(`SELECT id FROM insurance_providers WHERE id=$1 AND organization_id=$2`, [providerId, organizationId]);
+                if (!q.rowCount)
+                    throw Object.assign(new Error('Insurance provider does not belong to the workspace.'), { statusCode: 409 });
+            }
+            else if (b.providerName) {
+                const q = await client.query(`SELECT id FROM insurance_providers WHERE organization_id=$1 AND lower(name)=lower($2) LIMIT 1`, [organizationId, b.providerName]);
+                providerId = q.rows[0]?.id || null;
+                if (!providerId) {
+                    providerId = (await client.query(`INSERT INTO insurance_providers(organization_id,name) VALUES($1,$2) RETURNING id`, [organizationId, b.providerName])).rows[0].id;
+                }
+            }
+            else
+                throw Object.assign(new Error('Provide an insurance provider ID or provider name.'), { statusCode: 400 });
+            const r = await client.query(`INSERT INTO insurance_policies(patient_id,provider_id,policy_number,status,coverage,member_number,effective_from,effective_to,copay_percent,annual_limit) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`, [b.patientId, providerId, b.policyNumber, b.status, b.coverage ? JSON.stringify(b.coverage) : null, b.memberNumber || null, b.effectiveFrom || null, b.effectiveTo || null, b.copayPercent, b.annualLimit ?? null]);
+            await ctx.dbAudit(client, req, 'CREATE', 'insurance_policy', r.rows[0].id, { patientId: b.patientId, policyNumber: b.policyNumber });
+            await client.query('COMMIT');
+            return reply.code(201).send(r.rows[0]);
+        }
+        catch (e) {
+            await client.query('ROLLBACK');
+            throw e;
+        }
+        finally {
+            client.release();
+        }
+    });
+    app.post('/api/domains/claims', async (req, reply) => {
+        write(req);
+        if (!requireDb(reply))
+            return;
+        const b = z.object({ patientId: z.string().uuid(), policyId: z.string().uuid().optional(), invoiceId: z.string().uuid().optional(), claimNumber: z.string().min(1), amount: z.number().nonnegative(), currency: z.enum(['UGX', 'USD', 'EUR', 'KES', 'TZS']).default('UGX'), status: z.enum(['draft', 'submitted', 'approved', 'rejected', 'partially-approved']).default('draft'), coverageAmount: z.number().nonnegative().optional(), patientResponsibility: z.number().nonnegative().default(0), externalReference: z.string().optional() }).parse(req.body || {});
+        const organizationId = oid(req);
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            const p = await client.query(`SELECT id FROM patients WHERE id=$1 AND organization_id=$2`, [b.patientId, organizationId]);
+            if (!p.rowCount)
+                throw Object.assign(new Error('Patient does not belong to the workspace.'), { statusCode: 409 });
+            if (b.policyId) {
+                const q = await client.query(`SELECT id,patient_id FROM insurance_policies WHERE id=$1`, [b.policyId]);
+                if (!q.rowCount || q.rows[0].patient_id !== b.patientId)
+                    throw Object.assign(new Error('Insurance policy does not match the selected patient.'), { statusCode: 409 });
+            }
+            if (b.invoiceId) {
+                const q = await client.query(`SELECT id,patient_id,total,currency FROM invoices WHERE id=$1 AND organization_id=$2`, [b.invoiceId, organizationId]);
+                if (!q.rowCount || q.rows[0].patient_id !== b.patientId)
+                    throw Object.assign(new Error('Invoice does not match the selected patient.'), { statusCode: 409 });
+            }
+            const r = await client.query(`INSERT INTO claims(policy_id,invoice_id,status,external_reference,patient_id,amount,currency,submitted_at,claim_number,coverage_amount,patient_responsibility) VALUES($1,$2,$3,$4,$5,$6,$7,CASE WHEN $3='submitted' THEN now() ELSE NULL END,$8,$9,$10) RETURNING *`, [b.policyId || null, b.invoiceId || null, b.status, b.externalReference || null, b.patientId, b.amount, b.currency, b.claimNumber, b.coverageAmount ?? null, b.patientResponsibility]);
+            await ctx.dbAudit(client, req, 'CREATE', 'claim', r.rows[0].id, { patientId: b.patientId, claimNumber: b.claimNumber });
+            await ctx.queueEvent(client, req, 'finance.claim.created', { claimId: r.rows[0].id, patientId: b.patientId, status: b.status, amount: b.amount });
+            await client.query('COMMIT');
+            return reply.code(201).send(r.rows[0]);
+        }
+        catch (e) {
+            await client.query('ROLLBACK');
+            throw e;
+        }
+        finally {
+            client.release();
+        }
+    });
+    app.post('/api/domains/inventory/items', async (req, reply) => {
+        write(req);
+        if (!requireDb(reply))
+            return;
+        const b = z.object({ name: z.string().min(1), sku: z.string().optional(), unit: z.string().min(1), category: z.string().optional(), reorderLevel: z.number().nonnegative().default(0), reorderQuantity: z.number().nonnegative().default(0), unitCost: z.number().nonnegative().default(0), initialQuantity: z.number().nonnegative().default(0), batchNumber: z.string().optional(), expiryDate: z.string().optional(), location: z.string().optional() }).parse(req.body || {});
+        const organizationId = oid(req);
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            const item = (await client.query(`INSERT INTO inventory_items(organization_id,sku,name,unit,reorder_level,reorder_quantity,unit_cost,category,active) VALUES($1,$2,$3,$4,$5,$6,$7,$8,true) RETURNING *`, [organizationId, b.sku || null, b.name, b.unit, b.reorderLevel, b.reorderQuantity, b.unitCost, b.category || null])).rows[0];
+            if (b.initialQuantity > 0) {
+                const batchNumber = b.batchNumber || `OPEN-${String(item.id).slice(0, 8)}`;
+                const batch = (await client.query(`INSERT INTO inventory_batches(item_id,batch_number,expiry_date,quantity,location) VALUES($1,$2,$3,$4,$5) RETURNING *`, [item.id, batchNumber, b.expiryDate || null, b.initialQuantity, b.location || null])).rows[0];
+                await client.query(`INSERT INTO stock_movements(item_id,batch_id,movement_type,quantity,reference_type,reference_id,created_by) VALUES($1,$2,'opening-balance',$3,'inventory_item',$1,$4)`, [item.id, batch.id, b.initialQuantity, ctx.dbUserId(req)]);
+            }
+            await ctx.dbAudit(client, req, 'CREATE', 'inventory_item', item.id, { name: b.name, initialQuantity: b.initialQuantity });
+            await client.query('COMMIT');
+            return reply.code(201).send(item);
+        }
+        catch (e) {
+            await client.query('ROLLBACK');
+            throw e;
+        }
+        finally {
+            client.release();
+        }
+    });
+    app.post('/api/domains/procurement/requests', async (req, reply) => {
+        write(req);
+        if (!requireDb(reply))
+            return;
+        const b = z.object({ supplierId: z.string().uuid().optional(), description: z.string().min(1), quantity: z.number().positive(), notes: z.record(z.any()).optional() }).parse(req.body || {});
+        const organizationId = oid(req);
+        if (b.supplierId) {
+            const q = await pool.query(`SELECT id FROM suppliers WHERE id=$1 AND organization_id=$2`, [b.supplierId, organizationId]);
+            if (!q.rowCount)
+                return reply.code(409).send({ error: 'Supplier does not belong to the workspace.' });
+        }
+        const r = await pool.query(`INSERT INTO procurement_requests(organization_id,supplier_id,requested_by,description,quantity,status,notes) VALUES($1,$2,$3,$4,$5,'requested',$6) RETURNING *`, [organizationId, b.supplierId || null, ctx.dbUserId(req), b.description, b.quantity, JSON.stringify(b.notes || {})]);
+        return reply.code(201).send(r.rows[0]);
+    });
+    app.post('/api/domains/procurement/suppliers', async (req, reply) => {
+        write(req);
+        if (!requireDb(reply))
+            return;
+        const b = z.object({ name: z.string().min(1), phone: z.string().optional(), email: z.string().email().optional(), category: z.string().optional(), paymentTerms: z.string().optional(), status: z.enum(['active', 'inactive', 'suspended']).default('active') }).parse(req.body || {});
+        const organizationId = oid(req);
+        const r = await pool.query(`INSERT INTO suppliers(organization_id,name,contact,status,category,payment_terms) VALUES($1,$2,$3,$4,$5,$6) RETURNING *`, [organizationId, b.name, JSON.stringify({ phone: b.phone || null, email: b.email || null }), b.status, b.category || null, b.paymentTerms || null]);
+        return reply.code(201).send(r.rows[0]);
+    });
+    app.get('/api/domains/suppliers/:id/performance', async (req, reply) => {
+        if (!requireDb(reply))
+            return;
+        const organizationId = oid(req);
+        if (!organizationId)
+            return reply.code(400).send({ error: 'Organization context is required' });
+        const supplier = await pool.query(`SELECT * FROM suppliers WHERE id=$1 AND organization_id=$2`, [req.params.id, organizationId]);
+        if (!supplier.rowCount)
+            return reply.code(404).send({ error: 'Supplier not found' });
+        const stats = await pool.query(`SELECT count(*)::int AS orders,count(*) FILTER(WHERE po.status='issued')::int AS issued,count(*) FILTER(WHERE po.status='received')::int AS received,COALESCE(sum(poi.total),0)::numeric AS order_value FROM purchase_orders po LEFT JOIN purchase_order_items poi ON poi.purchase_order_id=po.id WHERE po.organization_id=$1 AND po.supplier_id=$2`, [organizationId, req.params.id]);
+        const history = await pool.query(`SELECT po.id,po.status,po.created_at AS "createdAt",po.issued_at AS "issuedAt",po.received_at AS "receivedAt",COALESCE(sum(poi.total),0)::numeric AS total FROM purchase_orders po LEFT JOIN purchase_order_items poi ON poi.purchase_order_id=po.id WHERE po.organization_id=$1 AND po.supplier_id=$2 GROUP BY po.id ORDER BY po.created_at DESC LIMIT 100`, [organizationId, req.params.id]);
+        return { supplier: supplier.rows[0], summary: stats.rows[0], history: history.rows };
+    });
+}

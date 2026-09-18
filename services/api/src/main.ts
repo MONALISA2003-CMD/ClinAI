@@ -15,6 +15,7 @@ import { evaluateClinicalContext, SYNCHRONOUS_CDSS_RULES } from './intelligence/
 import { buildPatientIntelligenceLayer, buildClinicalVelocity, buildValueBasedCare, buildGovernanceSummary, buildAIGovernanceLifecycle, calculateClinicalMeasures, recordAICapabilityEvaluation, AI_CAPABILITY_CATALOG, buildPatient360Context, buildAISecurityIntelligence, buildAIRiskIntelligence, buildClinicalVelocityIntelligence, buildValueBasedCareIntelligence, recordSecurityEvent } from './intelligence/enterpriseIntelligence.js';
 import moduleContractCatalog from '../../../packages/module-contracts/contracts.json' with { type: 'json' };
 import { registerWorkstream2DomainRoutes } from './routes/workstream2Domains.js';
+import { registerPhase2CoreClinicalRoutes } from './routes/phase2CoreClinical.js';
 import { DOMAIN_MODULE_SPECS } from './domainModuleSpecs.js';
 
 const MODULE_CONTRACTS = moduleContractCatalog.modules as any[];
@@ -800,15 +801,15 @@ app.post('/api/triage',async(req:any,reply)=>{
   const t=triage.parse(req.body);
   if(!pool){const x=add('triage',{...t,status:'completed',completedAt:now()},req);add('queue',{patientId:t.patientId,encounterId:t.encounterId,status:t.acuity==='emergency'?'emergency':'waiting-doctor',priority:t.acuity},req);return reply.code(201).send(x);}
   const client=await pool.connect(); try{await client.query('BEGIN');
-    const p=await client.query('SELECT id FROM patients WHERE id=$1 AND organization_id=$2',[t.patientId,dbOrganizationId(req)]); if(!p.rowCount){await client.query('ROLLBACK');return reply.code(404).send({error:'Patient not found'});}
-    const record={...t,status:'completed',completedAt:now()};
-    const tr=await client.query(`INSERT INTO module_records(organization_id,module,status,payload,created_by) VALUES($1,'triage','completed',$2,$3) RETURNING id,created_at AS "createdAt"`,[dbOrganizationId(req),JSON.stringify(record),dbUserId(req)]);
+    const oid=dbOrganizationId(req);
+    const p=await client.query('SELECT id FROM patients WHERE id=$1 AND organization_id=$2',[t.patientId,oid]); if(!p.rowCount){await client.query('ROLLBACK');return reply.code(404).send({error:'Patient not found'});}
+    if(t.encounterId){const e=await client.query('SELECT id FROM encounters WHERE id=$1 AND patient_id=$2 AND organization_id=$3',[t.encounterId,t.patientId,oid]);if(!e.rowCount){await client.query('ROLLBACK');return reply.code(409).send({error:'Encounter does not belong to the selected patient'});}}
+    const r=await client.query(`INSERT INTO triage_assessments(organization_id,patient_id,encounter_id,arrived_at,arrival_mode,chief_complaint,triage_nurse_id,acuity,triage_category,temperature,heart_rate,respiratory_rate,systolic,diastolic,spo2,pain,mental_status,mobility_status,infection_precautions,risk_flags,notes,disposition,status,completed_at,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,'completed',now(),$23) RETURNING *`,[oid,t.patientId,t.encounterId||null,t.arrivedAt||now(),t.arrivalMode,t.chiefComplaint,dbUserId(req),t.acuity,t.triageCategory||null,t.temperature??null,t.heartRate??null,t.respiratoryRate??null,t.systolic??null,t.diastolic??null,t.spo2??null,t.pain??null,t.mentalStatus||null,t.mobilityStatus||null,JSON.stringify(t.infectionPrecautions||{}),JSON.stringify(t.riskFlags||[]),t.notes||null,t.disposition||null,dbUserId(req)]);
     const vitals:[string,number|undefined,string][]=[['temperature',t.temperature,'Cel'],['heart-rate',t.heartRate,'/min'],['respiratory-rate',t.respiratoryRate,'/min'],['systolic-blood-pressure',t.systolic,'mmHg'],['diastolic-blood-pressure',t.diastolic,'mmHg'],['oxygen-saturation',t.spo2,'%'],['pain-score',t.pain,'/10']];
     for(const [code,value,unit] of vitals) if(value!==undefined) await client.query(`INSERT INTO observations(patient_id,encounter_id,code_system,code,display,value_numeric,unit,performer_user_id) VALUES($1,$2,'LOINC',$3,$4,$5,$6,$7)`,[t.patientId,t.encounterId||null,code,code,value,unit,dbUserId(req)]);
-    let q=await client.query("SELECT id FROM queues WHERE organization_id=$1 AND code='GENERAL' LIMIT 1",[dbOrganizationId(req)]); if(!q.rowCount) q=await client.query("INSERT INTO queues(organization_id,code,name) VALUES($1,'GENERAL','General Queue') RETURNING id",[dbOrganizationId(req)]);
-    const status=t.acuity==='emergency'?'emergency':'waiting-doctor';
-    const qe=await client.query('INSERT INTO queue_entries(queue_id,patient_id,priority,status) VALUES($1,$2,$3,$4) RETURNING id',[q.rows[0].id,t.patientId,t.acuity,status]);
-    await dbAudit(client,req,'CREATE','triage',tr.rows[0].id,{patientId:t.patientId,acuity:t.acuity}); await enqueueClinicalEvent(client,{organizationId:dbOrganizationId(req),eventType:CLINICAL_EVENT_TYPES.VITAL_RECORDED,aggregateType:'triage',aggregateId:tr.rows[0].id,patientId:t.patientId,encounterId:t.encounterId||null,payload:{triageId:tr.rows[0].id,patientId:t.patientId,encounterId:t.encounterId||null,acuity:t.acuity}}); await client.query('COMMIT'); return reply.code(201).send({id:tr.rows[0].id,...record,queueEntryId:qe.rows[0].id});
+    let q=await client.query("SELECT id FROM queues WHERE organization_id=$1 AND code='GENERAL' LIMIT 1",[oid]); if(!q.rowCount) q=await client.query("INSERT INTO queues(organization_id,code,name) VALUES($1,'GENERAL','General Queue') RETURNING id",[oid]);
+    const status=t.acuity==='emergency'?'emergency':'waiting-doctor'; const qe=await client.query('INSERT INTO queue_entries(queue_id,patient_id,encounter_id,priority,status) VALUES($1,$2,$3,$4,$5) RETURNING id',[q.rows[0].id,t.patientId,t.encounterId||null,t.acuity,status]);
+    await dbAudit(client,req,'CREATE','triage_assessment',r.rows[0].id,{patientId:t.patientId,acuity:t.acuity,queueEntryId:qe.rows[0].id,compatibilityRoute:true}); await queueEvent(client,req,'triage.assessment.recorded',{triageId:r.rows[0].id,patientId:t.patientId,encounterId:t.encounterId||null,acuity:t.acuity,status:'completed',queueEntryId:qe.rows[0].id}); await client.query('COMMIT'); return reply.code(201).send({id:r.rows[0].id,...r.rows[0],queueEntryId:qe.rows[0].id});
   }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
 });
 app.get('/api/orders',async(req:any)=>{if(!pool)return {data:store.orders||[],count:(store.orders||[]).length};const params:any[]=[dbOrganizationId(req)];let where='p.organization_id=$1';if(req.query?.patientId){params.push(String(req.query.patientId));where+=' AND o.patient_id=$2';}const r=await pool.query(`SELECT o.id,o.patient_id AS "patientId",o.encounter_id AS "encounterId",o.order_type AS category,o.priority,o.status,o.details,o.created_at AS "createdAt" FROM clinical_orders o JOIN patients p ON p.id=o.patient_id WHERE ${where} ORDER BY o.created_at DESC LIMIT 500`,params);return {data:r.rows,count:r.rowCount};});
@@ -834,7 +835,7 @@ app.post('/api/orders',async(req:any,reply)=>{
 
 app.get('/api/laboratory',async(req:any)=>{
  if(!pool)return {data:store.laboratory||[],count:(store.laboratory||[]).length};
- const r=await pool.query(`SELECT ls.id,co.patient_id AS "patientId",co.encounter_id AS "encounterId",co.code,co.details->>'description' AS description,co.priority,ls.barcode,ls.specimen_type AS "specimenType",ls.status,ls.collected_at AS "collectedAt",ls.received_at AS "receivedAt",ls.processed_at AS "processedAt",lr.id AS "resultId",lr.value_numeric AS "valueNumeric",lr.value_text AS "valueText",lr.unit,lr.abnormal_flag AS "abnormalFlag",lr.critical,lr.status AS "resultStatus" FROM lab_samples ls JOIN clinical_orders co ON co.id=ls.order_id JOIN patients p ON p.id=co.patient_id LEFT JOIN lab_results lr ON lr.sample_id=ls.id WHERE p.organization_id=$1 ORDER BY ls.id DESC LIMIT 500`,[dbOrganizationId(req)]); return {data:r.rows,count:r.rowCount};
+ const r=await pool.query(`SELECT ls.id,co.patient_id AS "patientId",co.encounter_id AS "encounterId",co.details->>'code' AS code,co.details->>'description' AS description,co.priority,ls.barcode,ls.specimen_type AS "specimenType",ls.status,ls.collected_at AS "collectedAt",ls.received_at AS "receivedAt",ls.processed_at AS "processedAt",lr.id AS "resultId",lr.value_numeric AS "valueNumeric",lr.value_text AS "valueText",lr.unit,lr.abnormal_flag AS "abnormalFlag",lr.critical,lr.status AS "resultStatus" FROM lab_samples ls JOIN clinical_orders co ON co.id=ls.order_id JOIN patients p ON p.id=co.patient_id LEFT JOIN lab_results lr ON lr.sample_id=ls.id WHERE p.organization_id=$1 ORDER BY ls.id DESC LIMIT 500`,[dbOrganizationId(req)]); return {data:r.rows,count:r.rowCount};
 });
 app.get('/api/imaging',async(req:any)=>{
  if(!pool)return {data:store.imaging||[],count:(store.imaging||[]).length};
@@ -1942,6 +1943,25 @@ async function ensureV15Schema(){
     );
     CREATE INDEX IF NOT EXISTS ai_work_runs_org_created_idx ON ai_work_runs(organization_id,created_at DESC);
     CREATE INDEX IF NOT EXISTS ai_work_runs_patient_idx ON ai_work_runs(organization_id,patient_id,created_at DESC);
+    CREATE TABLE IF NOT EXISTS ai_providers (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid REFERENCES organizations(id) ON DELETE CASCADE,
+      provider_key text NOT NULL, display_name text NOT NULL, enabled boolean NOT NULL DEFAULT true,
+      governance_class text NOT NULL DEFAULT 'public-free', created_at timestamptz NOT NULL DEFAULT now(),
+      UNIQUE(organization_id,provider_key)
+    );
+    CREATE TABLE IF NOT EXISTS ai_models (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), provider_id uuid REFERENCES ai_providers(id) ON DELETE CASCADE,
+      model_key text NOT NULL, display_name text NOT NULL, capability_profile jsonb NOT NULL DEFAULT '{}',
+      enabled boolean NOT NULL DEFAULT true, priority integer NOT NULL DEFAULT 100, created_at timestamptz NOT NULL DEFAULT now(),
+      UNIQUE(provider_id,model_key)
+    );
+    CREATE TABLE IF NOT EXISTS ai_provider_usage (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid REFERENCES organizations(id) ON DELETE CASCADE,
+      provider_key text NOT NULL, model_key text NOT NULL, status text NOT NULL, http_status integer, latency_ms integer,
+      input_tokens integer, output_tokens integer, error_code text, created_at timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS ai_provider_usage_created_idx ON ai_provider_usage(organization_id,created_at DESC);
+    CREATE INDEX IF NOT EXISTS ai_provider_usage_provider_idx ON ai_provider_usage(provider_key,model_key,created_at DESC);
   `);
 }
 
@@ -2405,6 +2425,7 @@ app.get('/api/smart/authorize', async (req:any, reply:any) => { const q=req.quer
 app.post('/api/smart/token', async (req:any, reply:any) => { if(!pool)return reply.code(503).send({error:'SMART token service requires PostgreSQL.'}); const b=z.object({grant_type:z.enum(['authorization_code','refresh_token']),code:z.string().optional(),client_id:z.string().min(2),redirect_uri:z.string().optional(),refresh_token:z.string().optional(),code_verifier:z.string().optional()}).parse(req.body||{}); if(b.grant_type!=='authorization_code'||!b.code)return reply.code(400).send({error:'Authorization code is required.'}); if(!b.code_verifier)return reply.code(400).send({error:'PKCE code_verifier is required.'}); const hash=createHash('sha256').update(b.code).digest('hex'); const r=await pool.query(`UPDATE smart_authorization_codes SET used_at=now() WHERE code_hash=$1 AND client_id=$2 AND redirect_uri=COALESCE($3,redirect_uri) AND used_at IS NULL AND expires_at>now() RETURNING organization_id,user_id,user_role,scope,patient_id,code_challenge`,[hash,b.client_id,b.redirect_uri||null]); if(!r.rowCount)return reply.code(400).send({error:'Authorization code is invalid, expired or already used.'}); const expected=createHash('sha256').update(b.code_verifier).digest('base64url'); if(expected!==r.rows[0].code_challenge)return reply.code(400).send({error:'PKCE verification failed.'}); const accessToken=await app.jwt.sign({sub:r.rows[0].user_id||`smart:${b.client_id}`,organizationId:r.rows[0].organization_id,role:r.rows[0].user_role||'doctor',scope:r.rows[0].scope||'',smartClientId:b.client_id}, {expiresIn:'15m'}); return {access_token:accessToken,token_type:'Bearer',expires_in:900,scope:r.rows[0].scope||'',patient:r.rows[0].patient_id||undefined}; });
 
 registerWorkstream2DomainRoutes(app,pool,{dbOrganizationId,dbUserId,requireAuthorizedWrite,dbAudit,queueEvent,clinicalEventTypes:CLINICAL_EVENT_TYPES});
+registerPhase2CoreClinicalRoutes(app,pool,{dbOrganizationId,dbUserId,requireAuthorizedWrite,dbAudit,queueEvent});
 
 app.listen({port:Number(process.env.PORT||4000),host:'0.0.0.0'});
 

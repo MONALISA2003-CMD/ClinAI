@@ -1,6 +1,6 @@
 {
-  "version": "2.0.0",
-  "generatedFrom": "ClinAI production integrity Phase 2",
+  "version": "2.1.0",
+  "generatedFrom": "ClinAI Phase 2 core clinical depth",
   "modules": [
     {
       "id": "command-center",
@@ -558,15 +558,15 @@
       "identity": {
         "name": "Triage",
         "category": "CARE",
-        "contractVersion": "2.0.0"
+        "contractVersion": "2.1.0"
       },
       "frontendRoute": "/triage",
       "backend": {
-        "endpoint": "/api/contracts/modules/triage",
-        "createEndpoint": "/api/contracts/modules/triage",
+        "endpoint": "/api/core-clinical/triage",
+        "createEndpoint": "/api/core-clinical/triage",
         "contractRoute": "/api/contracts/modules/triage"
       },
-      "databaseSource": "module_records:triage",
+      "databaseSource": "triage_assessments",
       "fields": [
         {
           "key": "patientId",
@@ -620,7 +620,7 @@
         },
         {
           "key": "spo2",
-          "label": "SpO\u2082",
+          "label": "SpO₂",
           "type": "number",
           "required": true
         },
@@ -640,6 +640,72 @@
           ],
           "type": "text",
           "required": true
+        },
+        {
+          "key": "arrivedAt",
+          "label": "Arrival time",
+          "type": "datetime",
+          "section": "Arrival"
+        },
+        {
+          "key": "arrivalMode",
+          "label": "Arrival mode",
+          "type": "text",
+          "section": "Arrival"
+        },
+        {
+          "key": "triageNurseId",
+          "label": "Triage nurse",
+          "type": "uuid",
+          "section": "Team"
+        },
+        {
+          "key": "triageCategory",
+          "label": "Triage category",
+          "type": "text",
+          "section": "Assessment"
+        },
+        {
+          "key": "mentalStatus",
+          "label": "Mental status",
+          "type": "text",
+          "section": "Assessment"
+        },
+        {
+          "key": "mobilityStatus",
+          "label": "Mobility status",
+          "type": "text",
+          "section": "Assessment"
+        },
+        {
+          "key": "infectionPrecautions",
+          "label": "Infection precautions",
+          "type": "json",
+          "section": "Safety"
+        },
+        {
+          "key": "riskFlags",
+          "label": "Risk flags",
+          "type": "json",
+          "section": "Safety"
+        },
+        {
+          "key": "notes",
+          "label": "Triage notes",
+          "type": "text",
+          "section": "Documentation"
+        },
+        {
+          "key": "disposition",
+          "label": "Disposition",
+          "type": "text",
+          "section": "Workflow"
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "text",
+          "section": "Workflow"
         }
       ],
       "requiredFields": [
@@ -684,6 +750,7 @@
       "actions": [
         "create",
         "update",
+        "route",
         "view"
       ],
       "validation": {
@@ -860,12 +927,12 @@
       "identity": {
         "name": "Clinical Notes",
         "category": "CARE",
-        "contractVersion": "2.0.0"
+        "contractVersion": "2.1.0"
       },
       "frontendRoute": "/clinical-notes",
       "backend": {
-        "endpoint": "/api/domains/modules/clinical-notes",
-        "createEndpoint": "/api/domains/modules/clinical-notes",
+        "endpoint": "/api/core-clinical/clinical-notes",
+        "createEndpoint": "/api/core-clinical/clinical-notes",
         "contractRoute": "/api/contracts/modules/clinical-notes"
       },
       "databaseSource": "clinical_notes",
@@ -908,6 +975,72 @@
           "label": "Plan",
           "type": "text",
           "section": "Clinical note"
+        },
+        {
+          "key": "chiefComplaint",
+          "label": "Chief complaint",
+          "type": "text",
+          "section": "Clinical note"
+        },
+        {
+          "key": "history",
+          "label": "History",
+          "type": "text",
+          "section": "Clinical note"
+        },
+        {
+          "key": "examination",
+          "label": "Examination",
+          "type": "text",
+          "section": "Clinical note"
+        },
+        {
+          "key": "diagnosisReferences",
+          "label": "Diagnosis references",
+          "type": "json",
+          "section": "Clinical context"
+        },
+        {
+          "key": "orderReferences",
+          "label": "Order references",
+          "type": "json",
+          "section": "Clinical context"
+        },
+        {
+          "key": "medicationSummary",
+          "label": "Medication summary",
+          "type": "json",
+          "section": "Clinical context"
+        },
+        {
+          "key": "allergySummary",
+          "label": "Allergy summary",
+          "type": "json",
+          "section": "Clinical context"
+        },
+        {
+          "key": "observationSummary",
+          "label": "Observation summary",
+          "type": "json",
+          "section": "Clinical context"
+        },
+        {
+          "key": "followUp",
+          "label": "Follow-up",
+          "type": "json",
+          "section": "Plan"
+        },
+        {
+          "key": "documentationStatus",
+          "label": "Documentation status",
+          "type": "text",
+          "section": "Workflow",
+          "options": [
+            "draft",
+            "signed",
+            "amended",
+            "voided"
+          ]
         }
       ],
       "requiredFields": [
@@ -939,6 +1072,9 @@
       "actions": [
         "create",
         "update",
+        "sign",
+        "amend",
+        "void",
         "view"
       ],
       "validation": {
@@ -969,12 +1105,12 @@
       "identity": {
         "name": "Diagnoses",
         "category": "CARE",
-        "contractVersion": "2.0.0"
+        "contractVersion": "2.1.0"
       },
       "frontendRoute": "/diagnoses",
       "backend": {
-        "endpoint": "/api/domains/modules/diagnoses",
-        "createEndpoint": "/api/domains/modules/diagnoses",
+        "endpoint": "/api/core-clinical/diagnoses",
+        "createEndpoint": "/api/core-clinical/diagnoses",
         "contractRoute": "/api/contracts/modules/diagnoses"
       },
       "databaseSource": "diagnoses",
@@ -1025,12 +1161,71 @@
             "resolved",
             "provisional"
           ]
+        },
+        {
+          "key": "codeSystem",
+          "label": "Terminology system",
+          "type": "text",
+          "section": "Diagnosis"
+        },
+        {
+          "key": "verificationStatus",
+          "label": "Verification status",
+          "type": "text",
+          "section": "Review",
+          "options": [
+            "unverified",
+            "verified",
+            "rejected"
+          ]
+        },
+        {
+          "key": "severity",
+          "label": "Severity",
+          "type": "text",
+          "section": "Clinical assessment"
+        },
+        {
+          "key": "certainty",
+          "label": "Certainty",
+          "type": "text",
+          "section": "Clinical assessment"
+        },
+        {
+          "key": "onsetDate",
+          "label": "Onset",
+          "type": "date",
+          "section": "Timeline"
+        },
+        {
+          "key": "resolutionDate",
+          "label": "Resolution",
+          "type": "date",
+          "section": "Timeline"
+        },
+        {
+          "key": "laterality",
+          "label": "Laterality",
+          "type": "text",
+          "section": "Clinical detail"
+        },
+        {
+          "key": "anatomicalSite",
+          "label": "Anatomical site",
+          "type": "text",
+          "section": "Clinical detail"
+        },
+        {
+          "key": "notes",
+          "label": "Clinical notes",
+          "type": "text",
+          "section": "Documentation"
         }
       ],
       "requiredFields": [
-        "patientId",
         "code",
         "display",
+        "patientId",
         "status"
       ],
       "relationships": [
@@ -1062,6 +1257,9 @@
       "actions": [
         "create",
         "update",
+        "verify",
+        "resolve",
+        "reopen",
         "view"
       ],
       "validation": {
@@ -1221,12 +1419,12 @@
       "identity": {
         "name": "Care Plans",
         "category": "CARE",
-        "contractVersion": "2.0.0"
+        "contractVersion": "2.1.0"
       },
       "frontendRoute": "/care-plans",
       "backend": {
-        "endpoint": "/api/domains/modules/care-plans",
-        "createEndpoint": "/api/domains/modules/care-plans",
+        "endpoint": "/api/core-clinical/care-plans",
+        "createEndpoint": "/api/core-clinical/care-plans",
         "contractRoute": "/api/contracts/modules/care-plans"
       },
       "databaseSource": "care_plans",
@@ -1271,12 +1469,60 @@
             "completed",
             "cancelled"
           ]
+        },
+        {
+          "key": "priority",
+          "label": "Priority",
+          "type": "text",
+          "section": "Plan",
+          "options": [
+            "low",
+            "normal",
+            "high",
+            "urgent"
+          ]
+        },
+        {
+          "key": "interventions",
+          "label": "Interventions",
+          "type": "json",
+          "section": "Plan"
+        },
+        {
+          "key": "outcomeMeasures",
+          "label": "Outcome measures",
+          "type": "json",
+          "section": "Outcomes"
+        },
+        {
+          "key": "barriers",
+          "label": "Barriers",
+          "type": "json",
+          "section": "Care coordination"
+        },
+        {
+          "key": "ownerId",
+          "label": "Plan owner",
+          "type": "uuid",
+          "section": "Ownership"
+        },
+        {
+          "key": "reviewAt",
+          "label": "Review date",
+          "type": "datetime",
+          "section": "Review"
+        },
+        {
+          "key": "nextReviewNote",
+          "label": "Next review note",
+          "type": "text",
+          "section": "Review"
         }
       ],
       "requiredFields": [
         "patientId",
-        "title",
-        "status"
+        "status",
+        "title"
       ],
       "relationships": [
         {
@@ -1307,6 +1553,10 @@
       "actions": [
         "create",
         "update",
+        "activate",
+        "complete",
+        "cancel",
+        "reopen",
         "view"
       ],
       "validation": {
@@ -1337,12 +1587,12 @@
       "identity": {
         "name": "Referrals",
         "category": "CARE",
-        "contractVersion": "2.0.0"
+        "contractVersion": "2.1.0"
       },
       "frontendRoute": "/referrals",
       "backend": {
-        "endpoint": "/api/domains/modules/referrals",
-        "createEndpoint": "/api/domains/modules/referrals",
+        "endpoint": "/api/core-clinical/referrals",
+        "createEndpoint": "/api/core-clinical/referrals",
         "contractRoute": "/api/contracts/modules/referrals"
       },
       "databaseSource": "referrals",
@@ -1400,11 +1650,59 @@
             "completed",
             "cancelled"
           ]
+        },
+        {
+          "key": "referralType",
+          "label": "Referral type",
+          "type": "text",
+          "section": "Referral"
+        },
+        {
+          "key": "serviceCode",
+          "label": "Service code",
+          "type": "text",
+          "section": "Referral"
+        },
+        {
+          "key": "destinationFacilityId",
+          "label": "Destination facility",
+          "type": "uuid",
+          "section": "Destination"
+        },
+        {
+          "key": "referringProviderId",
+          "label": "Referring provider",
+          "type": "uuid",
+          "section": "Team"
+        },
+        {
+          "key": "clinicalSummary",
+          "label": "Clinical summary",
+          "type": "text",
+          "section": "Clinical context"
+        },
+        {
+          "key": "requestedAt",
+          "label": "Requested time",
+          "type": "datetime",
+          "section": "Timeline"
+        },
+        {
+          "key": "acceptedAt",
+          "label": "Accepted time",
+          "type": "datetime",
+          "section": "Timeline"
+        },
+        {
+          "key": "completedAt",
+          "label": "Completed time",
+          "type": "datetime",
+          "section": "Timeline"
         }
       ],
       "requiredFields": [
-        "patientId",
         "destination",
+        "patientId",
         "reason",
         "status"
       ],
@@ -1437,6 +1735,11 @@
       "actions": [
         "create",
         "update",
+        "send",
+        "accept",
+        "complete",
+        "cancel",
+        "close",
         "view"
       ],
       "validation": {
@@ -1467,12 +1770,12 @@
       "identity": {
         "name": "Referral Transfers",
         "category": "CARE",
-        "contractVersion": "2.0.0"
+        "contractVersion": "2.1.0"
       },
       "frontendRoute": "/referral-transfers",
       "backend": {
-        "endpoint": "/api/domains/modules/referral-transfers",
-        "createEndpoint": "/api/domains/modules/referral-transfers",
+        "endpoint": "/api/core-clinical/referral-transfers",
+        "createEndpoint": "/api/core-clinical/referral-transfers",
         "contractRoute": "/api/contracts/modules/referral-transfers"
       },
       "databaseSource": "referral_transfers",
@@ -1535,6 +1838,30 @@
           "label": "Handover notes",
           "type": "text",
           "section": "Transfer"
+        },
+        {
+          "key": "receivingContact",
+          "label": "Receiving contact",
+          "type": "text",
+          "section": "Handover"
+        },
+        {
+          "key": "transportStatus",
+          "label": "Transport status",
+          "type": "text",
+          "section": "Transport"
+        },
+        {
+          "key": "expectedArrivalAt",
+          "label": "Expected arrival",
+          "type": "datetime",
+          "section": "Transport"
+        },
+        {
+          "key": "transport",
+          "label": "Transport details",
+          "type": "json",
+          "section": "Transport"
         }
       ],
       "requiredFields": [
@@ -1567,6 +1894,12 @@
         "write": []
       },
       "actions": [
+        "create",
+        "update",
+        "accept",
+        "depart",
+        "arrive",
+        "cancel",
         "view"
       ],
       "validation": {
@@ -1739,12 +2072,12 @@
       "identity": {
         "name": "Care Tasks",
         "category": "CARE",
-        "contractVersion": "2.0.0"
+        "contractVersion": "2.1.0"
       },
       "frontendRoute": "/care-tasks",
       "backend": {
-        "endpoint": "/api/contracts/modules/care-tasks",
-        "createEndpoint": "/api/tasks/care",
+        "endpoint": "/api/core-clinical/care-tasks",
+        "createEndpoint": "/api/core-clinical/care-tasks",
         "contractRoute": "/api/contracts/modules/care-tasks"
       },
       "databaseSource": "care_tasks",
@@ -1816,14 +2149,32 @@
           "label": "Task details",
           "type": "json",
           "section": "Task"
+        },
+        {
+          "key": "taskCategory",
+          "label": "Task category",
+          "type": "text",
+          "section": "Task"
+        },
+        {
+          "key": "escalationLevel",
+          "label": "Escalation level",
+          "type": "number",
+          "section": "Escalation"
+        },
+        {
+          "key": "blockedReason",
+          "label": "Blocked reason",
+          "type": "text",
+          "section": "Escalation"
         }
       ],
       "requiredFields": [
         "patientId",
-        "taskType",
-        "title",
         "priority",
-        "status"
+        "status",
+        "taskType",
+        "title"
       ],
       "relationships": [
         {
@@ -1854,6 +2205,10 @@
       "actions": [
         "create",
         "update",
+        "start",
+        "complete",
+        "cancel",
+        "escalate",
         "view"
       ],
       "validation": {
@@ -3169,7 +3524,7 @@
         },
         {
           "key": "spo2",
-          "label": "SpO\u2082",
+          "label": "SpO₂",
           "type": "number",
           "section": "Vitals"
         }
@@ -3287,7 +3642,7 @@
         },
         {
           "key": "temperatureC",
-          "label": "Temperature (\u00b0C)",
+          "label": "Temperature (°C)",
           "type": "number",
           "section": "Vitals"
         },
@@ -3299,7 +3654,7 @@
         },
         {
           "key": "spo2",
-          "label": "SpO\u2082",
+          "label": "SpO₂",
           "type": "number",
           "section": "Vitals"
         },
@@ -8574,13 +8929,13 @@
       "identity": {
         "name": "Workflows",
         "category": "TRUST & CONNECTIONS",
-        "contractVersion": "2.0.0"
+        "contractVersion": "2.1.0"
       },
       "frontendRoute": "/workflows",
       "backend": {
-        "endpoint": "/api/contracts/modules/workflows",
-        "createEndpoint": "/api/contracts/modules/workflows",
-        "contractRoute": "/api/workflows"
+        "endpoint": "/api/core-clinical/workflows",
+        "createEndpoint": "/api/core-clinical/workflows",
+        "contractRoute": "/api/contracts/modules/workflows"
       },
       "databaseSource": "module_records:workflows",
       "fields": [
@@ -8660,7 +9015,8 @@
       "actions": [
         "create",
         "update",
-        "view"
+        "view",
+        "activity"
       ],
       "validation": {
         "rejectBlankStrings": true,
