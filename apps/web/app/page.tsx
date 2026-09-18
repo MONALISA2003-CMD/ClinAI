@@ -239,6 +239,29 @@ function IntelligenceSummary({module,rows}:{module:string;rows:Row[]}){
  return <div className="intelligence-summary"><div className="intelligence-card-grid">{selected.map(([label,value])=><div className="intelligence-card" key={label}><span>{label}</span><strong>{String(value)}</strong></div>)}</div><p className="intelligence-note">ClinAI brings together recorded information and review signals so teams can focus on what may need attention.</p></div>
 }
 
+function ModuleWorkspace({module,title,rows,token,error,load,refreshDash,openPatient,setEncounter,publicTestPatient,setPublicTestPatient}:{module:string;title:string;rows:Row[];token:string;error:string;load:()=>void;refreshDash:()=>void;openPatient:(id:string)=>void;setEncounter:(row:Row|null)=>void;publicTestPatient?:string;setPublicTestPatient?:(p:string)=>void}){
+ const connectedDomains=['insurance','claims','inventory','procurement','suppliers','billing','payments','accounting'];
+ const contract=CONTRACT_BY_ID[module];
+ const [query,setQuery]=useState('');
+ const filtered=rows.filter((row:Row)=>!query||JSON.stringify(row).toLowerCase().includes(query.toLowerCase())).slice(0,100);
+ if(connectedDomains.includes(module) && token) return <DomainWorkspace module={module} title={title} token={token} load={load} refreshDash={refreshDash} openPatient={openPatient}/>;
+ const fields=contract?.fields||[];
+ const hasCreate=!!token&&!!MODULE_CREATE_ENDPOINTS[module];
+ const patientId=(row:Row)=>row.patientId||row.patient_id;
+ const patientNumber=(row:Row)=>row.patientNumber||row.patient_number;
+ const label=(row:Row)=>String(row.firstName&&row.lastName?`${row.firstName} ${row.lastName}`:row.name||row.title||row.description||row.reason||row.code||row.template||row.medicationName||row.display||row.task||row.status||pretty(module));
+ return <section className="workspace-panel panel">
+  <div className="panel-title"><div><span className="section-kicker">{token?'CONNECTED MODULE':'PUBLIC TEST MODULE'}</span><h2>{title}</h2><p>{moduleDescription(module)}</p></div><div className="workspace-actions"><button className="ghost" onClick={load}>↻ Refresh</button></div></div>
+  {error&&<div className="error" role="alert">{error}</div>}
+  {!token&&<div className="test-data-banner"><strong>TEST DATA</strong><span>Public records are limited to synthetic TEST patients. Do not enter real patient information.</span></div>}
+  <div className="workspace-toolbar"><input aria-label={`Search ${title}`} placeholder={`Search ${title}`} value={query} onChange={e=>setQuery(e.target.value)}/>{publicTestPatient&&<button className="ghost" onClick={()=>setPublicTestPatient?.('')}>Clear patient</button>}</div>
+  {hasCreate&&<details className="workspace-create"><summary>Add {title.replace(/s$/,'').toLowerCase()}</summary><Action module={module} token={token} done={()=>{load();refreshDash()}}/></details>}
+  {!filtered.length?<div className="workspace-empty"><strong>{query?'No matching records':'No records yet'}</strong><span>{contract?.emptyState?.message||`There are no ${title.toLowerCase()} records available in this view.`}</span>{hasCreate&&<small>Use the form above to create a connected record.</small>}</div>:
+   <div className="module-record-list">{filtered.map((row:Row,i:number)=>{const pid=patientId(row);const isEncounter=module==='encounters';return <article className="module-record" key={String(row.id||row.patientNumber||i)}><div className="module-record-main"><div className="record-avatar">{row.firstName?(String(row.firstName)[0]+String(row.lastName||'')[0]).toUpperCase():navIcon(module)}</div><div><strong>{label(row)}</strong><span>{patientNumber(row)?`Patient ${patientNumber(row)} · `:''}{row.status||row.priority||row.type||row.category||row.createdAt||row.updatedAt||'Recorded'}</span></div></div><div className="module-record-actions">{pid&&<button className="link-button" onClick={()=>openPatient(String(pid))}>Patient 360</button>}{isEncounter&&<button className="link-button" onClick={()=>setEncounter(row)}>Open visit</button>}{token&&<RowActions module={module} row={row} token={token} done={()=>{load();refreshDash()}} openPatient={openPatient} openEncounter={setEncounter}/>}</div></article>})}</div>}
+  <div className="workspace-footer"><span>Showing {filtered.length} of {rows.length} loaded records</span>{contract&&<span>{fields.length} defined fields · {contract.requiredFields?.length||0} required</span>}</div>
+ </section>
+}
+
 function DomainWorkspace({module,title,token,load,refreshDash,openPatient}:{module:string;title:string;token:string;load:()=>void;refreshDash:()=>void;openPatient:(id:string)=>void}){
  const [data,setData]=useState<Row>({}); const [error,setError]=useState(''); const [busy,setBusy]=useState(''); const [selectedSupplier,setSelectedSupplier]=useState<Row|null>(null); const [selectedItem,setSelectedItem]=useState<Row|null>(null); const [selectedClaim,setSelectedClaim]=useState<Row|null>(null);
  const endpoint=module==='billing'||module==='payments'||module==='accounting'?'/api/domains/finance/overview':module==='insurance'?'/api/domains/insurance/overview':module==='claims'?'/api/domains/claims':module==='inventory'?'/api/domains/inventory/overview':module==='procurement'||module==='suppliers'?'/api/domains/procurement/overview':'';

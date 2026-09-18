@@ -36,7 +36,8 @@
     "test:synthetic:coverage": "node tests/synthetic-module-coverage-audit.mjs",
     "test:free-ai": "node tests/free-only-runtime-audit.mjs",
     "test:render-build": "node tests/workstream2-render-build-regression-audit.mjs && npm run test:free-ai && node tests/workstream2-domain-integrity.mjs",
-    "test:workstream6": "node tests/workstream6-domain-workspace-audit.mjs && node tests/workstream2-render-build-regression-audit.mjs && node tests/frontend-backend-route-audit.mjs && node tests/ui-responsive-structural-check.mjs && node tests/schema-contract-audit.mjs"
+    "test:workstream6": "node tests/workstream6-domain-workspace-audit.mjs && node tests/workstream2-render-build-regression-audit.mjs && node tests/frontend-backend-route-audit.mjs && node tests/ui-responsive-structural-check.mjs && node tests/schema-contract-audit.mjs",
+    "test:workstream6:vercel": "node tests/workstream6-module-workspace-vercel-regression-audit.mjs && npm run test:deployment:vercel-web"
   },
   "devDependencies": {
     "@types/node": "latest",
