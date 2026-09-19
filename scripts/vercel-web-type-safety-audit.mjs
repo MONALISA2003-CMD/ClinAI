@@ -8,5 +8,7 @@ if (/placeholder=\{f\.placeholder\|\|f\.label\}/.test(page)) failures.push('Crea
 if (!/const fieldLabel=f\.label\|\|pretty\(f\.key\)/.test(page)) failures.push('Create form must normalize optional contract labels.');
 if (!/createEndpointContracts=MODULE_CONTRACTS\.filter\(\(c\): c is/.test(page)) failures.push('Create endpoint map must use a type-narrowing predicate.');
 if (!/typeof c\.backend\.createEndpoint==='string'/.test(page)) failures.push('Create endpoint narrowing must verify string endpoints.');
+if (!/function displayValue\(value:any\):string\{/.test(page)) failures.push('Recursive displayValue formatter must have an explicit string return type.');
+if (!/function humanError\(value:any\):string\{/.test(page)) failures.push('Recursive humanError formatter must have an explicit string return type.');
 if (failures.length) { console.error('Vercel web type-safety audit failed'); for (const f of failures) console.error(`- ${f}`); process.exit(1); }
 console.log('Vercel web type-safety audit passed');
