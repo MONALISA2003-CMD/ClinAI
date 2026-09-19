@@ -46,7 +46,7 @@ export function registerPhase67FinancePublicHealthRoutes(app:FastifyInstance,poo
   };
 
   async function list(module:string,req:any,reply:any){
-    if(!MODULES.has(module))return reply.code(404).send({error:'Phase 6/7 module is not registered.'});
+    if(!MODULES.has(module))return reply.code(404).send({error:'Module is not registered.'});
     if(!requireDb(reply))return;
     const organizationId=oid(req); if(!organizationId)return reply.code(400).send({error:'Organization context is required'});
     const q=listQueries[module]; if(!q)return reply.code(404).send({error:'Module read contract is not implemented.'});
@@ -54,7 +54,7 @@ export function registerPhase67FinancePublicHealthRoutes(app:FastifyInstance,poo
   }
 
   async function dashboard(module:string,req:any,reply:any){
-    if(!MODULES.has(module))return reply.code(404).send({error:'Phase 6/7 module is not registered.'});
+    if(!MODULES.has(module))return reply.code(404).send({error:'Module is not registered.'});
     if(!requireDb(reply))return;
     const o=oid(req); if(!o)return reply.code(400).send({error:'Organization context is required'});
     let data:Row={module};
@@ -105,8 +105,8 @@ export function registerPhase67FinancePublicHealthRoutes(app:FastifyInstance,poo
     return {data};
   }
 
-  app.get('/api/phase67/:module',async(req:any,reply:any)=>{try{return await list(String(req.params.module),req,reply)}catch(e:any){return reply.code(e.statusCode||500).send({error:e.message||'Phase 6/7 workspace could not be loaded.'})}});
-  app.get('/api/phase67/:module/dashboard',async(req:any,reply:any)=>{try{return await dashboard(String(req.params.module),req,reply)}catch(e:any){return reply.code(e.statusCode||500).send({error:e.message||'Phase 6/7 dashboard could not be loaded.'})}});
+  app.get('/api/phase67/:module',async(req:any,reply:any)=>{try{return await list(String(req.params.module),req,reply)}catch(e:any){return reply.code(e.statusCode||500).send({error:e.message||'Workspace could not be loaded.'})}});
+  app.get('/api/phase67/:module/dashboard',async(req:any,reply:any)=>{try{return await dashboard(String(req.params.module),req,reply)}catch(e:any){return reply.code(e.statusCode||500).send({error:e.message||'Dashboard could not be loaded.'})}});
 
   app.post('/api/phase67/population-health',async(req:any,reply:any)=>{write(req);if(!requireDb(reply))return;const b=z.object({indicatorCode:z.string().min(1),indicatorName:z.string().min(1),periodStart:z.string(),periodEnd:z.string(),numerator:z.number().nonnegative().default(0),denominator:z.number().nonnegative().default(0),value:z.number().optional(),dimensions:z.record(z.any()).default({}),source:z.string().optional(),status:z.string().default('calculated')}).parse(req.body||{});const value=b.value??(b.denominator>0?(b.numerator/b.denominator)*100:null);const r=await pool!.query(`INSERT INTO population_indicators(organization_id,indicator_code,indicator_name,period_start,period_end,numerator,denominator,value,dimensions,source,status) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,[oid(req),b.indicatorCode,b.indicatorName,b.periodStart,b.periodEnd,b.numerator,b.denominator,value,JSON.stringify(b.dimensions),b.source||null,b.status]);return reply.code(201).send(r.rows[0]);});
 

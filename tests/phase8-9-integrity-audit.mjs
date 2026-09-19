@@ -5,7 +5,7 @@ const root=path.resolve(path.dirname(new URL(import.meta.url).pathname),'..');
 const read=p=>fs.readFileSync(path.join(root,p),'utf8');
 const ok=(c,m)=>{if(!c)throw new Error(m)};
 const modules=['staff','facilities','facility-capacity','facility-resources','facility-incidents','facility-performance','interoperability','health-connections','audit','security','settings','terminology','guidelines','care-pathways','reporting','offline-sync'];
-const page=read('apps/web/app/page.tsx'), route=read('services/api/src/routes/phase89FacilityPlatform.ts'), main=read('services/api/src/main.ts'), specs=read('services/api/src/domainModuleSpecs.ts'), migration=read('database/migrations/033-phase8-9-platform-depth.sql');
+const page=read('apps/web/app/page.tsx'), route=read('services/api/src/routes/platformOperationsRoutes.ts'), main=read('services/api/src/main.ts'), specs=read('services/api/src/domainModuleSpecs.ts'), migration=read('database/migrations/033-phase8-9-platform-depth.sql');
 const contracts=JSON.parse(read('packages/module-contracts/contracts.json')).modules;
 for(const m of modules){ok(page.includes(`'${m}'`),`frontend registry missing ${m}`);ok(page.includes('PHASE89_READ_ENDPOINTS') && page.includes('`/api/phase89/${m}`'),`frontend phase89 endpoint mapping missing ${m}`);ok(contracts.some(x=>x.id===m),`contract missing ${m}`);}
 ok(main.includes("registerPhase89FacilityPlatformRoutes"),'phase89 registration missing');

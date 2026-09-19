@@ -3,7 +3,7 @@ import fs from 'node:fs';
 const main = fs.readFileSync('services/api/src/main.ts', 'utf8');
 const events = fs.readFileSync('services/api/src/events/clinicalEvents.ts', 'utf8');
 const evaluator = fs.readFileSync('services/api/src/events/cdssEvaluator.ts', 'utf8');
-const phase3 = fs.readFileSync('services/api/src/routes/phase3Diagnostics.ts', 'utf8');
+const phase3 = fs.readFileSync('services/api/src/routes/diagnosticsMedicationRoutes.ts', 'utf8');
 
 const required = [
   ['transactional publisher is reused', 'await enqueueClinicalEvent(client,{organizationId:dbOrganizationId(req)'],

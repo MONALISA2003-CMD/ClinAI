@@ -15,12 +15,12 @@ import { evaluateClinicalContext, SYNCHRONOUS_CDSS_RULES } from './intelligence/
 import { buildPatientIntelligenceLayer, buildClinicalVelocity, buildValueBasedCare, buildGovernanceSummary, buildAIGovernanceLifecycle, calculateClinicalMeasures, recordAICapabilityEvaluation, AI_CAPABILITY_CATALOG, buildPatient360Context, buildAISecurityIntelligence, buildAIRiskIntelligence, buildClinicalVelocityIntelligence, buildValueBasedCareIntelligence, recordSecurityEvent } from './intelligence/enterpriseIntelligence.js';
 import moduleContractCatalog from '../../../packages/module-contracts/contracts.json' with { type: 'json' };
 import { registerWorkstream2DomainRoutes } from './routes/workstream2Domains.js';
-import { registerPhase2CoreClinicalRoutes } from './routes/phase2CoreClinical.js';
-import { registerPhase3DiagnosticsRoutes } from './routes/phase3Diagnostics.js';
-import { registerPhase45AcuteContinuityRoutes } from './routes/phase45AcuteContinuity.js';
-import { registerPhase67FinancePublicHealthRoutes } from './routes/phase67FinancePublicHealth.js';
-import { registerPhase89FacilityPlatformRoutes } from './routes/phase89FacilityPlatform.js';
-import { registerPhase1011Routes } from './routes/phase1011IntelligenceHome.js';
+import { registerPhase2CoreClinicalRoutes } from './routes/clinicalCareRoutes.js';
+import { registerPhase3DiagnosticsRoutes } from './routes/diagnosticsMedicationRoutes.js';
+import { registerPhase45AcuteContinuityRoutes } from './routes/acuteCareRoutes.js';
+import { registerPhase67FinancePublicHealthRoutes } from './routes/financePublicHealthRoutes.js';
+import { registerPhase89FacilityPlatformRoutes } from './routes/platformOperationsRoutes.js';
+import { registerPhase1011Routes } from './routes/intelligenceCommandCenterRoutes.js';
 import { DOMAIN_MODULE_SPECS } from './domainModuleSpecs.js';
 
 const MODULE_CONTRACTS = moduleContractCatalog.modules as any[];
@@ -1029,7 +1029,7 @@ async function validateDomainPatient(req:any,patientId:string){
 }
 async function authoritativeModuleRows(req:any,reply:any){
   const moduleId=String(req.params.module),spec=domainSpec(moduleId);
-  if(!spec)return reply.code(404).send({error:'Authoritative domain is not registered for this module.'});
+  if(!spec)return reply.code(404).send({error:'This clinical workspace is not available.'});
   const oid=dbOrganizationId(req); if(!oid)return reply.code(401).send({error:'Organization context is required'});
   if(!pool)return {data:(store[moduleId]||[]).filter(x=>x.organizationId===oid),count:(store[moduleId]||[]).length,source:'store',module:moduleId};
   const columnRows=await pool.query(`SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name=$1`,[spec.table]);
@@ -1049,7 +1049,7 @@ async function authoritativeModuleRows(req:any,reply:any){
 }
 async function authoritativeModuleCreate(req:any,reply:any){
   const moduleId=String(req.params.module),spec=domainSpec(moduleId);
-  if(!spec)return reply.code(404).send({error:'Authoritative domain is not registered for this module.'});
+  if(!spec)return reply.code(404).send({error:'This clinical workspace is not available.'});
   requireAuthorizedWrite(req);
   const body=req.body||{};
   const values:any[]=[]; const columns:string[]=[];

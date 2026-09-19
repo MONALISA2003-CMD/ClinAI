@@ -28,7 +28,7 @@ This release continues the original ClinAI restoration handoff without rebuildin
 
 ## Implementation
 
-Added `services/api/src/routes/phase45AcuteContinuity.ts` with authoritative PostgreSQL list, dashboard, create and workflow-action paths. Workflows are transactionally audited and emit connected clinical events through the existing event gateway.
+Added `services/api/src/routes/acuteCareRoutes.ts` with authoritative PostgreSQL list, dashboard, create and workflow-action paths. Workflows are transactionally audited and emit connected clinical events through the existing event gateway.
 
 The frontend now has a dedicated Phase 4/5 clinical workspace with:
 - specialist worklist identity

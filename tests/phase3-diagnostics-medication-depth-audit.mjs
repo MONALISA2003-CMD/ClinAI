@@ -4,7 +4,7 @@ const root=path.resolve(path.dirname(new URL(import.meta.url).pathname),'..');
 const read=p=>fs.readFileSync(path.join(root,p),'utf8');
 const checks=[]; const ok=(name,pass,detail='')=>checks.push({name,pass:Boolean(pass),detail});
 const migration=read('database/migrations/032-phase3-diagnostics-medication-depth.sql');
-const route=read('services/api/src/routes/phase3Diagnostics.ts');
+const route=read('services/api/src/routes/diagnosticsMedicationRoutes.ts');
 const main=read('services/api/src/main.ts');
 const events=read('services/api/src/events/clinicalEvents.ts');
 const page=read('apps/web/app/page.tsx');

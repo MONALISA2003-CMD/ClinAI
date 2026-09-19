@@ -135,7 +135,7 @@ AI Frontline is derived from recorded `clinical_signals` and remains human-super
 
 New route module:
 
-`services/api/src/routes/phase1011IntelligenceHome.ts`
+`services/api/src/routes/intelligenceCommandCenterRoutes.ts`
 
 Routes:
 
@@ -149,7 +149,7 @@ The route module is registered from `services/api/src/main.ts`.
 
 New reusable frontend module:
 
-`apps/web/app/components/Phase1011.tsx`
+`apps/web/app/components/IntelligenceWorkspaces.tsx`
 
 It provides reusable:
 

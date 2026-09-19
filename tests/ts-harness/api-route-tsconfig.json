@@ -14,7 +14,7 @@
   },
   "files": [
     "api-shims.d.ts",
-    "../../services/api/src/routes/phase67FinancePublicHealth.ts",
+    "../../services/api/src/routes/financePublicHealthRoutes.ts",
     "../../services/api/src/routes/workstream2Domains.ts"
   ]
 }

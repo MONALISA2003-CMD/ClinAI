@@ -4,7 +4,7 @@
 
 The failing GitHub commit reported two independent strict-build failures:
 
-1. Render / API build failed in `services/api/src/routes/phase67FinancePublicHealth.ts` because PostgreSQL's `rowCount` is typed as `number | null`, while the route contract requires `count: number`.
+1. Render / API build failed in `services/api/src/routes/financePublicHealthRoutes.ts` because PostgreSQL's `rowCount` is typed as `number | null`, while the route contract requires `count: number`.
 2. Vercel / Next.js build failed in `apps/web/app/page.tsx` because `actionList` inferred an `any[]`, causing the callback parameter `a` to become an implicit `any` under the real Next.js strict typecheck.
 
 ## Repairs

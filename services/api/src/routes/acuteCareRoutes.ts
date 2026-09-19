@@ -141,7 +141,7 @@ export function registerPhase45AcuteContinuityRoutes(app: FastifyInstance, pool:
   const write = (req:any) => ctx.requireAuthorizedWrite(req);
 
   async function listModule(module:string, req:any, publicOnly=false){
-    const cfg=MODULES[module]; if(!cfg) throw Object.assign(new Error('Unsupported Phase 4/5 module.'),{statusCode:404});
+    const cfg=MODULES[module]; if(!cfg) throw Object.assign(new Error('Unsupported module.'),{statusCode:404});
     if(!pool) return {data:[],count:0,module};
     const organizationId=org(req); if(!organizationId && !publicOnly) throw Object.assign(new Error('Organization context is required.'),{statusCode:400});
     const values:any[]=[];
@@ -174,7 +174,7 @@ export function registerPhase45AcuteContinuityRoutes(app: FastifyInstance, pool:
   }
 
   async function dashboard(module:string, req:any, publicOnly=false){
-    const cfg=MODULES[module]; if(!cfg) throw Object.assign(new Error('Unsupported Phase 4/5 module.'),{statusCode:404});
+    const cfg=MODULES[module]; if(!cfg) throw Object.assign(new Error('Unsupported module.'),{statusCode:404});
     if(!pool)return {summary:{total:0},trend:[],breakdown:[]};
     const requestedOrganizationId=org(req);
     const organizationId=requestedOrganizationId || (await pool.query(`SELECT organization_id FROM patients WHERE patient_number LIKE 'TEST-%' LIMIT 1`)).rows[0]?.organization_id;
@@ -278,7 +278,7 @@ export function registerPhase45AcuteContinuityRoutes(app: FastifyInstance, pool:
       } else if(module==='remote-monitoring'){
         const patientId=assertUuid(body.patientId,'Patient'); if(!await patientBelongs(client,patientId,organizationId))throw Object.assign(new Error('Patient does not belong to this workspace.'),{statusCode:409});
         row=await client.query(`INSERT INTO remote_monitoring_readings(organization_id,patient_id,device_id,metric,value_numeric,unit,measured_at,source,validation_status,alert_status,metadata,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,now()) RETURNING *`,[organizationId,patientId,str(body.deviceId),str(body.metric)||'measurement',num(body.valueNumeric),str(body.unit),body.measuredAt||new Date().toISOString(),str(body.source)||'manual',str(body.validationStatus)||'pending',str(body.alertStatus)||'normal',jsonValue(body.metadata,{})]); event='remote-monitoring.reading.recorded';
-      } else throw Object.assign(new Error('Unsupported Phase 4/5 module.'),{statusCode:404});
+      } else throw Object.assign(new Error('Unsupported module.'),{statusCode:404});
       const id=row.rows[0].id;
       await ctx.dbAudit(client,req,'CREATE',module,id,{phase:'4-5'});
       await ctx.queueEvent(client,req,event,{module,entityId:id,patientId:row.rows[0].patient_id||row.rows[0].patientId||null,organizationId});
@@ -337,7 +337,7 @@ export function registerPhase45AcuteContinuityRoutes(app: FastifyInstance, pool:
         const map:any={wait:'waiting',start:'active',end:'completed',cancel:'cancelled'};if(action==='verify-identity'){row=await client.query(`UPDATE telemedicine_sessions SET identity_verified=true WHERE id=$1 AND organization_id=$2 RETURNING *`,[id,organizationId]);} else if(action==='confirm-consent'){row=await client.query(`UPDATE telemedicine_sessions SET consent_confirmed=true WHERE id=$1 AND organization_id=$2 RETURNING *`,[id,organizationId]);} else if(map[action]){row=await client.query(`UPDATE telemedicine_sessions SET status=$1,started_at=CASE WHEN $1='active' THEN now() ELSE started_at END,ended_at=CASE WHEN $1='completed' THEN now() ELSE ended_at END WHERE id=$2 AND organization_id=$3 RETURNING *`,[map[action],id,organizationId]);} else throw Object.assign(new Error('Unsupported telemedicine action.'),{statusCode:400});if(!row.rowCount)throw Object.assign(new Error('Telemedicine session not found.'),{statusCode:404});
       } else if(module==='remote-monitoring'){
         const map:any={'ack-alert':'acknowledged','clear-alert':'normal'};if(!map[action] || !['normal','critical','high','warning','acknowledged'].includes(String(map[action])))throw Object.assign(new Error('Unsupported monitoring action.'),{statusCode:400});row=await client.query(`UPDATE remote_monitoring_readings SET alert_status=$1 WHERE id=$2 AND organization_id=$3 RETURNING *`,[map[action],id,organizationId]);if(!row.rowCount)throw Object.assign(new Error('Monitoring reading not found.'),{statusCode:404});
-      } else throw Object.assign(new Error('Unsupported Phase 4/5 module.'),{statusCode:404});
+      } else throw Object.assign(new Error('Unsupported module.'),{statusCode:404});
       const returned=row.rows[0];
       await ctx.dbAudit(client,req,'UPDATE',module,id,{phase:'4-5',action});
       await ctx.queueEvent(client,req,event,{module,entityId:id,patientId:returned?.patient_id||null,organizationId,action});

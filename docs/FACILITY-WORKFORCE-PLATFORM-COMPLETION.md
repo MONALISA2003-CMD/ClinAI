@@ -28,7 +28,7 @@ Phase 9 requirements from the handoff:
 ## Implementation
 
 ### Backend
-Added `services/api/src/routes/phase89FacilityPlatform.ts`.
+Added `services/api/src/routes/platformOperationsRoutes.ts`.
 Registered it from `services/api/src/main.ts`.
 
 Authoritative Phase 8/9 modules exposed through dedicated `/api/phase89/*` list/dashboard/create/action flows:

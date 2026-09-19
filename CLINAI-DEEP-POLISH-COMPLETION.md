@@ -235,15 +235,15 @@ The source implementation and live database query validation were completed, but
 ## Primary changed files
 
 - `apps/web/app/page.tsx`
-- `apps/web/app/components/Phase1011.tsx`
+- `apps/web/app/components/IntelligenceWorkspaces.tsx`
 - `apps/web/app/globals.css`
 - `services/api/src/main.ts`
-- `services/api/src/routes/phase2CoreClinical.ts`
-- `services/api/src/routes/phase3Diagnostics.ts`
-- `services/api/src/routes/phase45AcuteContinuity.ts`
-- `services/api/src/routes/phase67FinancePublicHealth.ts`
-- `services/api/src/routes/phase89FacilityPlatform.ts`
-- `services/api/src/routes/phase1011IntelligenceHome.ts`
+- `services/api/src/routes/clinicalCareRoutes.ts`
+- `services/api/src/routes/diagnosticsMedicationRoutes.ts`
+- `services/api/src/routes/acuteCareRoutes.ts`
+- `services/api/src/routes/financePublicHealthRoutes.ts`
+- `services/api/src/routes/platformOperationsRoutes.ts`
+- `services/api/src/routes/intelligenceCommandCenterRoutes.ts`
 - `services/api/src/routes/workstream2Domains.ts`
 - `tests/runtime-integration-polish-audit.mjs`
 

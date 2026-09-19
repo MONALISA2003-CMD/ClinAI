@@ -8,7 +8,7 @@ const checks=[];
 function ok(name, condition, detail=''){ checks.push({name,pass:Boolean(condition),detail}); }
 
 const migration = read('database/migrations/031-phase2-core-clinical-depth.sql');
-const route = read('services/api/src/routes/phase2CoreClinical.ts');
+const route = read('services/api/src/routes/clinicalCareRoutes.ts');
 const main = read('services/api/src/main.ts');
 const page = read('apps/web/app/page.tsx');
 const css = read('apps/web/app/globals.css');

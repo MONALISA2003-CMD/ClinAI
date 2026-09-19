@@ -42,7 +42,7 @@ The handoff requirement to preserve existing AI response presentation and use au
 
 A dedicated authoritative route layer was added at:
 
-`services/api/src/routes/phase67FinancePublicHealth.ts`
+`services/api/src/routes/financePublicHealthRoutes.ts`
 
 It provides organization-scoped reads and dashboards for all Phase 6/7 modules and workflow actions for:
 - population indicators

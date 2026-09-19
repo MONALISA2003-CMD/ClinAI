@@ -16,7 +16,7 @@ const handoffModules={
 };
 const phase67=[...new Set([...handoffModules.phase6,...handoffModules.phase7])];
 const page=read('apps/web/app/page.tsx');
-const route=read('services/api/src/routes/phase67FinancePublicHealth.ts');
+const route=read('services/api/src/routes/financePublicHealthRoutes.ts');
 const main=read('services/api/src/main.ts');
 const specs=read('services/api/src/domainModuleSpecs.ts');
 const ws2=read('services/api/src/routes/workstream2Domains.ts');

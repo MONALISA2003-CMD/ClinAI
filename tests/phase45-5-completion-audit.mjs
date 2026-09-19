@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 const root=process.cwd();
-const api=fs.readFileSync(path.join(root,'services/api/src/routes/phase45AcuteContinuity.ts'),'utf8');
+const api=fs.readFileSync(path.join(root,'services/api/src/routes/acuteCareRoutes.ts'),'utf8');
 const main=fs.readFileSync(path.join(root,'services/api/src/main.ts'),'utf8');
 const web=fs.readFileSync(path.join(root,'apps/web/app/page.tsx'),'utf8');
 const contracts=JSON.parse(fs.readFileSync(path.join(root,'packages/module-contracts/contracts.json'),'utf8'));
