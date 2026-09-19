@@ -19,6 +19,7 @@ import { registerPhase2CoreClinicalRoutes } from './routes/phase2CoreClinical.js
 import { registerPhase3DiagnosticsRoutes } from './routes/phase3Diagnostics.js';
 import { registerPhase45AcuteContinuityRoutes } from './routes/phase45AcuteContinuity.js';
 import { registerPhase67FinancePublicHealthRoutes } from './routes/phase67FinancePublicHealth.js';
+import { registerPhase89FacilityPlatformRoutes } from './routes/phase89FacilityPlatform.js';
 import { DOMAIN_MODULE_SPECS } from './domainModuleSpecs.js';
 const MODULE_CONTRACTS = moduleContractCatalog.modules;
 const MODULE_CONTRACT_BY_ID = Object.fromEntries(MODULE_CONTRACTS.map(c => [c.id, c]));
@@ -4230,4 +4231,5 @@ registerPhase2CoreClinicalRoutes(app, pool, { dbOrganizationId, dbUserId, requir
 registerPhase3DiagnosticsRoutes(app, pool, { dbOrganizationId, dbUserId, requireAuthorizedWrite, dbAudit, queueEvent, clinicalEventTypes: CLINICAL_EVENT_TYPES });
 registerPhase45AcuteContinuityRoutes(app, pool, { dbOrganizationId, dbUserId, requireAuthorizedWrite, dbAudit, queueEvent });
 registerPhase67FinancePublicHealthRoutes(app, pool, { dbOrganizationId, dbUserId, requireAuthorizedWrite, dbAudit, queueEvent });
+registerPhase89FacilityPlatformRoutes(app, pool, { dbOrganizationId, dbUserId, requireAuthorizedWrite, dbAudit });
 app.listen({ port: Number(process.env.PORT || 4000), host: '0.0.0.0' });

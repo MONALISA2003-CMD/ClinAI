@@ -1,0 +1,4 @@
+{
+  "compilerOptions":{"target":"ES2022","lib":["ES2022","DOM"],"module":"NodeNext","moduleResolution":"NodeNext","strict":false,"noEmit":true,"skipLibCheck":true,"allowSyntheticDefaultImports":true,"esModuleInterop":true,"baseUrl":"."},
+  "files":["api-shims.d.ts","../../services/api/src/routes/phase89FacilityPlatform.ts"]
+}

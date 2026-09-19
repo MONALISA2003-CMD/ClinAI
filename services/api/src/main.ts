@@ -19,6 +19,7 @@ import { registerPhase2CoreClinicalRoutes } from './routes/phase2CoreClinical.js
 import { registerPhase3DiagnosticsRoutes } from './routes/phase3Diagnostics.js';
 import { registerPhase45AcuteContinuityRoutes } from './routes/phase45AcuteContinuity.js';
 import { registerPhase67FinancePublicHealthRoutes } from './routes/phase67FinancePublicHealth.js';
+import { registerPhase89FacilityPlatformRoutes } from './routes/phase89FacilityPlatform.js';
 import { DOMAIN_MODULE_SPECS } from './domainModuleSpecs.js';
 
 const MODULE_CONTRACTS = moduleContractCatalog.modules as any[];
@@ -239,6 +240,25 @@ async function ensureRuntimeSchema(){
       version text, status text NOT NULL DEFAULT 'draft', source_url text, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
       UNIQUE(organization_id, reporting_system, indicator_code, version)
     );
+    CREATE TABLE IF NOT EXISTS organization_settings (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      category text NOT NULL, name text NOT NULL, value text NOT NULL,
+      value_type text NOT NULL DEFAULT 'text' CHECK (value_type IN ('text','number','boolean','json')),
+      description text, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+      UNIQUE(organization_id,category,name)
+    );
+    CREATE INDEX IF NOT EXISTS organization_settings_org_category_idx ON organization_settings(organization_id,category,name);
+    ALTER TABLE health_worker_profiles ADD COLUMN IF NOT EXISTS department text;
+    ALTER TABLE health_worker_profiles ADD COLUMN IF NOT EXISTS role text;
+    ALTER TABLE health_worker_profiles ADD COLUMN IF NOT EXISTS shift text;
+    ALTER TABLE health_worker_profiles ADD COLUMN IF NOT EXISTS availability_status text;
+    ALTER TABLE health_worker_profiles ADD COLUMN IF NOT EXISTS leave_status text;
+    ALTER TABLE health_worker_profiles ADD COLUMN IF NOT EXISTS workload numeric;
+    ALTER TABLE health_worker_profiles ADD COLUMN IF NOT EXISTS license_expiry date;
+    ALTER TABLE health_worker_profiles ADD COLUMN IF NOT EXISTS credentials jsonb NOT NULL DEFAULT '{}';
+    ALTER TABLE facility_resource_status ADD COLUMN IF NOT EXISTS maintenance_status text;
+    ALTER TABLE facility_resource_status ADD COLUMN IF NOT EXISTS maintenance_due_at timestamptz;
     CREATE TABLE IF NOT EXISTS offline_sync_queue (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
       device_id text NOT NULL, user_id uuid REFERENCES users(id), operation_id text NOT NULL, resource_type text NOT NULL, resource_id text,
@@ -2539,6 +2559,7 @@ registerPhase2CoreClinicalRoutes(app,pool,{dbOrganizationId,dbUserId,requireAuth
 registerPhase3DiagnosticsRoutes(app,pool,{dbOrganizationId,dbUserId,requireAuthorizedWrite,dbAudit,queueEvent,clinicalEventTypes:CLINICAL_EVENT_TYPES});
 registerPhase45AcuteContinuityRoutes(app,pool,{dbOrganizationId,dbUserId,requireAuthorizedWrite,dbAudit,queueEvent});
 registerPhase67FinancePublicHealthRoutes(app,pool,{dbOrganizationId,dbUserId,requireAuthorizedWrite,dbAudit,queueEvent});
+registerPhase89FacilityPlatformRoutes(app,pool,{dbOrganizationId,dbUserId,requireAuthorizedWrite,dbAudit});
 
 app.listen({port:Number(process.env.PORT||4000),host:'0.0.0.0'});
 

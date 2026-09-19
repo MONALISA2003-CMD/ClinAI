@@ -1,0 +1,21 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import {execFileSync} from 'node:child_process';
+const root=path.resolve(path.dirname(new URL(import.meta.url).pathname),'..');
+const read=p=>fs.readFileSync(path.join(root,p),'utf8');
+const ok=(c,m)=>{if(!c)throw new Error(m)};
+const modules=['staff','facilities','facility-capacity','facility-resources','facility-incidents','facility-performance','interoperability','health-connections','audit','security','settings','terminology','guidelines','care-pathways','reporting','offline-sync'];
+const page=read('apps/web/app/page.tsx'), route=read('services/api/src/routes/phase89FacilityPlatform.ts'), main=read('services/api/src/main.ts'), specs=read('services/api/src/domainModuleSpecs.ts'), migration=read('database/migrations/033-phase8-9-platform-depth.sql');
+const contracts=JSON.parse(read('packages/module-contracts/contracts.json')).modules;
+for(const m of modules){ok(page.includes(`'${m}'`),`frontend registry missing ${m}`);ok(page.includes('PHASE89_READ_ENDPOINTS') && page.includes('`/api/phase89/${m}`'),`frontend phase89 endpoint mapping missing ${m}`);ok(contracts.some(x=>x.id===m),`contract missing ${m}`);}
+ok(main.includes("registerPhase89FacilityPlatformRoutes"),'phase89 registration missing');
+ok(route.includes("app.get('/api/phase89/:module'"),'phase89 list route missing');
+ok(route.includes("app.get('/api/phase89/:module/dashboard'"),'phase89 dashboard route missing');
+ok(main.includes('CREATE TABLE IF NOT EXISTS organization_settings'),'runtime settings schema guard missing');
+ok(migration.includes('CREATE TABLE IF NOT EXISTS organization_settings'),'phase89 migration missing settings table');
+ok(!/\bDROP\s+(TABLE|SCHEMA|DATABASE)|\bTRUNCATE\b|\bDELETE\s+FROM\b/i.test(migration),'phase89 migration contains destructive SQL');
+ok(specs.includes("settings:{module:'settings',table:'organization_settings'"),'settings authoritative spec missing');
+ok(specs.includes("f('deviceId','device_id','text'"),'offline device_id must match live text schema');
+ok(page.includes('function Phase89Workspace'),'Phase89Workspace missing');
+for(const cfg of ['web-tsconfig.json','api-route-tsconfig.json','api-main-tsconfig.json']) execFileSync('tsc',['-p',`tests/ts-harness/${cfg}`],{cwd:root,stdio:'pipe'});
+console.log(JSON.stringify({ok:true,phase8to9:true,modules:modules.length,contracts:contracts.length,typescript:['web','api-route','main-api']},null,2));

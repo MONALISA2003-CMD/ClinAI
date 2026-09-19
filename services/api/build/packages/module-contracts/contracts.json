@@ -620,7 +620,7 @@
                 },
                 {
                     "key": "spo2",
-                    "label": "SpO₂",
+                    "label": "SpO\u2082",
                     "type": "number",
                     "required": true
                 },
@@ -3729,7 +3729,7 @@
                 },
                 {
                     "key": "spo2",
-                    "label": "SpO₂",
+                    "label": "SpO\u2082",
                     "type": "number",
                     "section": "Vitals"
                 }
@@ -3847,7 +3847,7 @@
                 },
                 {
                     "key": "temperatureC",
-                    "label": "Temperature (°C)",
+                    "label": "Temperature (\u00b0C)",
                     "type": "number",
                     "section": "Vitals"
                 },
@@ -3859,7 +3859,7 @@
                 },
                 {
                     "key": "spo2",
-                    "label": "SpO₂",
+                    "label": "SpO\u2082",
                     "type": "number",
                     "section": "Vitals"
                 },
@@ -7033,7 +7033,7 @@
             "frontendRoute": "/staff",
             "backend": {
                 "endpoint": "/api/domains/modules/staff",
-                "createEndpoint": "/api/domains/modules/staff",
+                "createEndpoint": "/api/phase89/staff",
                 "contractRoute": "/api/staff"
             },
             "databaseSource": "users + health_worker_profiles",
@@ -7168,7 +7168,7 @@
             "frontendRoute": "/facilities",
             "backend": {
                 "endpoint": "/api/domains/modules/facilities",
-                "createEndpoint": "/api/domains/modules/facilities",
+                "createEndpoint": "/api/phase89/facilities",
                 "contractRoute": "/api/facilities"
             },
             "databaseSource": "facilities",
@@ -7255,7 +7255,7 @@
             "frontendRoute": "/facility-capacity",
             "backend": {
                 "endpoint": "/api/contracts/modules/facility-capacity",
-                "createEndpoint": "/api/facilities/__FACILITY__/capacity",
+                "createEndpoint": "/api/phase89/facility-capacity",
                 "contractRoute": "/api/contracts/modules/facility-capacity"
             },
             "databaseSource": "facility_service_capacity",
@@ -7398,7 +7398,7 @@
             "frontendRoute": "/facility-resources",
             "backend": {
                 "endpoint": "/api/contracts/modules/facility-resources",
-                "createEndpoint": "/api/facilities/__FACILITY__/resources",
+                "createEndpoint": "/api/phase89/facility-resources",
                 "contractRoute": "/api/contracts/modules/facility-resources"
             },
             "databaseSource": "facility_resource_status",
@@ -7536,7 +7536,7 @@
             "frontendRoute": "/facility-incidents",
             "backend": {
                 "endpoint": "/api/facility-incidents",
-                "createEndpoint": "/api/facility-incidents",
+                "createEndpoint": "/api/phase89/facility-incidents",
                 "contractRoute": "/api/contracts/modules/facility-incidents"
             },
             "databaseSource": "facility_operational_incidents",
@@ -7701,7 +7701,7 @@
             "frontendRoute": "/facility-performance",
             "backend": {
                 "endpoint": "/api/facility-performance",
-                "createEndpoint": "/api/facility-performance",
+                "createEndpoint": "/api/phase89/facility-performance",
                 "contractRoute": "/api/contracts/modules/facility-performance"
             },
             "databaseSource": "facility_performance_snapshots",
@@ -9287,8 +9287,8 @@
             },
             "frontendRoute": "/interoperability",
             "backend": {
-                "endpoint": "/api/contracts/modules/interoperability",
-                "createEndpoint": "/api/contracts/modules/interoperability",
+                "endpoint": "/api/phase89/interoperability",
+                "createEndpoint": "/api/phase89/interoperability",
                 "contractRoute": "/api/interoperability"
             },
             "databaseSource": "hie_connections + hie_messages + smart_app_registrations",
@@ -9411,8 +9411,8 @@
             },
             "frontendRoute": "/health-connections",
             "backend": {
-                "endpoint": "/api/domains/modules/health-connections",
-                "createEndpoint": "/api/domains/modules/health-connections",
+                "endpoint": "/api/phase89/health-connections",
+                "createEndpoint": "/api/phase89/health-connections",
                 "contractRoute": "/api/contracts/modules/health-connections"
             },
             "databaseSource": "hie_connections",
@@ -9714,8 +9714,8 @@
             },
             "frontendRoute": "/settings",
             "backend": {
-                "endpoint": "/api/contracts/modules/settings",
-                "createEndpoint": "/api/contracts/modules/settings",
+                "endpoint": "/api/phase89/settings",
+                "createEndpoint": "/api/phase89/settings",
                 "contractRoute": "/api/contracts/modules/settings"
             },
             "databaseSource": "module_records:settings",
@@ -9822,7 +9822,7 @@
             "frontendRoute": "/terminology",
             "backend": {
                 "endpoint": "/api/domains/modules/terminology",
-                "createEndpoint": "/api/domains/modules/terminology",
+                "createEndpoint": "/api/phase89/terminology",
                 "contractRoute": "/api/contracts/modules/terminology"
             },
             "databaseSource": "terminology_concepts",
@@ -10066,7 +10066,7 @@
             "frontendRoute": "/care-pathways",
             "backend": {
                 "endpoint": "/api/domains/modules/care-pathways",
-                "createEndpoint": "/api/domains/modules/care-pathways",
+                "createEndpoint": "/api/phase89/care-pathways",
                 "contractRoute": "/api/contracts/modules/care-pathways"
             },
             "databaseSource": "care_pathways + care_pathway_steps",
@@ -10193,7 +10193,7 @@
             "frontendRoute": "/reporting",
             "backend": {
                 "endpoint": "/api/domains/modules/reporting",
-                "createEndpoint": "/api/domains/modules/reporting",
+                "createEndpoint": "/api/phase89/reporting",
                 "contractRoute": "/api/contracts/modules/reporting"
             },
             "databaseSource": "reporting_mappings + reporting_submissions",
@@ -10301,8 +10301,8 @@
             },
             "frontendRoute": "/offline-sync",
             "backend": {
-                "endpoint": "/api/domains/modules/offline-sync",
-                "createEndpoint": "/api/domains/modules/offline-sync",
+                "endpoint": "/api/phase89/offline-sync",
+                "createEndpoint": "/api/phase89/offline-sync",
                 "contractRoute": "/api/contracts/modules/offline-sync"
             },
             "databaseSource": "offline_sync_queue + sync_devices",
@@ -10310,7 +10310,7 @@
                 {
                     "key": "deviceId",
                     "label": "Device",
-                    "type": "uuid",
+                    "type": "text",
                     "section": "Sync",
                     "required": true,
                     "format": "uuid"
@@ -10339,7 +10339,7 @@
                 {
                     "key": "resourceId",
                     "label": "Resource ID",
-                    "type": "uuid",
+                    "type": "text",
                     "section": "Sync",
                     "format": "uuid"
                 },
