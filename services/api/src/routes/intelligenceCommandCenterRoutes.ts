@@ -8,7 +8,7 @@ export type Phase1011Deps = {
   dbAudit:(...args:any[])=>Promise<any>;
 };
 
-const WORKSPACES = new Set(['patient-360','clinical-velocity','value-based-care','ai-risk','ai-security','ai-governance','ai-evaluations','care-gaps','district-intelligence']);
+const WORKSPACES = new Set(['patient-360','clinical-velocity','value-based-care','ai-risk','ai-security','ai-governance','ai-evaluations','care-gaps','care-graph','district-intelligence']);
 const ACTIONS = new Set(['acknowledge','review','dismiss','resolve','escalate']);
 const safeNum=(v:any)=>Number(v||0);
 
@@ -21,6 +21,10 @@ export function registerPhase1011Routes(app:any,pool:Pool|null,deps:Phase1011Dep
     const workspace=String(req.params.workspace||'').toLowerCase(); if(!WORKSPACES.has(workspace))return reply.code(404).send({error:'Intelligence workspace not found.'});
     const days=Math.min(365,Math.max(1,Number(req.query?.days||30)));
     try{
+      if(workspace==='care-graph'){
+        const r=await pool.query(`SELECT e.id,e.patient_id AS "patientId",p.patient_number AS "patientNumber",p.first_name AS "firstName",p.last_name AS "lastName",e.source_type AS "sourceType",e.source_id AS "sourceId",e.target_type AS "targetType",e.target_id AS "targetId",e.relationship,e.metadata,e.created_at AS "createdAt" FROM care_graph_edges e JOIN patients p ON p.id=e.patient_id WHERE e.organization_id=$1 ORDER BY e.created_at DESC LIMIT 500`,[organizationId]);
+        return {data:{workspace,edges:r.rows,count:r.rowCount||0}};
+      }
       if(workspace==='patient-360'){
         const patientId=req.query?.patientId?String(req.query.patientId):'';
         if(!patientId)return reply.code(400).send({error:'A patientId is required for Patient 360.'});

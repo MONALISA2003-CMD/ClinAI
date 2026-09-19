@@ -1,156 +1,230 @@
 # ClinAI
 
-ClinAI is a connected healthcare operating platform baseline built around PostgreSQL clinical source-of-truth data, modular workflows, FHIR-oriented interoperability, governed AI boundaries, and a responsive web workspace.
+ClinAI is a connected healthcare platform designed to bring patient care, clinical workflows, diagnostics, medication management, operations, finance, interoperability and clinical intelligence into one workspace. The platform is built around a shared clinical record and organization-scoped data so information can move with the patient across the care journey.
 
-## Current release
+## What ClinAI provides
 
-The current implementation extends the PostgreSQL core into a connected patient journey:
+- Patient registration and longitudinal Patient 360 views
+- Queue, triage, encounters, diagnoses, clinical notes and care plans
+- Orders, laboratory, imaging and pharmacy workflows
+- Nursing, emergency, inpatient, beds, surgery, maternity and pediatrics
+- Immunization, child health, chronic care, medication reconciliation and consent management
+- Referrals and referral transfers
+- Billing, payments, insurance, claims and accounting
+- Inventory, procurement and supplier workflows
+- Patient portal, portal messaging, telemedicine and remote monitoring
+- Notifications, documents and public-health surveillance workflows
+- Facility, workforce, capacity, resource, incident and performance management
+- Interoperability, health connections, terminology, guidelines, care pathways, reporting and offline synchronization
+- Care Graph, care-gap review, clinical velocity, value-based measures and district intelligence
+- ClinAI AI assistance, evaluations, governance, security and risk controls
 
-**Patient → Appointment → Check in → Queue → Triage → Encounter → Note → Diagnosis/Orders → Laboratory/Imaging → Results → Prescription → Pharmacy → Billing → Discharge → Follow up**
+The public testing workspace uses synthetic records. Production deployments must use approved data, credentials, access controls, governance and clinical processes appropriate to the deployment environment.
 
-### Included
+## Architecture
 
-- Next.js web workspace
-- Fastify TypeScript API
-- PostgreSQL persistence
-- Patient 360
-- Search
-- Clinical encounter workspace
-- Contextual workflow actions
-- Triage observations
-- Laboratory samples and results
-- Pharmacy dispensing
-- Billing and payments
-- Referrals and follow up
-- Audit and outbox events
-- FHIR-oriented Patient, Encounter, Observation, ServiceRequest, MedicationRequest and DiagnosticReport endpoints
-- Python AI service boundary
-- Docker and Vercel/Render deployment configuration
+ClinAI is a monorepo with three primary application layers:
+
+```text
+ClinAI
+├── apps/web/                  Next.js web application
+├── services/api/              Fastify API and clinical application services
+├── services/intelligence/     Python intelligence and analytics service
+├── packages/                  Shared contracts and domain packages
+├── database/                  PostgreSQL schema, migrations and synthetic data
+├── tests/                     Automated integrity and regression checks
+└── scripts/                   Build, deployment and audit utilities
+```
+
+### Web application
+
+- Next.js 15
+- React 19
+- TypeScript
+- Responsive clinical workspace UI for desktop and mobile
+- Shared module navigation and connected record workflows
+
+### API
+
+- Node.js
+- Fastify 5
+- TypeScript
+- Zod validation
+- PostgreSQL access through `pg`
+- JWT-based authenticated workflows
+- Organization-scoped data access
+- Clinical, operational, financial, interoperability and intelligence APIs
+
+### Intelligence service
+
+- Python
+- FastAPI
+- Pydantic
+- NumPy
+- SciPy
+- scikit-learn
+- Deterministic clinical and operational computation separated from the web/API layer
+
+### Database
+
+- PostgreSQL 18 compatible schema
+- Neon PostgreSQL for the hosted database environment
+- Organization-scoped clinical and operational records
+- Explicit relationships between patients, encounters, clinical events and domain records
+- Indexed retrieval paths for high-use clinical and intelligence queries
+
+## AI and clinical intelligence
+
+ClinAI treats AI as an assisted clinical information layer rather than an independent clinical authority. The intelligence architecture can assemble authorized patient and organization context, retrieve connected records, calculate deterministic measures, surface signals and care gaps, and provide assisted responses for human review.
+
+Clinical decisions remain with qualified healthcare professionals and established clinical processes. Sensitive production deployments should use approved models, credentials, evidence sources, privacy controls, evaluation processes and governance appropriate to the organization.
+
+The main AI services are located in:
+
+- `services/api/src/ai/` for orchestration and provider integration
+- `services/api/src/intelligence/` for server-side intelligence coordination
+- `services/intelligence/` for Python analytics and deterministic computation
+- `apps/web/app/components/` for the clinical intelligence user experience
+
+## Data and interoperability
+
+The data model is designed around connected healthcare records. Major relationships include:
+
+```text
+Patient
+  ├── Encounters
+  │     ├── Diagnoses
+  │     ├── Clinical notes
+  │     ├── Orders
+  │     │     ├── Laboratory → Results
+  │     │     └── Imaging → Reports
+  │     ├── Medications
+  │     └── Care plans / tasks / referrals
+  ├── Admissions / beds / nursing / surgery / maternity / pediatrics
+  ├── Immunization / chronic care / reconciliation / consent
+  ├── Finance / insurance / claims / payments
+  └── Intelligence signals / care gaps / Care Graph / Patient 360
+```
+
+FHIR-oriented resources, interoperability connections, terminology, reporting and offline synchronization are implemented as controlled integration boundaries. External national or facility systems are not assumed to be connected merely because an adapter or configuration exists.
+
+## Security and governance
+
+- Organization-scoped database queries
+- Authenticated protected workflows
+- Role-aware access boundaries
+- Input validation with Zod
+- Audit-oriented clinical and operational actions
+- AI governance, evaluation and security records
+- Synthetic public testing data kept separate from protected clinical workflows
+- No AI credentials should be exposed to the browser
+
+## Local development
+
+### Requirements
+
+- Node.js 20+
+- npm 10+
+- Python 3.11+ for the intelligence service
+- PostgreSQL or a Neon PostgreSQL project
+
+### Install
+
+```bash
+npm install
+```
+
+For the Python intelligence service:
+
+```bash
+python -m pip install -r services/intelligence/requirements.txt
+```
+
+### Environment
+
+Configure the API and web environment variables for the deployment. Common settings include:
+
+```text
+DATABASE_URL
+JWT_SECRET
+NEXT_PUBLIC_API_URL
+INTELLIGENCE_SERVICE_URL
+```
+
+AI provider credentials depend on the provider configuration enabled for the deployment. Keep all provider credentials server-side. Never commit secrets, `.env` files or production credentials to source control.
+
+### Run
+
+```bash
+npm run dev
+```
+
+The web application and API can also be started independently with their workspace scripts.
+
+## Database workflow
+
+Database changes live under `database/`. The schema and migration history should be applied in their intended order. Never rename or reorder already-applied migration files in a live database deployment.
+
+Synthetic test data is available for development and public testing. It should never be confused with real clinical records.
+
+## Quality checks
+
+The repository contains automated checks for:
+
+- Frontend and backend route alignment
+- Module contract integrity
+- Database schema contracts
+- Clinical workflow connectivity
+- Intelligence and AI core behavior
+- Security boundaries
+- Public synthetic-data isolation
+- Responsive UI structure
+- Deployment layout and build artifacts
+- Domain integrity and regression behavior
+
+Run the main type checks with:
+
+```bash
+npm run typecheck
+```
+
+Run the broader stability suite with:
+
+```bash
+npm run test:all:stability
+```
+
+Individual audit scripts are available under `tests/` when a focused check is required.
 
 ## Deployment
 
-Frontend: Vercel from the repository root, using `vercel.json` and `apps/web/.next` as the output directory.
+The web application is suitable for a Next.js/Vercel deployment and the API is designed for a Node/Fastify service such as Render. The Python intelligence service can run as its own service. Neon provides the hosted PostgreSQL layer.
 
-API: Render with root directory `services/api`, build command `npm install && npm run build`, start command `npm start`, and `DATABASE_URL` plus `JWT_SECRET` environment variables.
+A production deployment should verify:
 
-## Database
+1. Web application build and type safety
+2. API build and route registration
+3. Database connectivity and migration state
+4. Organization and role configuration
+5. AI provider credentials and response latency
+6. Intelligence service connectivity
+7. Synthetic/public workspace isolation
+8. Clinical workflow smoke tests across registration, care, diagnostics, medication, finance and intelligence
+9. Monitoring, logs, backups and operational ownership
 
-For a fresh database, run `database/schema.sql`.
-For an existing deployment, run `database/migrations/002_connected_workflows.sql`; the API also performs safe runtime creation of its `module_records` table and the notifications `created_at` column.
+## Project journey
 
-## Verification
+ClinAI has evolved from a connected clinical record foundation into a broader healthcare operating environment. The current architecture consolidates clinical care, diagnostics, medication workflows, acute and specialty services, finance, supply, patient engagement, facility operations, interoperability and intelligence around shared records. The implementation emphasizes incremental domain expansion, explicit data relationships, organization-level isolation, measurable operational workflows and human-reviewed AI assistance.
 
-Run the API contract smoke test with the API running:
+The repository intentionally keeps implementation history out of the user-facing product. The source code, database migration history and automated tests remain the authoritative technical record of how the platform is built.
 
-```bash
-API_URL=https://your-api.example.com node tests/api-contract.mjs
-```
+## Production principles
 
-The smoke test exercises patient registration, appointment check-in, queue transition, encounter/note/sign, triage observations, laboratory order/sample/result/verify/release, pharmacy dispensing, billing/payment, referral/send, discharge/follow-up, FHIR Patient and Patient 360, and audit access.
-
-## Safety boundary
-
-This repository is a software development baseline. It does not claim clinical safety, regulatory certification, privacy compliance, medical-device validation, interoperability certification, or readiness for real patient data. Those require institution-specific clinical validation, security and privacy review, legal/regulatory review, real provider/device integrations, operational policies, backup/disaster-recovery testing, and AI governance.
-
-## Next V3: Intelligence, Governance and Care Coordination
-
-The platform now includes governance resources, deterministic clinical decision support, care-gap management, consent-aware communication queuing, clinical alerts, and PostgreSQL-backed operational analytics. See `docs/IMPLEMENTATION-NEXT-V3.md`.
-
-## Advanced Clinical Layer V4
-
-This build adds dedicated PostgreSQL-backed workflows for emergency care, inpatient admissions/discharge, nursing assessments, surgery safety workflow, maternity, pediatrics/IMCI-oriented assessment, immunization, chronic care, telemedicine and remote monitoring.
-
-Research basis is documented in `docs/ADVANCED-CLINICAL-RESEARCH.md`. Clinical content is intentionally configurable and must be localized and clinically governed before production use.
-
-New migration: `database/migrations/004-advanced-clinical-services.sql`.
-
-Important: these workflows are software infrastructure, not medical advice or a substitute for facility protocols, national guidelines, clinician judgment, credentialing, privacy/security review or regulatory approval.
-
-## V5: Uganda-aware Patient 360 + FHIR
-
-V5 deepens the longitudinal clinical record and makes Uganda a first-class localization context. It adds PostgreSQL-backed Patient 360 aggregation, extensible patient identifiers, FHIR R4 resources for Immunization, CarePlan, Procedure, MedicationAdministration and Appointment, ServiceRequest search, and an explicit Uganda configuration boundary.
-
-Research and implementation rationale: `docs/V5-UGANDA-PATIENT360-FHIR-RESEARCH.md`. The implementation follows the direction of Uganda MoH DH-ASK and Health Information Exchange/Interoperability guidance while retaining international FHIR/WHO SMART interoperability.
-
-The `/api/uganda/profile` endpoint intentionally reports national integrations as not connected until approved interfaces and credentials are configured.
-
-## V6: Uganda Clinical Interoperability + Governance Layer
-
-V6 deepens the Uganda-first architecture using current Uganda Ministry of Health material and current WHO SMART/FHIR material.
-
-### Added persistence
-- facility_identifiers
-- health_worker_profiles
-- terminology_concepts
-- clinical_guidelines
-- clinical_guideline_rules
-- care_pathways
-- care_pathway_steps
-- immunization_schedule_rules
-- hie_connections
-- hie_messages
-- reporting_mappings
-- offline_sync_queue
-
-### Added API
-- `/api/uganda/architecture`
-- `/api/facilities/:facilityId/identifiers`
-- `/api/health-workers`
-- `/api/terminology`
-- `/api/guidelines`
-- `/api/guidelines/:id/rules`
-- `/api/care-pathways`
-- `/api/care-pathways/:id/steps`
-- `/api/immunization/schedule`
-- `/api/hie/connections`
-- `/api/hie/messages`
-- `/api/reporting/mappings`
-- `/api/offline/sync`
-
-### V6 research boundary
-ClinAI does not claim live connection to Uganda national HIE, facility registry, health-worker registry, terminology registry or external reporting services. The architecture is adapter-ready and requires approved interfaces, credentials, data-sharing agreements, conformance testing and governance before activation.
-
-Clinical content is configuration-driven. Uganda-approved protocols and WHO SMART content should be loaded, versioned, reviewed and tested through the governance layer rather than hard-coded into application logic.
-
-See `docs/V6-UGANDA-CLINICAL-INTEROPERABILITY-RESEARCH.md`.
-
-## V8 — Uganda maternal, newborn and postnatal layer
-V8 adds source-linked maternal care, ANC contacts, birth events, newborn records and postnatal contacts. It is based on current Uganda MoH maternal-health publications and the latest WHO SMART/DAK material reviewed on 2026-09-12. National guidance remains authoritative for Uganda-specific content; WHO SMART provides the computable structure. See `docs/V8-UGANDA-MATERNAL-NEWBORN-RESEARCH.md`.
-
-
-## V9
-Uganda child health, growth, IMCI and immunization continuity. See `docs/V9-UGANDA-CHILD-HEALTH-IMMUNIZATION-RESEARCH.md` and `database/migrations-009-uganda-child-health-immunization.sql`.
-
-## V11
-Population health and surveillance intelligence adds surveillance events/cases, population cohorts and members, population indicators, surveillance summary, cohort management and dashboard APIs. It is designed for Uganda-first interoperability while remaining country-adaptable. National surveillance endpoints are not claimed as connected.
-
-## V16 ClinAI Intelligence Engine
-
-The V16 build adds a server-side Gemini Interactions API v1 gateway, patient and organization context assembly, Ask ClinAI, patient intelligence, attention analysis, documentation drafts, role briefings, translation, AI usage/audit tracking, knowledge-source registry, evaluation workflow, responsive AI UI and a controlled human-review boundary. Configure `GEMINI_AUTHORIZATION_KEY` on the API service. `GEMINI_API_KEY` remains a compatibility fallback. Do not expose either key to the browser.
-
-
-## V17 Mobile and AI presentation polish
-
-V17 refines the Clinical Intelligence Engine for real phone use without changing the clinical safety boundary. The web app now declares a device-width viewport, guards against horizontal overflow and unwanted text scaling, improves touch-first spacing, and gives AI responses a clean human-readable presentation. Gemini model and API version details are no longer displayed to normal users. The AI gateway also explicitly requests plain text without Markdown decoration, while the frontend renderer safely normalizes legacy Markdown-style output if a provider returns it.
-
-The AI status card now shows only whether ClinAI intelligence is available. Loading feedback uses human language, and the role selector uses readable role names. The clinical intelligence response area supports headings, paragraphs and lists without exposing implementation formatting.
-
-## ClinAI Intelligence
-
-The AI layer is a tool-using intelligence system, not a standalone chatbot. It can retrieve tenant-scoped patient and facility context, detect proactive attention signals, call deterministic computation, delegate multi-value analysis to the Python Intelligence Engine, use approved evidence, and optionally perform explicit research with Google Search and URL Context.
-
-The user-facing answer is structured into direct answer, recorded facts, calculations, reasoning summary, suggested review, uncertainty, evidence and confidence. Private model chain-of-thought is not exposed.
-
-### Intelligence services
-
-- `services/api/src/ai/ai-orchestrator.ts` — Gemini orchestration, tool registry, safety, evidence, proactive attention and AI routes.
-- `services/intelligence/main.py` — deterministic computation and analytics engine.
-- `services/intelligence/Dockerfile` — deployable Python intelligence service.
-- `database/migrations/017-ai-intelligence-core.sql` — AI work-run persistence.
-- `docs/AI-INTELLIGENCE-ARCHITECTURE.md` — implementation architecture and operating model.
-
-Set `INTELLIGENCE_SERVICE_URL` on the API service to the deployed Python service URL. For local Docker Compose it is already wired to `http://intelligence:8000`.
-
-## Multi-model AI
-
-ClinAI includes a provider-independent **free-only** AI router with Gemini, 14 OpenRouter free models including the NVIDIA Nemotron family, and Groq GPT-OSS. It supports deterministic-first Python reasoning, provider-global free-tier quota reservation, model selection, fallback, provider audit logging, and a shared ClinAI tool gateway. Paid and trial runtime providers are disabled. OpenRouter public/free endpoints are blocked from protected patient clinical context by default, and hard capability routing prevents incompatible model selection.
+- One connected clinical record rather than isolated module silos
+- Explicit database relationships rather than presentation-only links
+- Human clinical oversight for consequential decisions
+- Honest handling of missing or unavailable information
+- Organization-scoped access throughout the data layer
+- Observable, testable backend workflows
+- Mobile-first clinical usability without sacrificing desktop workflows
+- Clear separation between public synthetic testing and protected healthcare data
