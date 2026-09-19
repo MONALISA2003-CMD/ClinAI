@@ -31,7 +31,7 @@ const transferCreate = z.object({referralId:UUID,fromFacilityId:optionalUuid,toF
 const taskCreate = z.object({patientId:UUID,encounterId:optionalUuid,taskType:z.string().trim().min(1),taskCategory:z.string().default('clinical'),title:z.string().trim().min(2),priority:z.enum(['low','normal','high','urgent','critical']).default('normal'),dueAt:z.string().datetime().optional(),assignedTo:optionalUuid,status:z.enum(['open','in-progress','completed','cancelled']).default('open'),payload:z.record(z.any()).default({}),escalationLevel:z.number().int().min(0).default(0)});
 const workflowCreate = z.object({name:z.string().trim().min(2),description:z.string().trim().min(2),trigger:z.string().trim().min(1),owner:optionalUuid,steps:z.array(z.any()).min(1),status:z.enum(['draft','active','paused','retired']).default('draft')});
 
-function db(reply:any,pool:Pool|null){ if(!pool){reply.code(501).send({error:'PostgreSQL required'});return false;} return true; }
+function db(reply:any,pool:Pool|null){ if(!pool){reply.code(501).send({error:'Clinical data service is unavailable.'});return false;} return true; }
 function iso(value:any){return value?new Date(value).toISOString():null;}
 function normalizeRows(rows:any[]){return rows.map((x:any)=>({ ...x }));}
 
@@ -106,10 +106,10 @@ export function registerPhase2CoreClinicalRoutes(app:FastifyInstance,pool:Pool|n
       }
       if(module==='diagnoses'){
         const [summary,trend,types,verification]=await Promise.all([
-          count(`SELECT count(*)::int AS total,count(*) FILTER(WHERE status='active')::int AS active,count(*) FILTER(WHERE status='resolved')::int AS resolved,count(*) FILTER(WHERE status='provisional')::int AS provisional,count(*) FILTER(WHERE verification_status<>'verified')::int AS unresolved FROM diagnoses d JOIN patients p ON p.id=d.patient_id WHERE p.organization_id=$1`),
+          count(`SELECT count(*)::int AS total,count(*) FILTER(WHERE d.status='active')::int AS active,count(*) FILTER(WHERE d.status='resolved')::int AS resolved,count(*) FILTER(WHERE d.status='provisional')::int AS provisional,count(*) FILTER(WHERE d.verification_status<>'verified')::int AS unresolved FROM diagnoses d JOIN patients p ON p.id=d.patient_id WHERE p.organization_id=$1`),
           count(`SELECT to_char(d.onset_date,'YYYY-MM-DD') AS day,count(*)::int AS count FROM diagnoses d JOIN patients p ON p.id=d.patient_id WHERE p.organization_id=$1 AND d.onset_date IS NOT NULL GROUP BY d.onset_date ORDER BY d.onset_date`),
           count(`SELECT COALESCE(d.diagnosis_type,'unspecified') AS category,count(*)::int AS count FROM diagnoses d JOIN patients p ON p.id=d.patient_id WHERE p.organization_id=$1 GROUP BY 1 ORDER BY count DESC LIMIT 12`),
-          count(`SELECT verification_status,count(*)::int AS count FROM diagnoses d JOIN patients p ON p.id=d.patient_id WHERE p.organization_id=$1 GROUP BY verification_status ORDER BY count DESC`)
+          count(`SELECT d.verification_status,count(*)::int AS count FROM diagnoses d JOIN patients p ON p.id=d.patient_id WHERE p.organization_id=$1 GROUP BY d.verification_status ORDER BY count DESC`)
         ]); return {summary:summary.rows[0],trend:trend.rows.slice(-days),breakdown:types.rows,verification:verification.rows};
       }
       if(module==='clinical-notes'){
@@ -122,9 +122,9 @@ export function registerPhase2CoreClinicalRoutes(app:FastifyInstance,pool:Pool|n
       }
       if(module==='care-plans'){
         const [summary,trend,statuses,priorities]=await Promise.all([
-          count(`SELECT count(*)::int AS total,count(*) FILTER(WHERE status='active')::int AS active,count(*) FILTER(WHERE status='draft')::int AS draft,count(*) FILTER(WHERE status='completed')::int AS completed,count(*) FILTER(WHERE review_at IS NOT NULL AND review_at<now() AND status='active')::int AS overdue_review FROM care_plans c JOIN patients p ON p.id=c.patient_id WHERE p.organization_id=$1`),
+          count(`SELECT count(*)::int AS total,count(*) FILTER(WHERE c.status='active')::int AS active,count(*) FILTER(WHERE c.status='draft')::int AS draft,count(*) FILTER(WHERE c.status='completed')::int AS completed,count(*) FILTER(WHERE c.review_at IS NOT NULL AND c.review_at<now() AND c.status='active')::int AS overdue_review FROM care_plans c JOIN patients p ON p.id=c.patient_id WHERE p.organization_id=$1`),
           count(`SELECT to_char(c.created_at::date,'YYYY-MM-DD') AS day,count(*)::int AS count FROM care_plans c JOIN patients p ON p.id=c.patient_id WHERE p.organization_id=$1 AND c.created_at>=current_date-$2::int GROUP BY c.created_at::date ORDER BY c.created_at::date`,[organizationId,days]),
-          count(`SELECT status,count(*)::int AS count FROM care_plans c JOIN patients p ON p.id=c.patient_id WHERE p.organization_id=$1 GROUP BY status ORDER BY count DESC`),
+          count(`SELECT c.status,count(*)::int AS count FROM care_plans c JOIN patients p ON p.id=c.patient_id WHERE p.organization_id=$1 GROUP BY c.status ORDER BY count DESC`),
           count(`SELECT priority,count(*)::int AS count FROM care_plans c JOIN patients p ON p.id=c.patient_id WHERE p.organization_id=$1 GROUP BY priority ORDER BY count DESC`)
         ]); return {summary:summary.rows[0],trend:trend.rows,breakdown:priorities.rows,status:statuses.rows};
       }
@@ -147,7 +147,7 @@ export function registerPhase2CoreClinicalRoutes(app:FastifyInstance,pool:Pool|n
         const [summary,trend,statuses,priorities]=await Promise.all([
           count(`SELECT count(*)::int AS total,count(*) FILTER(WHERE status='open')::int AS open,count(*) FILTER(WHERE status='in-progress')::int AS in_progress,count(*) FILTER(WHERE status='completed')::int AS completed,count(*) FILTER(WHERE due_at<now() AND status NOT IN ('completed','cancelled'))::int AS overdue,count(*) FILTER(WHERE priority IN ('critical','urgent') AND status NOT IN ('completed','cancelled'))::int AS high_priority FROM care_tasks WHERE organization_id=$1`),
           count(`SELECT to_char(created_at::date,'YYYY-MM-DD') AS day,count(*)::int AS count FROM care_tasks WHERE organization_id=$1 AND created_at>=current_date-$2::int GROUP BY created_at::date ORDER BY created_at::date`,[organizationId,days]),
-          count(`SELECT status,count(*)::int AS count FROM care_tasks WHERE organization_id=$1 GROUP BY status ORDER BY count DESC`),
+          count(`SELECT status,count(*)::int AS count FROM care_tasks WHERE organization_id=$1 GROUP BY c.status ORDER BY count DESC`),
           count(`SELECT priority,count(*)::int AS count FROM care_tasks WHERE organization_id=$1 GROUP BY priority ORDER BY count DESC`)
         ]); return {summary:summary.rows[0],trend:trend.rows,status:statuses.rows,breakdown:priorities.rows};
       }

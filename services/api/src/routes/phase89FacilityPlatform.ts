@@ -6,7 +6,7 @@ const json = z.record(z.any());
 export function registerPhase89FacilityPlatformRoutes(app:any,pool:any,deps:any){
   const {dbOrganizationId,dbUserId,requireAuthorizedWrite,dbAudit}=deps;
   const oid=(req:any)=>dbOrganizationId(req);
-  const noDb=(reply:any)=>reply.code(501).send({error:'PostgreSQL required'});
+  const noDb=(reply:any)=>reply.code(501).send({error:'Clinical data service is unavailable.'});
   const list=async(sql:string,params:any[])=>{const r=await pool.query(sql,params);return {data:r.rows,count:r.rowCount??0};};
 
   const queries:Record<string,string>={

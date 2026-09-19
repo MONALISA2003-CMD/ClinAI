@@ -8,7 +8,7 @@ type Ctx = { dbOrganizationId:(req:any)=>string|null; dbUserId:(req:any)=>string
 export function registerWorkstream2DomainRoutes(app:FastifyInstance,pool:Pool|null,ctx:Ctx){
   const oid=(req:any)=>ctx.dbOrganizationId(req);
   const write=(req:any)=>ctx.requireAuthorizedWrite(req);
-  const requireDb=(reply:any)=>{if(!pool){reply.code(501).send({error:'PostgreSQL required'});return false;}return true;};
+  const requireDb=(reply:any)=>{if(!pool){reply.code(501).send({error:'Clinical data service is unavailable.'});return false;}return true;};
 
   app.get('/api/domains/finance/overview',async(req:any,reply:any)=>{
     if(!requireDb(reply))return; const organizationId=oid(req); if(!organizationId)return reply.code(400).send({error:'Organization context is required'});

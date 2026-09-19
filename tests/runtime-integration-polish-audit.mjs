@@ -1,0 +1,21 @@
+#!/usr/bin/env node
+import fs from 'node:fs';
+import path from 'node:path';
+const root=process.cwd();
+const read=p=>fs.readFileSync(path.join(root,p),'utf8');
+const checks=[];
+const phase45=read('services/api/src/routes/phase45AcuteContinuity.ts');
+const phase3=read('services/api/src/routes/phase3Diagnostics.ts');
+const phase2=read('services/api/src/routes/phase2CoreClinical.ts');
+const home=read('services/api/src/routes/phase1011IntelligenceHome.ts');
+const page=read('apps/web/app/page.tsx');
+const p1011=read('apps/web/app/components/Phase1011.tsx');
+checks.push([!/replaceAll\(cfg\.alias/.test(phase45),'no unsafe SQL alias replacement']);
+checks.push([!/generate_series\([^\n]*\)\s+d\(day\)/.test(phase45+phase3+home),'date series aliases use safe day_date']);
+checks.push([/safeQuery=async/.test(home)&&/widgetErrors/.test(home),'command center isolates widget failures']);
+checks.push([/friendlyFieldLabel/.test(page)&&/semantic-form-sections/.test(page+read('apps/web/app/globals.css')),'semantic clinical form system present']);
+checks.push([!(/Implementation notes|Database → API|Medicines JSON|Discrepancies JSON/.test(page)),'technical implementation labels removed from frontend']);
+checks.push([/p1011-partial-warning/.test(p1011+read('apps/web/app/globals.css')),'partial intelligence warning presentation present']);
+checks.push([/generate_series|safeQuery/.test(home),'phase 10/11 hardening remains in source']);
+for(const [ok,label] of checks) console.log(`${ok?'PASS':'FAIL'} ${label}`);
+if(checks.some(([ok])=>!ok))process.exit(1);

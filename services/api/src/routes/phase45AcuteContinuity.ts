@@ -27,6 +27,11 @@ type ModuleConfig = {
   orderBy: string;
 };
 
+function replaceQualifiedAlias(sql:string, alias:string, replacement:string){
+  const escaped=alias.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+  return sql.replace(new RegExp(`\\b${escaped}\\.`,'g'), `${replacement}.`);
+}
+
 const MODULES: Record<string, ModuleConfig> = {
   emergency: {
     table: 'emergency_cases', alias: 'e', dateColumn: 'e.arrival_at', statusColumn: 'e.status', breakdownColumn: 'e.acuity', patientJoin: 'JOIN patients p ON p.id=e.patient_id',
@@ -180,10 +185,10 @@ export function registerPhase45AcuteContinuityRoutes(app: FastifyInstance, pool:
     if(publicOnly && cfg.publicFilter) whereParts.push(cfg.publicFilter);
     else if(publicOnly && cfg.patientJoin) whereParts.push(`p.patient_number LIKE 'TEST-%'`);
     const where=whereParts.join(' AND ');
-        const trendOrgPredicate=cfg.organizationPredicate ? cfg.organizationPredicate.replaceAll(cfg.alias,'x') : 'x.organization_id';
-    const trendPublic=(publicOnly && cfg.publicFilter ? ` AND ${cfg.publicFilter.replaceAll(cfg.alias,'x')}` : (publicOnly && cfg.patientJoin ? ` AND EXISTS (SELECT 1 FROM patients p2 WHERE p2.id=x.patient_id AND p2.patient_number LIKE 'TEST-%')` : ''));
+        const trendOrgPredicate=cfg.organizationPredicate ? replaceQualifiedAlias(cfg.organizationPredicate,cfg.alias,'x') : 'x.organization_id';
+    const trendPublic=(publicOnly && cfg.publicFilter ? ` AND ${replaceQualifiedAlias(cfg.publicFilter,cfg.alias,'x')}` : (publicOnly && cfg.patientJoin ? ` AND EXISTS (SELECT 1 FROM patients p2 WHERE p2.id=x.patient_id AND p2.patient_number LIKE 'TEST-%')` : ''));
     const [trend,breakdown,total]=await Promise.all([
-      pool.query(`SELECT to_char(d.day,'YYYY-MM-DD') AS day,count(x.id)::int AS count FROM generate_series(current_date-13,current_date,interval '1 day') d(day) LEFT JOIN ${cfg.table} x ON date_trunc('day',${cfg.dateColumn.replaceAll(cfg.alias,'x')})=date_trunc('day',d.day::timestamptz) AND ${trendOrgPredicate}=$1${trendPublic} GROUP BY d.day ORDER BY d.day`,[organizationId]),
+      pool.query(`SELECT to_char(d.day_date,'YYYY-MM-DD') AS day,count(x.id)::int AS count FROM generate_series(current_date-13,current_date,interval '1 day') AS d(day_date) LEFT JOIN ${cfg.table} x ON date_trunc('day',${replaceQualifiedAlias(cfg.dateColumn,cfg.alias,'x')})=date_trunc('day',d.day_date::timestamptz) AND ${trendOrgPredicate}=$1${trendPublic} GROUP BY d.day_date ORDER BY d.day_date`,[organizationId]),
       cfg.breakdownColumn?pool.query(`SELECT COALESCE(CAST(${cfg.breakdownColumn} AS TEXT),'Not recorded') AS label,count(*)::int AS count FROM ${cfg.table} ${cfg.alias} ${join} ${facilityJoin} WHERE ${where} GROUP BY ${cfg.breakdownColumn} ORDER BY count(*) DESC LIMIT 12`,[organizationId]):Promise.resolve({rows:[]}),
       pool.query(`SELECT count(*)::int AS total FROM ${cfg.table} ${cfg.alias} ${join} ${facilityJoin} WHERE ${where}`,[organizationId])
     ]);
@@ -212,7 +217,7 @@ export function registerPhase45AcuteContinuityRoutes(app: FastifyInstance, pool:
   }
 
   async function createModule(module:string, req:any){
-    write(req); if(!pool) throw Object.assign(new Error('PostgreSQL required'),{statusCode:501});
+    write(req); if(!pool) throw Object.assign(new Error('Clinical data service is unavailable.'),{statusCode:501});
     const organizationId=org(req); if(!organizationId)throw Object.assign(new Error('Organization context is required.'),{statusCode:400});
     const body:any=req.body||{}; const client=await pool.connect();
     try{await client.query('BEGIN');let row:any;let event:string='phase45.record.created';
@@ -283,7 +288,7 @@ export function registerPhase45AcuteContinuityRoutes(app: FastifyInstance, pool:
   }
 
   async function actionModule(module:string,id:string,req:any){
-    write(req); if(!pool)throw Object.assign(new Error('PostgreSQL required'),{statusCode:501});
+    write(req); if(!pool)throw Object.assign(new Error('Clinical data service is unavailable.'),{statusCode:501});
     const organizationId=org(req); if(!organizationId)throw Object.assign(new Error('Organization context is required.'),{statusCode:400});
     const body:any=req.body||{}; const action=String(body.action||'').trim(); const client=await pool.connect();
     try{await client.query('BEGIN');let row:any;let event=`${module}.${action}`;

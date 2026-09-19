@@ -20,7 +20,7 @@ const MODULES=new Set([
 export function registerPhase67FinancePublicHealthRoutes(app:FastifyInstance,pool:Pool|null,ctx:Ctx){
   const oid=(req:any)=>ctx.dbOrganizationId(req);
   const write=(req:any)=>ctx.requireAuthorizedWrite(req);
-  const requireDb=(reply:any)=>{if(!pool){reply.code(501).send({error:'PostgreSQL required'});return false;}return true;};
+  const requireDb=(reply:any)=>{if(!pool){reply.code(501).send({error:'Clinical data service is unavailable.'});return false;}return true;};
 
   const listQueries:Record<string,(organizationId:string,req:any)=>Promise<{data:Row[];count:number}>>={
     billing: async(o)=>{const r=await pool!.query(`SELECT i.id,i.patient_id AS "patientId",p.patient_number AS "patientNumber",i.encounter_id AS "encounterId",i.status,i.currency,i.total,i.description,i.created_at AS "createdAt",COALESCE(SUM(py.amount) FILTER(WHERE py.status='completed'),0)::numeric AS "paidAmount",GREATEST(i.total-COALESCE(SUM(py.amount) FILTER(WHERE py.status='completed'),0),0)::numeric AS "outstandingAmount" FROM invoices i LEFT JOIN patients p ON p.id=i.patient_id LEFT JOIN payments py ON py.invoice_id=i.id WHERE i.organization_id=$1 GROUP BY i.id,p.patient_number ORDER BY i.created_at DESC LIMIT 500`,[o]);return {data:r.rows,count:r.rowCount ?? 0};},
