@@ -20,6 +20,7 @@ import { registerPhase3DiagnosticsRoutes } from './routes/phase3Diagnostics.js';
 import { registerPhase45AcuteContinuityRoutes } from './routes/phase45AcuteContinuity.js';
 import { registerPhase67FinancePublicHealthRoutes } from './routes/phase67FinancePublicHealth.js';
 import { registerPhase89FacilityPlatformRoutes } from './routes/phase89FacilityPlatform.js';
+import { registerPhase1011Routes } from './routes/phase1011IntelligenceHome.js';
 import { DOMAIN_MODULE_SPECS } from './domainModuleSpecs.js';
 
 const MODULE_CONTRACTS = moduleContractCatalog.modules as any[];
@@ -2560,6 +2561,7 @@ registerPhase3DiagnosticsRoutes(app,pool,{dbOrganizationId,dbUserId,requireAutho
 registerPhase45AcuteContinuityRoutes(app,pool,{dbOrganizationId,dbUserId,requireAuthorizedWrite,dbAudit,queueEvent});
 registerPhase67FinancePublicHealthRoutes(app,pool,{dbOrganizationId,dbUserId,requireAuthorizedWrite,dbAudit,queueEvent});
 registerPhase89FacilityPlatformRoutes(app,pool,{dbOrganizationId,dbUserId,requireAuthorizedWrite,dbAudit});
+registerPhase1011Routes(app,pool,{dbOrganizationId,dbUserId,requireAuthorizedWrite,dbAudit});
 
 app.listen({port:Number(process.env.PORT||4000),host:'0.0.0.0'});
 

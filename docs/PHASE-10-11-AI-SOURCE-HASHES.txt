@@ -1,0 +1,3 @@
+075b0c9535f9d0071da585ab1026b5c6b1c7d049bdd0a65e38d85debb6f150b4  services/api/src/ai/ai-orchestrator.ts
+9262acea258a7d8a2eeaa71f4b2f7a417f458f31ddb5d697cdccacb535554af9  services/api/src/ai/ai-providers.ts
+71cb4f55bf33bfa3888ac31aad3019499af2d96a32d0ade1ee74a69b7b19577b  services/intelligence/clinical_reasoning.py
