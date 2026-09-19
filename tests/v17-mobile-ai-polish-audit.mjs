@@ -12,5 +12,5 @@ assert.ok(!web.includes('status.model') && !web.includes('status.apiVersion'),'m
 assert.ok(web.includes('Working…') || web.includes('Finding the answer…'),'AI loading state missing');
 assert.ok(css.includes('overflow-x:hidden') && css.includes('-webkit-text-size-adjust:100%'),'mobile overflow/text scaling guard missing');
 assert.ok(css.includes('.ai-response h3') && css.includes('.ai-response ul'),'AI response typography/list styles missing');
-assert.ok(intelligence.includes('UPPERCASE BOLD HEADINGS') && intelligence.includes('Never output JSON'),'AI human formatting instruction missing');
+assert.ok(intelligence.includes('FORMATTING:') && intelligence.includes('Prefer bold section headings') && intelligence.includes('Never output JSON'),'AI human formatting instruction missing');
 console.log('ClinAI V17 mobile and AI presentation audit passed.');

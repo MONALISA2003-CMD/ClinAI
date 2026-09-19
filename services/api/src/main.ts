@@ -16,6 +16,8 @@ import { buildPatientIntelligenceLayer, buildClinicalVelocity, buildValueBasedCa
 import moduleContractCatalog from '../../../packages/module-contracts/contracts.json' with { type: 'json' };
 import { registerWorkstream2DomainRoutes } from './routes/workstream2Domains.js';
 import { registerPhase2CoreClinicalRoutes } from './routes/phase2CoreClinical.js';
+import { registerPhase3DiagnosticsRoutes } from './routes/phase3Diagnostics.js';
+import { registerPhase45AcuteContinuityRoutes } from './routes/phase45AcuteContinuity.js';
 import { DOMAIN_MODULE_SPECS } from './domainModuleSpecs.js';
 
 const MODULE_CONTRACTS = moduleContractCatalog.modules as any[];
@@ -48,7 +50,7 @@ const READ_ONLY_ROLES = new Set(['viewer','analyst']);
 function actor(req:any){ return req.user?.sub || 'system'; }
 function org(req:any){ return req.user?.organizationId || null; }
 function canWrite(req:any){ return Boolean(req.user?.publicSynthetic) || WRITE_ROLES.has(String(req.user?.role || '').toLowerCase()); }
-function isPublicPath(path:string){ return PUBLIC_API_PATHS.has(path) || path.startsWith('/api/public/test-patients/') || path.startsWith('/api/public/test-modules/') || path.startsWith('/api/public/test-intelligence/'); }
+function isPublicPath(path:string){ return PUBLIC_API_PATHS.has(path) || path.startsWith('/api/public/test-patients/') || path.startsWith('/api/public/test-modules/') || path.startsWith('/api/public/test-intelligence/') || path.startsWith('/api/public/test-phase45/'); }
 const AI_NON_MUTATING_PATHS = new Set(['/api/ai/assist','/api/ai/patient-intelligence','/api/ai/compute','/api/ai/analyze','/api/ai/research','/api/ai/document','/api/ai/management-brief','/api/ai/cohort','/api/ai/role-briefing','/api/ai/attention','/api/ai/translate','/api/ai/language/analyze','/api/ai/router','/api/ai/feedback']);
 function isClinicalMutation(req:any){
   const path=(req.raw.url||'/').split('?')[0];
@@ -291,6 +293,101 @@ async function ensureRuntimeSchema(){
   `);
 }
 await ensureRuntimeSchema();
+async function ensurePhase3RuntimeSchema(){
+  if(!pool) return;
+  await pool.query(`
+    ALTER TABLE lab_samples ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
+    ALTER TABLE lab_samples ADD COLUMN IF NOT EXISTS received_by uuid REFERENCES users(id);
+    ALTER TABLE lab_samples ADD COLUMN IF NOT EXISTS processed_by uuid REFERENCES users(id);
+    ALTER TABLE lab_samples ADD COLUMN IF NOT EXISTS rejected_at timestamptz;
+    ALTER TABLE lab_samples ADD COLUMN IF NOT EXISTS rejection_reason text;
+    ALTER TABLE lab_samples ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
+    ALTER TABLE lab_results ADD COLUMN IF NOT EXISTS reference_range jsonb NOT NULL DEFAULT '{}';
+    ALTER TABLE lab_results ADD COLUMN IF NOT EXISTS interpretation text;
+    ALTER TABLE lab_results ADD COLUMN IF NOT EXISTS comments text;
+    ALTER TABLE lab_results ADD COLUMN IF NOT EXISTS released_by uuid REFERENCES users(id);
+    ALTER TABLE lab_results ADD COLUMN IF NOT EXISTS released_at timestamptz;
+    ALTER TABLE lab_results ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
+    ALTER TABLE lab_results ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
+    CREATE TABLE IF NOT EXISTS imaging_studies(
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      patient_id uuid NOT NULL REFERENCES patients(id) ON DELETE CASCADE, encounter_id uuid REFERENCES encounters(id) ON DELETE SET NULL,
+      order_id uuid REFERENCES clinical_orders(id) ON DELETE SET NULL, study_code text, study_name text NOT NULL,
+      modality text, body_site text, priority text NOT NULL DEFAULT 'routine', status text NOT NULL DEFAULT 'scheduled',
+      scheduled_at timestamptz, performed_at timestamptz, report text, findings text, impression text,
+      critical boolean NOT NULL DEFAULT false, report_verified_at timestamptz, report_released_at timestamptz,
+      cancel_reason text, created_by uuid REFERENCES users(id), created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+    );
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS organization_id uuid REFERENCES organizations(id) ON DELETE CASCADE;
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS patient_id uuid REFERENCES patients(id) ON DELETE CASCADE;
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS encounter_id uuid REFERENCES encounters(id) ON DELETE SET NULL;
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS order_id uuid REFERENCES clinical_orders(id) ON DELETE SET NULL;
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS study_code text;
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS study_name text;
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS modality text;
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS body_site text;
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS priority text NOT NULL DEFAULT 'routine';
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'scheduled';
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS scheduled_at timestamptz;
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS performed_at timestamptz;
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS report text;
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS findings text;
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS impression text;
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS critical boolean NOT NULL DEFAULT false;
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS report_verified_at timestamptz;
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS report_released_at timestamptz;
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS cancel_reason text;
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS created_by uuid REFERENCES users(id);
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
+    ALTER TABLE medication_orders ADD COLUMN IF NOT EXISTS prescribed_at timestamptz NOT NULL DEFAULT now();
+    ALTER TABLE medication_orders ADD COLUMN IF NOT EXISTS indication text;
+    ALTER TABLE medication_orders ADD COLUMN IF NOT EXISTS instructions text;
+    ALTER TABLE medication_orders ADD COLUMN IF NOT EXISTS start_date date;
+    ALTER TABLE medication_orders ADD COLUMN IF NOT EXISTS end_date date;
+    ALTER TABLE medication_orders ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
+    ALTER TABLE dispensations ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
+    ALTER TABLE dispensations ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'completed';
+    ALTER TABLE dispensations ADD COLUMN IF NOT EXISTS notes jsonb NOT NULL DEFAULT '{}';
+    CREATE TABLE IF NOT EXISTS medication_reconciliation(
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      patient_id uuid NOT NULL REFERENCES patients(id) ON DELETE CASCADE, encounter_id uuid REFERENCES encounters(id) ON DELETE SET NULL,
+      source text NOT NULL DEFAULT 'clinical-review', medication_name text, status text NOT NULL DEFAULT 'in-review',
+      medicines jsonb NOT NULL DEFAULT '[]', discrepancies jsonb NOT NULL DEFAULT '[]', resolved_count integer NOT NULL DEFAULT 0,
+      reviewed_by uuid REFERENCES users(id), reviewed_at timestamptz, created_by uuid REFERENCES users(id),
+      created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+    );
+    ALTER TABLE medication_reconciliation ADD COLUMN IF NOT EXISTS encounter_id uuid REFERENCES encounters(id) ON DELETE SET NULL;
+    ALTER TABLE medication_reconciliation ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'clinical-review';
+    ALTER TABLE medication_reconciliation ADD COLUMN IF NOT EXISTS medication_name text;
+    ALTER TABLE medication_reconciliation ADD COLUMN IF NOT EXISTS medicines jsonb NOT NULL DEFAULT '[]';
+    ALTER TABLE medication_reconciliation ADD COLUMN IF NOT EXISTS discrepancies jsonb NOT NULL DEFAULT '[]';
+    ALTER TABLE medication_reconciliation ADD COLUMN IF NOT EXISTS resolved_count integer NOT NULL DEFAULT 0;
+    ALTER TABLE medication_reconciliation ADD COLUMN IF NOT EXISTS reviewed_by uuid REFERENCES users(id);
+    ALTER TABLE medication_reconciliation ADD COLUMN IF NOT EXISTS reviewed_at timestamptz;
+    ALTER TABLE medication_reconciliation ADD COLUMN IF NOT EXISTS created_by uuid REFERENCES users(id);
+    ALTER TABLE medication_reconciliation ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
+    ALTER TABLE medication_reconciliation ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
+    CREATE TABLE IF NOT EXISTS medication_reconciliation_items(
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), reconciliation_id uuid NOT NULL REFERENCES medication_reconciliation(id) ON DELETE CASCADE,
+      patient_id uuid NOT NULL REFERENCES patients(id) ON DELETE CASCADE, medication_order_id uuid REFERENCES medication_orders(id) ON DELETE SET NULL,
+      medication_id uuid REFERENCES medications(id) ON DELETE SET NULL, medication_name text, dose text, frequency text, route text,
+      discrepancy_type text, status text NOT NULL DEFAULT 'open', notes text, resolved_by uuid REFERENCES users(id), resolved_at timestamptz,
+      created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS lab_samples_org_status_idx ON lab_samples(order_id,status,collected_at DESC);
+    CREATE INDEX IF NOT EXISTS lab_results_sample_status_idx ON lab_results(sample_id,status,created_at DESC);
+    CREATE INDEX IF NOT EXISTS imaging_studies_org_status_idx ON imaging_studies(organization_id,status,created_at DESC);
+    CREATE INDEX IF NOT EXISTS imaging_studies_patient_created_idx ON imaging_studies(patient_id,created_at DESC);
+    CREATE INDEX IF NOT EXISTS medication_orders_patient_prescribed_idx ON medication_orders(patient_id,prescribed_at DESC);
+    CREATE INDEX IF NOT EXISTS medication_orders_status_idx ON medication_orders(status,prescribed_at DESC);
+    CREATE INDEX IF NOT EXISTS dispensations_order_created_idx ON dispensations(medication_order_id,created_at DESC);
+    CREATE INDEX IF NOT EXISTS medication_reconciliation_org_status_idx ON medication_reconciliation(organization_id,status,created_at DESC);
+    CREATE INDEX IF NOT EXISTS medication_reconciliation_patient_idx ON medication_reconciliation(patient_id,created_at DESC);
+    CREATE INDEX IF NOT EXISTS medication_reconciliation_items_parent_idx ON medication_reconciliation_items(reconciliation_id,status,created_at DESC);
+  `);
+}
+await ensurePhase3RuntimeSchema();
 if(pool){
   await pool.query(`ALTER TABLE notifications ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now()`);
   await pool.query(`CREATE INDEX IF NOT EXISTS notifications_patient_idx ON notifications(patient_id, created_at DESC)`);
@@ -820,13 +917,19 @@ app.post('/api/orders',async(req:any,reply)=>{
     const p=await client.query('SELECT id FROM patients WHERE id=$1 AND organization_id=$2',[o.patientId,dbOrganizationId(req)]);if(!p.rowCount){await client.query('ROLLBACK');return reply.code(404).send({error:'Patient not found'});}
     const r=await client.query(`INSERT INTO clinical_orders(patient_id,encounter_id,ordered_by,order_type,priority,status,details) VALUES($1,$2,$3,$4,$5,'ordered',$6) RETURNING id,patient_id AS "patientId",encounter_id AS "encounterId",order_type AS category,priority,status,details,created_at AS "createdAt"`,[o.patientId,o.encounterId||null,dbUserId(req),o.category,o.priority,JSON.stringify({code:o.code,description:o.description,...(o.details||{})})]);
     const routed=await client.query(`INSERT INTO module_records(organization_id,module,status,payload,created_by) VALUES($1,$2,'ordered',$3,$4) RETURNING id`,[dbOrganizationId(req),o.category,JSON.stringify({orderId:r.rows[0].id,patientId:o.patientId,encounterId:o.encounterId||null,code:o.code,description:o.description,priority:o.priority,status:'ordered'}),dbUserId(req)]);
-    let sampleMeta:any=null; if(o.category==='laboratory'){ let test=await client.query(`SELECT id FROM lab_tests WHERE organization_id=$1 AND code=$2 LIMIT 1`,[dbOrganizationId(req),o.code]); if(!test.rowCount)test=await client.query(`INSERT INTO lab_tests(organization_id,code,name,active) VALUES($1,$2,$3,true) RETURNING id`,[dbOrganizationId(req),o.code,o.description||o.code]); const barcode=`CLN-${Date.now()}-${Math.random().toString(36).slice(2,8).toUpperCase()}`; const sample=await client.query(`INSERT INTO lab_samples(order_id,barcode,status) VALUES($1,$2,'ordered') RETURNING id,barcode,status`,[r.rows[0].id,barcode]); sampleMeta=sample.rows[0]; await client.query(`UPDATE module_records SET payload=payload || $1::jsonb WHERE id=$2`,[JSON.stringify({sampleId:sample.rows[0].id,barcode:sample.rows[0].barcode}),routed.rows[0].id]); }
     if(o.category==='laboratory') {
       let test=await client.query(`SELECT id FROM lab_tests WHERE organization_id=$1 AND code=$2 LIMIT 1`,[dbOrganizationId(req),o.code]);
       if(!test.rowCount) test=await client.query(`INSERT INTO lab_tests(organization_id,code,name,active) VALUES($1,$2,$3,true) RETURNING id`,[dbOrganizationId(req),o.code,o.description||o.code]);
       const barcode=`CLN-${Date.now()}-${Math.floor(Math.random()*100000)}`;
-      const sample=await client.query(`INSERT INTO lab_samples(order_id,barcode,specimen_type,status) VALUES($1,$2,$3,'collected') RETURNING id,barcode`,[r.rows[0].id,barcode,o.details?.specimenType||null]);
+      const sample=await client.query(`INSERT INTO lab_samples(order_id,barcode,specimen_type,status,created_at,updated_at) VALUES($1,$2,$3,'ordered',now(),now()) RETURNING id,barcode`,[r.rows[0].id,barcode,o.details?.specimenType||null]);
       if(o.details?.valueNumeric!==undefined || o.details?.valueText!==undefined) await client.query(`INSERT INTO lab_results(sample_id,test_id,value_numeric,value_text,unit,abnormal_flag,critical,status) VALUES($1,$2,$3,$4,$5,$6,$7,'preliminary')`,[sample.rows[0].id,test.rows[0].id,o.details?.valueNumeric??null,o.details?.valueText??null,o.details?.unit??null,o.details?.abnormalFlag??null,Boolean(o.details?.critical)]);
+    }
+    if(o.category==='imaging') {
+      await client.query(`INSERT INTO imaging_studies(organization_id,patient_id,encounter_id,order_id,study_code,study_name,modality,priority,status,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'scheduled',$9)`,[dbOrganizationId(req),o.patientId,o.encounterId||null,r.rows[0].id,o.code,o.description,o.details?.modality||'unspecified',o.priority,dbUserId(req)]);
+    }
+    if(o.category==='medication') {
+      const med=await client.query(`SELECT id FROM medications WHERE organization_id=$1 AND code=$2 LIMIT 1`,[dbOrganizationId(req),o.code]);
+      if(med.rowCount) await client.query(`INSERT INTO medication_orders(patient_id,encounter_id,medication_id,dose,frequency,route,duration,quantity,status,prescribed_by,prescribed_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'active',$9,now(),now())`,[o.patientId,o.encounterId||null,med.rows[0].id,o.details?.dose||o.description||'as prescribed',o.details?.frequency||'as directed',o.details?.route||'oral',o.details?.duration||null,Number(o.details?.quantity||1),dbUserId(req)]);
     }
     await dbAudit(client,req,'CREATE','clinical_order',r.rows[0].id,{category:o.category,code:o.code,routedRecordId:routed.rows[0].id});await queueEvent(client,req,CLINICAL_EVENT_TYPES.ORDER_CREATED,{orderId:r.rows[0].id,category:o.category,patientId:o.patientId,encounterId:o.encounterId||null,code:o.code,description:o.description,priority:o.priority});await client.query('COMMIT');return reply.code(201).send(r.rows[0]);
   }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
@@ -2426,6 +2529,8 @@ app.post('/api/smart/token', async (req:any, reply:any) => { if(!pool)return rep
 
 registerWorkstream2DomainRoutes(app,pool,{dbOrganizationId,dbUserId,requireAuthorizedWrite,dbAudit,queueEvent,clinicalEventTypes:CLINICAL_EVENT_TYPES});
 registerPhase2CoreClinicalRoutes(app,pool,{dbOrganizationId,dbUserId,requireAuthorizedWrite,dbAudit,queueEvent});
+registerPhase3DiagnosticsRoutes(app,pool,{dbOrganizationId,dbUserId,requireAuthorizedWrite,dbAudit,queueEvent,clinicalEventTypes:CLINICAL_EVENT_TYPES});
+registerPhase45AcuteContinuityRoutes(app,pool,{dbOrganizationId,dbUserId,requireAuthorizedWrite,dbAudit,queueEvent});
 
 app.listen({port:Number(process.env.PORT||4000),host:'0.0.0.0'});
 

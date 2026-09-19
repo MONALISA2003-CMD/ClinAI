@@ -1,5 +1,5 @@
 {
-  "version": "2.1.0",
+  "version": "3.0.0",
   "generatedFrom": "ClinAI Phase 2 core clinical depth",
   "modules": [
     {
@@ -657,7 +657,8 @@
           "key": "triageNurseId",
           "label": "Triage nurse",
           "type": "uuid",
-          "section": "Team"
+          "section": "Team",
+          "format": "uuid"
         },
         {
           "key": "triageCategory",
@@ -729,6 +730,10 @@
         {
           "field": "encounterId",
           "target": "encounters.id"
+        },
+        {
+          "field": "triageNurseId",
+          "target": "users.id"
         }
       ],
       "permissions": {
@@ -1504,7 +1509,8 @@
           "key": "ownerId",
           "label": "Plan owner",
           "type": "uuid",
-          "section": "Ownership"
+          "section": "Ownership",
+          "format": "uuid"
         },
         {
           "key": "reviewAt",
@@ -1532,6 +1538,10 @@
         {
           "field": "encounterId",
           "target": "encounters.id"
+        },
+        {
+          "field": "ownerId",
+          "target": "users.id"
         }
       ],
       "permissions": {
@@ -1667,13 +1677,15 @@
           "key": "destinationFacilityId",
           "label": "Destination facility",
           "type": "uuid",
-          "section": "Destination"
+          "section": "Destination",
+          "format": "uuid"
         },
         {
           "key": "referringProviderId",
           "label": "Referring provider",
           "type": "uuid",
-          "section": "Team"
+          "section": "Team",
+          "format": "uuid"
         },
         {
           "key": "clinicalSummary",
@@ -1714,6 +1726,14 @@
         {
           "field": "encounterId",
           "target": "encounters.id"
+        },
+        {
+          "field": "destinationFacilityId",
+          "target": "facilities.id"
+        },
+        {
+          "field": "referringProviderId",
+          "target": "users.id"
         }
       ],
       "permissions": {
@@ -2239,57 +2259,130 @@
       "identity": {
         "name": "Laboratory",
         "category": "CLINICAL",
-        "contractVersion": "2.0.0"
+        "contractVersion": "3.0.0"
       },
       "frontendRoute": "/laboratory",
       "backend": {
-        "endpoint": "/api/laboratory",
+        "endpoint": "/api/phase3/laboratory",
         "contractRoute": "/api/contracts/modules/laboratory",
-        "createEndpoint": "/api/orders"
+        "createEndpoint": "/api/phase3/laboratory"
       },
-      "databaseSource": "lab_results",
+      "databaseSource": "lab_samples",
       "fields": [
         {
           "key": "patientId",
-          "label": "Patient ID",
-          "type": "text",
+          "label": "Patient",
+          "type": "uuid",
+          "required": true,
           "format": "uuid",
-          "required": true
+          "section": "Order"
+        },
+        {
+          "key": "encounterId",
+          "label": "Encounter",
+          "type": "uuid",
+          "format": "uuid",
+          "section": "Order"
         },
         {
           "key": "code",
           "label": "Test code",
           "type": "text",
-          "required": true
+          "required": true,
+          "section": "Order"
         },
         {
           "key": "description",
           "label": "Test name",
           "type": "text",
-          "required": true
+          "required": true,
+          "section": "Order"
         },
         {
           "key": "priority",
           "label": "Priority",
+          "type": "text",
+          "required": true,
           "options": [
             "routine",
             "urgent",
             "stat"
           ],
+          "section": "Order"
+        },
+        {
+          "key": "specimenType",
+          "label": "Specimen type",
           "type": "text",
-          "required": true
+          "section": "Specimen"
+        },
+        {
+          "key": "status",
+          "label": "Specimen status",
+          "type": "text",
+          "section": "Specimen",
+          "options": [
+            "ordered",
+            "collected",
+            "received",
+            "processing",
+            "preliminary",
+            "verified",
+            "released",
+            "rejected"
+          ]
+        },
+        {
+          "key": "valueNumeric",
+          "label": "Numeric result",
+          "type": "number",
+          "section": "Result"
+        },
+        {
+          "key": "valueText",
+          "label": "Text result",
+          "type": "text",
+          "section": "Result"
+        },
+        {
+          "key": "critical",
+          "label": "Critical result",
+          "type": "boolean",
+          "section": "Safety"
+        },
+        {
+          "key": "abnormalFlag",
+          "label": "Abnormal flag",
+          "type": "text",
+          "section": "Safety"
+        },
+        {
+          "key": "referenceRange",
+          "label": "Reference range",
+          "type": "json",
+          "section": "Result"
+        },
+        {
+          "key": "interpretation",
+          "label": "Interpretation",
+          "type": "text",
+          "section": "Result"
         }
       ],
       "requiredFields": [
+        "patientId",
         "code",
         "description",
-        "patientId",
         "priority"
       ],
       "relationships": [
         {
           "field": "patientId",
           "target": "patients.id"
+        },
+        {
+          "field": "encounterId",
+          "target": "encounters.id"
         }
       ],
       "permissions": {
@@ -2310,7 +2403,12 @@
       },
       "actions": [
         "create",
-        "update",
+        "collect",
+        "receive",
+        "process",
+        "verify",
+        "release",
+        "reject",
         "view"
       ],
       "validation": {
@@ -2341,57 +2439,124 @@
       "identity": {
         "name": "Imaging",
         "category": "CLINICAL",
-        "contractVersion": "2.0.0"
+        "contractVersion": "3.0.0"
       },
       "frontendRoute": "/imaging",
       "backend": {
-        "endpoint": "/api/imaging",
+        "endpoint": "/api/phase3/imaging",
         "contractRoute": "/api/contracts/modules/imaging",
-        "createEndpoint": "/api/orders"
+        "createEndpoint": "/api/phase3/imaging"
       },
       "databaseSource": "imaging_studies",
       "fields": [
         {
           "key": "patientId",
-          "label": "Patient ID",
-          "type": "text",
+          "label": "Patient",
+          "type": "uuid",
+          "required": true,
           "format": "uuid",
-          "required": true
+          "section": "Study"
         },
         {
-          "key": "code",
+          "key": "encounterId",
+          "label": "Encounter",
+          "type": "uuid",
+          "format": "uuid",
+          "section": "Study"
+        },
+        {
+          "key": "studyCode",
           "label": "Study code",
           "type": "text",
-          "required": true
+          "required": true,
+          "section": "Study"
         },
         {
-          "key": "description",
-          "label": "Study",
+          "key": "studyName",
+          "label": "Study name",
           "type": "text",
-          "required": true
+          "required": true,
+          "section": "Study"
+        },
+        {
+          "key": "modality",
+          "label": "Modality",
+          "type": "text",
+          "required": true,
+          "section": "Study"
+        },
+        {
+          "key": "bodySite",
+          "label": "Body site",
+          "type": "text",
+          "section": "Study"
         },
         {
           "key": "priority",
           "label": "Priority",
+          "type": "text",
+          "required": true,
           "options": [
             "routine",
             "urgent",
             "stat"
           ],
+          "section": "Study"
+        },
+        {
+          "key": "status",
+          "label": "Study status",
           "type": "text",
-          "required": true
+          "section": "Workflow",
+          "options": [
+            "scheduled",
+            "performed",
+            "reported",
+            "verified",
+            "released",
+            "cancelled"
+          ]
+        },
+        {
+          "key": "report",
+          "label": "Report",
+          "type": "text",
+          "section": "Reporting"
+        },
+        {
+          "key": "findings",
+          "label": "Findings",
+          "type": "text",
+          "section": "Reporting"
+        },
+        {
+          "key": "impression",
+          "label": "Impression",
+          "type": "text",
+          "section": "Reporting"
+        },
+        {
+          "key": "critical",
+          "label": "Critical study",
+          "type": "boolean",
+          "section": "Safety"
         }
       ],
       "requiredFields": [
-        "code",
-        "description",
         "patientId",
+        "studyCode",
+        "studyName",
+        "modality",
         "priority"
       ],
       "relationships": [
         {
           "field": "patientId",
           "target": "patients.id"
+        },
+        {
+          "field": "encounterId",
+          "target": "encounters.id"
         }
       ],
       "permissions": {
@@ -2412,7 +2577,12 @@
       },
       "actions": [
         "create",
-        "update",
+        "schedule",
+        "perform",
+        "report",
+        "verify",
+        "release",
+        "cancel",
         "view"
       ],
       "validation": {
@@ -2443,12 +2613,12 @@
       "identity": {
         "name": "Pharmacy",
         "category": "CLINICAL",
-        "contractVersion": "2.0.0"
+        "contractVersion": "3.0.0"
       },
       "frontendRoute": "/pharmacy",
       "backend": {
-        "endpoint": "/api/domains/modules/pharmacy",
-        "createEndpoint": "/api/domains/modules/pharmacy",
+        "endpoint": "/api/phase3/pharmacy",
+        "createEndpoint": "/api/phase3/pharmacy",
         "contractRoute": "/api/contracts/modules/pharmacy"
       },
       "databaseSource": "medication_orders",
@@ -2457,45 +2627,56 @@
           "key": "patientId",
           "label": "Patient",
           "type": "uuid",
-          "section": "Prescription",
           "required": true,
-          "format": "uuid"
+          "format": "uuid",
+          "section": "Prescription"
         },
         {
           "key": "encounterId",
           "label": "Encounter",
           "type": "uuid",
-          "section": "Prescription",
-          "format": "uuid"
+          "format": "uuid",
+          "section": "Prescription"
         },
         {
           "key": "medicationId",
           "label": "Medication",
           "type": "uuid",
-          "section": "Prescription",
-          "required": true,
-          "format": "uuid"
+          "format": "uuid",
+          "section": "Prescription"
+        },
+        {
+          "key": "medicationCode",
+          "label": "Medication code",
+          "type": "text",
+          "section": "Prescription"
+        },
+        {
+          "key": "medicationName",
+          "label": "Medication name",
+          "type": "text",
+          "section": "Prescription"
         },
         {
           "key": "dose",
           "label": "Dose",
           "type": "text",
-          "section": "Prescription",
-          "required": true
+          "required": true,
+          "section": "Prescription"
         },
         {
           "key": "frequency",
           "label": "Frequency",
           "type": "text",
-          "section": "Prescription",
-          "required": true
+          "required": true,
+          "section": "Prescription"
         },
         {
           "key": "route",
           "label": "Route",
           "type": "text",
-          "section": "Prescription",
-          "required": true
+          "required": true,
+          "section": "Prescription"
         },
         {
           "key": "duration",
@@ -2507,31 +2688,41 @@
           "key": "quantity",
           "label": "Quantity",
           "type": "number",
-          "section": "Prescription",
-          "required": true
+          "required": true,
+          "section": "Prescription"
+        },
+        {
+          "key": "indication",
+          "label": "Indication",
+          "type": "text",
+          "section": "Clinical"
+        },
+        {
+          "key": "instructions",
+          "label": "Instructions",
+          "type": "text",
+          "section": "Clinical"
         },
         {
           "key": "status",
           "label": "Status",
           "type": "text",
-          "section": "Prescription",
-          "required": true,
           "options": [
             "active",
+            "partially-dispensed",
+            "dispensed",
             "completed",
-            "discontinued",
-            "partially-dispensed"
-          ]
+            "discontinued"
+          ],
+          "section": "Workflow"
         }
       ],
       "requiredFields": [
         "patientId",
-        "medicationId",
         "dose",
         "frequency",
         "route",
-        "quantity",
-        "status"
+        "quantity"
       ],
       "relationships": [
         {
@@ -2565,7 +2756,8 @@
       },
       "actions": [
         "create",
-        "update",
+        "dispense",
+        "cancel",
         "view"
       ],
       "validation": {
@@ -2596,12 +2788,12 @@
       "identity": {
         "name": "Nursing",
         "category": "CLINICAL",
-        "contractVersion": "2.0.0"
+        "contractVersion": "4.1.0"
       },
       "frontendRoute": "/nursing",
       "backend": {
-        "endpoint": "/api/contracts/modules/nursing",
-        "createEndpoint": "/api/contracts/modules/nursing",
+        "endpoint": "/api/phase45/nursing",
+        "createEndpoint": "/api/phase45/nursing",
         "contractRoute": "/api/contracts/modules/nursing"
       },
       "databaseSource": "nursing_assessments",
@@ -2694,7 +2886,8 @@
       },
       "actions": [
         "create",
-        "update",
+        "complete",
+        "review",
         "view"
       ],
       "validation": {
@@ -2725,12 +2918,12 @@
       "identity": {
         "name": "Emergency",
         "category": "CLINICAL",
-        "contractVersion": "2.0.0"
+        "contractVersion": "4.1.0"
       },
       "frontendRoute": "/emergency",
       "backend": {
-        "endpoint": "/api/contracts/modules/emergency",
-        "createEndpoint": "/api/contracts/modules/emergency",
+        "endpoint": "/api/phase45/emergency",
+        "createEndpoint": "/api/phase45/emergency",
         "contractRoute": "/api/contracts/modules/emergency"
       },
       "databaseSource": "emergency_cases",
@@ -2836,7 +3029,10 @@
       },
       "actions": [
         "create",
-        "update",
+        "assess",
+        "treat",
+        "admit",
+        "discharge",
         "view"
       ],
       "validation": {
@@ -2867,12 +3063,12 @@
       "identity": {
         "name": "Inpatient",
         "category": "CLINICAL",
-        "contractVersion": "2.0.0"
+        "contractVersion": "4.1.0"
       },
       "frontendRoute": "/inpatient",
       "backend": {
-        "endpoint": "/api/contracts/modules/inpatient",
-        "createEndpoint": "/api/contracts/modules/inpatient",
+        "endpoint": "/api/phase45/inpatient",
+        "createEndpoint": "/api/phase45/inpatient",
         "contractRoute": "/api/contracts/modules/inpatient"
       },
       "databaseSource": "admissions",
@@ -2969,7 +3165,8 @@
       },
       "actions": [
         "create",
-        "update",
+        "discharge",
+        "transfer",
         "view"
       ],
       "validation": {
@@ -3000,12 +3197,12 @@
       "identity": {
         "name": "Beds",
         "category": "CLINICAL",
-        "contractVersion": "2.0.0"
+        "contractVersion": "4.1.0"
       },
       "frontendRoute": "/beds",
       "backend": {
-        "endpoint": "/api/domains/modules/beds",
-        "createEndpoint": "/api/domains/modules/beds",
+        "endpoint": "/api/phase45/beds",
+        "createEndpoint": "/api/phase45/beds",
         "contractRoute": "/api/contracts/modules/beds"
       },
       "databaseSource": "facility_beds",
@@ -3125,7 +3322,10 @@
       },
       "actions": [
         "create",
-        "update",
+        "assign",
+        "release",
+        "reserve",
+        "block",
         "view"
       ],
       "validation": {
@@ -3156,12 +3356,12 @@
       "identity": {
         "name": "Surgery",
         "category": "CLINICAL",
-        "contractVersion": "2.0.0"
+        "contractVersion": "4.1.0"
       },
       "frontendRoute": "/surgery",
       "backend": {
-        "endpoint": "/api/contracts/modules/surgery",
-        "createEndpoint": "/api/contracts/modules/surgery",
+        "endpoint": "/api/phase45/surgery",
+        "createEndpoint": "/api/phase45/surgery",
         "contractRoute": "/api/contracts/modules/surgery"
       },
       "databaseSource": "surgery_cases",
@@ -3279,7 +3479,11 @@
       },
       "actions": [
         "create",
-        "update",
+        "confirm-consent",
+        "schedule",
+        "start",
+        "complete",
+        "cancel",
         "view"
       ],
       "validation": {
@@ -3310,12 +3514,12 @@
       "identity": {
         "name": "Maternity",
         "category": "CLINICAL",
-        "contractVersion": "2.0.0"
+        "contractVersion": "4.1.0"
       },
       "frontendRoute": "/maternity",
       "backend": {
-        "endpoint": "/api/contracts/modules/maternity",
-        "createEndpoint": "/api/contracts/modules/maternity",
+        "endpoint": "/api/phase45/maternity",
+        "createEndpoint": "/api/phase45/maternity",
         "contractRoute": "/api/contracts/modules/maternity"
       },
       "databaseSource": "maternity_records + maternal_care_records + maternal_care_contacts + birth_events + newborn_records + postnatal_contacts",
@@ -3430,7 +3634,8 @@
       },
       "actions": [
         "create",
-        "update",
+        "complete",
+        "cancel",
         "view"
       ],
       "validation": {
@@ -3461,12 +3666,12 @@
       "identity": {
         "name": "Pediatrics",
         "category": "CLINICAL",
-        "contractVersion": "2.0.0"
+        "contractVersion": "4.1.0"
       },
       "frontendRoute": "/pediatrics",
       "backend": {
-        "endpoint": "/api/contracts/modules/pediatrics",
-        "createEndpoint": "/api/contracts/modules/pediatrics",
+        "endpoint": "/api/phase45/pediatrics",
+        "createEndpoint": "/api/phase45/pediatrics",
         "contractRoute": "/api/contracts/modules/pediatrics"
       },
       "databaseSource": "pediatric_assessments",
@@ -3560,7 +3765,7 @@
       },
       "actions": [
         "create",
-        "update",
+        "review",
         "view"
       ],
       "validation": {
@@ -3591,12 +3796,12 @@
       "identity": {
         "name": "Child Health",
         "category": "CLINICAL",
-        "contractVersion": "2.0.0"
+        "contractVersion": "4.1.0"
       },
       "frontendRoute": "/child-health",
       "backend": {
-        "endpoint": "/api/contracts/modules/child-health",
-        "createEndpoint": "/api/child-health/visits",
+        "endpoint": "/api/phase45/child-health",
+        "createEndpoint": "/api/phase45/child-health",
         "contractRoute": "/api/contracts/modules/child-health"
       },
       "databaseSource": "child_health_visits + child_growth_measurements + child_imci_assessments + child_care_gaps",
@@ -3699,7 +3904,7 @@
       },
       "actions": [
         "create",
-        "update",
+        "review",
         "view"
       ],
       "validation": {
@@ -3730,12 +3935,12 @@
       "identity": {
         "name": "Immunization",
         "category": "CLINICAL",
-        "contractVersion": "2.0.0"
+        "contractVersion": "5.1.0"
       },
       "frontendRoute": "/immunization",
       "backend": {
-        "endpoint": "/api/contracts/modules/immunization",
-        "createEndpoint": "/api/contracts/modules/immunization",
+        "endpoint": "/api/phase45/immunization",
+        "createEndpoint": "/api/phase45/immunization",
         "contractRoute": "/api/contracts/modules/immunization"
       },
       "databaseSource": "immunizations + immunization_reviews + immunization_catchup_plans",
@@ -3844,7 +4049,9 @@
       },
       "actions": [
         "create",
-        "update",
+        "administer",
+        "missed",
+        "cancel",
         "view"
       ],
       "validation": {
@@ -3875,12 +4082,12 @@
       "identity": {
         "name": "Chronic Care",
         "category": "CLINICAL",
-        "contractVersion": "2.0.0"
+        "contractVersion": "5.1.0"
       },
       "frontendRoute": "/chronic-care",
       "backend": {
-        "endpoint": "/api/contracts/modules/chronic-care",
-        "createEndpoint": "/api/contracts/modules/chronic-care",
+        "endpoint": "/api/phase45/chronic-care",
+        "createEndpoint": "/api/phase45/chronic-care",
         "contractRoute": "/api/contracts/modules/chronic-care"
       },
       "databaseSource": "chronic_care_records",
@@ -3969,7 +4176,9 @@
       },
       "actions": [
         "create",
-        "update",
+        "stabilize",
+        "uncontrolled",
+        "activate",
         "view"
       ],
       "validation": {
@@ -4000,12 +4209,12 @@
       "identity": {
         "name": "Medication Reconciliation",
         "category": "CLINICAL",
-        "contractVersion": "2.0.0"
+        "contractVersion": "3.0.0"
       },
       "frontendRoute": "/medication-reconciliation",
       "backend": {
-        "endpoint": "/api/medication-reconciliation",
-        "createEndpoint": "/api/medication-reconciliation",
+        "endpoint": "/api/phase3/medication-reconciliation",
+        "createEndpoint": "/api/phase3/medication-reconciliation",
         "contractRoute": "/api/contracts/modules/medication-reconciliation"
       },
       "databaseSource": "medication_reconciliation",
@@ -4014,28 +4223,29 @@
           "key": "patientId",
           "label": "Patient",
           "type": "uuid",
-          "section": "Reconciliation",
           "required": true,
-          "format": "uuid"
+          "format": "uuid",
+          "section": "Review"
         },
         {
-          "key": "status",
-          "label": "Status",
+          "key": "encounterId",
+          "label": "Encounter",
+          "type": "uuid",
+          "format": "uuid",
+          "section": "Review"
+        },
+        {
+          "key": "source",
+          "label": "Source",
           "type": "text",
-          "section": "Reconciliation",
-          "required": true,
-          "options": [
-            "in-review",
-            "completed",
-            "needs-review"
-          ]
+          "section": "Review"
         },
         {
           "key": "medicines",
           "label": "Medication list",
           "type": "json",
-          "section": "Medicines",
-          "required": true
+          "required": true,
+          "section": "Medicines"
         },
         {
           "key": "discrepancies",
@@ -4044,15 +4254,26 @@
           "section": "Safety"
         },
         {
+          "key": "status",
+          "label": "Review status",
+          "type": "text",
+          "options": [
+            "in-review",
+            "resolved",
+            "completed",
+            "needs-review"
+          ],
+          "section": "Workflow"
+        },
+        {
           "key": "resolvedCount",
-          "label": "Resolved discrepancies",
+          "label": "Resolved items",
           "type": "number",
           "section": "Safety"
         }
       ],
       "requiredFields": [
         "patientId",
-        "status",
         "medicines"
       ],
       "relationships": [
@@ -4083,7 +4304,8 @@
       },
       "actions": [
         "create",
-        "update",
+        "resolve",
+        "reopen",
         "view"
       ],
       "validation": {
@@ -4114,12 +4336,12 @@
       "identity": {
         "name": "Consents",
         "category": "CLINICAL",
-        "contractVersion": "2.0.0"
+        "contractVersion": "5.1.0"
       },
       "frontendRoute": "/consents",
       "backend": {
-        "endpoint": "/api/domains/modules/consents",
-        "createEndpoint": "/api/domains/modules/consents",
+        "endpoint": "/api/phase45/consents",
+        "createEndpoint": "/api/phase45/consents",
         "contractRoute": "/api/contracts/modules/consents"
       },
       "databaseSource": "patient_consents",
@@ -4208,7 +4430,9 @@
       },
       "actions": [
         "create",
-        "update",
+        "withdraw",
+        "expire",
+        "renew",
         "view"
       ],
       "validation": {
@@ -5289,12 +5513,12 @@
       "identity": {
         "name": "Patient Portal",
         "category": "PATIENT",
-        "contractVersion": "2.0.0"
+        "contractVersion": "5.1.0"
       },
       "frontendRoute": "/patient-portal",
       "backend": {
-        "endpoint": "/api/contracts/modules/patient-portal",
-        "createEndpoint": "/api/contracts/modules/patient-portal",
+        "endpoint": "/api/phase45/patient-portal",
+        "createEndpoint": "/api/phase45/patient-portal",
         "contractRoute": "/api/contracts/modules/patient-portal"
       },
       "databaseSource": "patient_portal_accounts",
@@ -5303,35 +5527,28 @@
           "key": "patientId",
           "label": "Patient",
           "type": "uuid",
-          "format": "uuid",
+          "section": "Account",
           "required": true,
-          "section": "Patient"
+          "format": "uuid"
         },
         {
-          "key": "feature",
-          "label": "Portal feature",
+          "key": "email",
+          "label": "Email",
           "type": "text",
-          "required": true,
-          "section": "Access"
+          "section": "Contact"
         },
         {
-          "key": "accessLevel",
-          "label": "Access level",
+          "key": "phone",
+          "label": "Phone",
           "type": "text",
-          "required": true,
-          "section": "Access",
-          "options": [
-            "view",
-            "manage",
-            "message"
-          ]
+          "section": "Contact"
         },
         {
           "key": "status",
           "label": "Status",
           "type": "text",
+          "section": "Account",
           "required": true,
-          "section": "Access",
           "options": [
             "pending",
             "active",
@@ -5340,16 +5557,20 @@
           ]
         },
         {
-          "key": "activatedAt",
-          "label": "Activated at",
+          "key": "lastLoginAt",
+          "label": "Last login",
           "type": "datetime",
-          "section": "Access"
+          "section": "Activity"
+        },
+        {
+          "key": "notificationPreferences",
+          "label": "Notification preferences",
+          "type": "json",
+          "section": "Preferences"
         }
       ],
       "requiredFields": [
         "patientId",
-        "feature",
-        "accessLevel",
         "status"
       ],
       "relationships": [
@@ -5376,7 +5597,9 @@
       },
       "actions": [
         "create",
-        "update",
+        "activate",
+        "suspend",
+        "close",
         "view"
       ],
       "validation": {
@@ -5407,12 +5630,12 @@
       "identity": {
         "name": "Portal Messages",
         "category": "PATIENT",
-        "contractVersion": "2.0.0"
+        "contractVersion": "5.1.0"
       },
       "frontendRoute": "/portal-messages",
       "backend": {
-        "endpoint": "/api/domains/modules/portal-messages",
-        "createEndpoint": "/api/domains/modules/portal-messages",
+        "endpoint": "/api/phase45/portal-messages",
+        "createEndpoint": "/api/phase45/portal-messages",
         "contractRoute": "/api/contracts/modules/portal-messages"
       },
       "databaseSource": "portal_messages",
@@ -5518,7 +5741,11 @@
       },
       "actions": [
         "create",
-        "update",
+        "queue",
+        "send",
+        "deliver",
+        "fail",
+        "read",
         "view"
       ],
       "validation": {
@@ -5549,12 +5776,12 @@
       "identity": {
         "name": "Telemedicine",
         "category": "PATIENT",
-        "contractVersion": "2.0.0"
+        "contractVersion": "5.1.0"
       },
       "frontendRoute": "/telemedicine",
       "backend": {
-        "endpoint": "/api/contracts/modules/telemedicine",
-        "createEndpoint": "/api/contracts/modules/telemedicine",
+        "endpoint": "/api/phase45/telemedicine",
+        "createEndpoint": "/api/phase45/telemedicine",
         "contractRoute": "/api/contracts/modules/telemedicine"
       },
       "databaseSource": "telemedicine_sessions",
@@ -5662,7 +5889,12 @@
       },
       "actions": [
         "create",
-        "update",
+        "verify-identity",
+        "confirm-consent",
+        "wait",
+        "start",
+        "end",
+        "cancel",
         "view"
       ],
       "validation": {
@@ -5693,12 +5925,12 @@
       "identity": {
         "name": "Remote Monitoring",
         "category": "PATIENT",
-        "contractVersion": "2.0.0"
+        "contractVersion": "5.1.0"
       },
       "frontendRoute": "/remote-monitoring",
       "backend": {
-        "endpoint": "/api/contracts/modules/remote-monitoring",
-        "createEndpoint": "/api/contracts/modules/remote-monitoring",
+        "endpoint": "/api/phase45/remote-monitoring",
+        "createEndpoint": "/api/phase45/remote-monitoring",
         "contractRoute": "/api/contracts/modules/remote-monitoring"
       },
       "databaseSource": "remote_monitoring_readings",
@@ -5803,7 +6035,8 @@
       },
       "actions": [
         "create",
-        "update",
+        "ack-alert",
+        "clear-alert",
         "view"
       ],
       "validation": {
@@ -7625,12 +7858,12 @@
       "identity": {
         "name": "Referral Network",
         "category": "OPERATIONS",
-        "contractVersion": "2.0.0"
+        "contractVersion": "5.1.0"
       },
       "frontendRoute": "/referral-network",
       "backend": {
-        "endpoint": "/api/domains/modules/referral-network",
-        "createEndpoint": "/api/domains/modules/referral-network",
+        "endpoint": "/api/phase45/referral-network",
+        "createEndpoint": "/api/phase45/referral-network",
         "contractRoute": "/api/contracts/modules/referral-network"
       },
       "databaseSource": "referral_network_nodes",
@@ -7718,7 +7951,9 @@
       },
       "actions": [
         "create",
-        "update",
+        "activate",
+        "restrict",
+        "deactivate",
         "view"
       ],
       "validation": {
@@ -8072,15 +8307,15 @@
       "identity": {
         "name": "Care Gaps",
         "category": "INTELLIGENCE",
-        "contractVersion": "2.0.0"
+        "contractVersion": "5.1.0"
       },
       "frontendRoute": "/care-gaps",
       "backend": {
-        "endpoint": "/api/domains/modules/care-gaps",
-        "createEndpoint": "/api/domains/modules/care-gaps",
+        "endpoint": "/api/phase45/care-gaps",
+        "createEndpoint": "/api/phase45/care-gaps",
         "contractRoute": "/api/intelligence/care-gaps/snapshots"
       },
-      "databaseSource": "care_gap_snapshots + child_care_gaps",
+      "databaseSource": "care_gap_snapshots",
       "fields": [
         {
           "key": "patientId",
@@ -8156,7 +8391,9 @@
       },
       "actions": [
         "create",
+        "acknowledge",
         "resolve",
+        "reopen",
         "view"
       ],
       "validation": {
@@ -8171,7 +8408,7 @@
       },
       "emptyState": {
         "title": "No care gaps records",
-        "message": "No records are currently recorded for this workspace."
+        "message": "No recorded care gaps are currently present for this workspace."
       },
       "events": {
         "source": "clinical_workflow_events",

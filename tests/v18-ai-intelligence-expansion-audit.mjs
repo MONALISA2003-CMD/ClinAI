@@ -21,6 +21,6 @@ for (const needle of [
   'correlation', 'batch', '/v1/screen'
 ]) assert.ok(py.includes(needle), `Python engine missing ${needle}`);
 for (const needle of ['PublicFeedbackButton','PublicHealthButton','AIFeedback','Cross-check all modules']) assert.ok(web.includes(needle), `UI missing ${needle}`);
-assert.ok(main.includes("startsWith('/api/public/')"), 'public interaction routes are not explicitly unauthenticated');
+assert.ok(main.includes('PUBLIC_API_PATHS') && main.includes('isPublicPath'), 'public interaction routes are not explicitly unauthenticated');
 assert.ok(main.includes('ensureAIInteractionSchema'), 'AI interaction schema bootstrap missing');
 console.log('V18 AI intelligence expansion audit: PASS');

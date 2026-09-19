@@ -38,7 +38,7 @@ for (const match of web.matchAll(/(?:`|['"])\$\{API\}(\/api\/[^`"']+)/g)) {
 }
 
 const backendPaths = new Set();
-for (const match of api.matchAll(/app\.(?:get|post|put|patch|delete)\(\s*['"](\/api\/[^'"`]+)['"]/g)) {
+for (const match of api.matchAll(/app\.(?:get|post|put|patch|delete)\(\s*[`'"](\/api\/[^`'"]+)[`'"]/g)) {
   backendPaths.add(match[1]);
 }
 

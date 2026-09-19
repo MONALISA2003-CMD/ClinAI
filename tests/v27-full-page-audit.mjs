@@ -44,5 +44,8 @@ assert(/CREATE TABLE IF NOT EXISTS ai_security_events/i.test(migration));
 assert(/CREATE TABLE IF NOT EXISTS care_gap_snapshots/i.test(migration));
 assert(/CREATE TABLE IF NOT EXISTS value_measure_definitions/i.test(migration));
 
+const readKeys=catalog.modules.filter(x=>x.backend?.endpoint).map(x=>x.id);
+const createKeys=catalog.modules.filter(x=>x.backend?.createEndpoint).map(x=>x.id);
+const readOnly=catalog.modules.filter(x=>Array.isArray(x.permissions?.write)&&x.permissions.write.length===0).map(x=>x.id);
 const audit={modules:unique.length,readContracts:readKeys.length,createContracts:createKeys.length,readOnly:readOnly.length,journeyStages:journeyModules.length,intelligenceModules:requiredIntelligenceModules.length,backendIntelligenceRoutes:intelligenceRoutes.length,additiveMigration:true};
 console.log(JSON.stringify({ok:true,audit},null,2));
