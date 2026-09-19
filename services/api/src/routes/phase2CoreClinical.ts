@@ -147,7 +147,7 @@ export function registerPhase2CoreClinicalRoutes(app:FastifyInstance,pool:Pool|n
         const [summary,trend,statuses,priorities]=await Promise.all([
           count(`SELECT count(*)::int AS total,count(*) FILTER(WHERE status='open')::int AS open,count(*) FILTER(WHERE status='in-progress')::int AS in_progress,count(*) FILTER(WHERE status='completed')::int AS completed,count(*) FILTER(WHERE due_at<now() AND status NOT IN ('completed','cancelled'))::int AS overdue,count(*) FILTER(WHERE priority IN ('critical','urgent') AND status NOT IN ('completed','cancelled'))::int AS high_priority FROM care_tasks WHERE organization_id=$1`),
           count(`SELECT to_char(created_at::date,'YYYY-MM-DD') AS day,count(*)::int AS count FROM care_tasks WHERE organization_id=$1 AND created_at>=current_date-$2::int GROUP BY created_at::date ORDER BY created_at::date`,[organizationId,days]),
-          count(`SELECT status,count(*)::int AS count FROM care_tasks WHERE organization_id=$1 GROUP BY c.status ORDER BY count DESC`),
+          count(`SELECT status,count(*)::int AS count FROM care_tasks WHERE organization_id=$1 GROUP BY status ORDER BY count DESC`),
           count(`SELECT priority,count(*)::int AS count FROM care_tasks WHERE organization_id=$1 GROUP BY priority ORDER BY count DESC`)
         ]); return {summary:summary.rows[0],trend:trend.rows,status:statuses.rows,breakdown:priorities.rows};
       }

@@ -66,7 +66,8 @@ async function evaluateRule(client: PoolClient, rule: RuleVersion, event: EventR
       JOIN lab_samples ls ON ls.id=lr.sample_id
       JOIN clinical_orders co ON co.id=ls.order_id
       JOIN lab_tests lt ON lt.id=lr.test_id
-      WHERE co.organization_id=$1 AND co.patient_id=$2
+      JOIN patients p ON p.id=co.patient_id
+      WHERE p.organization_id=$1 AND co.patient_id=$2
         AND (lr.critical=true OR COALESCE(lower(lr.abnormal_flag),'') NOT IN ('','normal','within-range','within range'))
         AND lr.status IN ('preliminary','verified','released')
       ORDER BY lr.id DESC LIMIT 1

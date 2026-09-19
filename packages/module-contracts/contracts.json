@@ -620,7 +620,7 @@
         },
         {
           "key": "spo2",
-          "label": "SpO\u2082",
+          "label": "SpO₂",
           "type": "number",
           "required": true
         },
@@ -3729,7 +3729,7 @@
         },
         {
           "key": "spo2",
-          "label": "SpO\u2082",
+          "label": "SpO₂",
           "type": "number",
           "section": "Vitals"
         }
@@ -3847,7 +3847,7 @@
         },
         {
           "key": "temperatureC",
-          "label": "Temperature (\u00b0C)",
+          "label": "Temperature (°C)",
           "type": "number",
           "section": "Vitals"
         },
@@ -3859,7 +3859,7 @@
         },
         {
           "key": "spo2",
-          "label": "SpO\u2082",
+          "label": "SpO₂",
           "type": "number",
           "section": "Vitals"
         },
@@ -9394,10 +9394,9 @@
           "required": true,
           "section": "Connection",
           "options": [
-            "planned",
-            "connected",
-            "degraded",
-            "disabled"
+            "disabled",
+            "active",
+            "error"
           ]
         }
       ],
@@ -9491,15 +9490,19 @@
           "key": "baseUrl",
           "label": "Base URL",
           "type": "text",
-          "section": "Connection",
-          "required": true
+          "section": "Connection"
         },
         {
           "key": "status",
           "label": "Status",
           "type": "text",
           "section": "Connection",
-          "required": true
+          "required": true,
+          "options": [
+            "disabled",
+            "active",
+            "error"
+          ]
         },
         {
           "key": "capabilities",
@@ -9517,7 +9520,6 @@
       "requiredFields": [
         "name",
         "protocol",
-        "baseUrl",
         "status"
       ],
       "relationships": [],
@@ -9530,9 +9532,15 @@
           "analyst",
           "viewer"
         ],
-        "write": []
+        "write": [
+          "admin",
+          "doctor",
+          "nurse",
+          "manager"
+        ]
       },
       "actions": [
+        "create",
         "view"
       ],
       "validation": {
@@ -9946,9 +9954,15 @@
           "analyst",
           "viewer"
         ],
-        "write": []
+        "write": [
+          "admin",
+          "doctor",
+          "nurse",
+          "manager"
+        ]
       },
       "actions": [
+        "create",
         "view"
       ],
       "validation": {
@@ -10205,9 +10219,15 @@
           "analyst",
           "viewer"
         ],
-        "write": []
+        "write": [
+          "admin",
+          "doctor",
+          "nurse",
+          "manager"
+        ]
       },
       "actions": [
+        "create",
         "view"
       ],
       "validation": {
@@ -10314,9 +10334,15 @@
           "analyst",
           "viewer"
         ],
-        "write": []
+        "write": [
+          "admin",
+          "doctor",
+          "nurse",
+          "manager"
+        ]
       },
       "actions": [
+        "create",
         "view"
       ],
       "validation": {
@@ -10446,9 +10472,15 @@
           "analyst",
           "viewer"
         ],
-        "write": []
+        "write": [
+          "admin",
+          "doctor",
+          "nurse",
+          "manager"
+        ]
       },
       "actions": [
+        "create",
         "view"
       ],
       "validation": {
