@@ -12,7 +12,7 @@ const handoffModules={
  phase4:['emergency','inpatient','beds','nursing','surgery','maternity','pediatrics','child-health'],
  phase5:['chronic-care','immunization','consents','referrals','referral-network','care-gaps','patient-portal','portal-messages','telemedicine','remote-monitoring'],
  phase6:['billing','payments','insurance','claims','accounting','inventory','procurement','suppliers'],
- phase7:['population-health','surveillance','investigations','response','mortality','district-intelligence','patient-portal','telemedicine','remote-monitoring','notifications','documents']
+ phase7:['population-health','surveillance','investigations','response','mortality','district-intelligence','patient-portal','telemedicine','remote-monitoring','notifications','documents','portal-messages']
 };
 const phase67=[...new Set([...handoffModules.phase6,...handoffModules.phase7])];
 const page=read('apps/web/app/page.tsx');
@@ -38,6 +38,11 @@ ok(!/response:\{[^\n]*patientField:/.test(specs),'Response incorrectly declares 
 ok(/insurance_policies[\s\S]*organization_id/.test(ws2),'Insurance policy write path does not reference organization_id');
 ok(/ALTER TABLE insurance_policies ADD COLUMN IF NOT EXISTS organization_id uuid/.test(migration),'Migration missing insurance organization_id');
 ok(!/\bDROP\s+(TABLE|SCHEMA|DATABASE)|\bTRUNCATE\b|\bDELETE\s+FROM\b/i.test(migration),'Phase6/7 migration contains destructive SQL');
+ok((route.match(/count:r\.rowCount \?\? 0/g)||[]).length===20,'Phase6/7 list handlers must normalize nullable pg rowCount to zero.');
+ok(page.includes('const actionList=(row:Row):string[]=>'),'Phase3 action list must have an explicit string[] return type for strict Next.js builds.');
+ok(route.includes("const client=await pool!.connect();let inTransaction=false;try{await client.query('BEGIN');inTransaction=true;"),'Phase6/7 procurement transactions must begin before row locks.');
+ok(route.includes("if(b.inventoryItemId){const item=await client.query(`SELECT id FROM inventory_items WHERE id=$1 AND organization_id=$2 LIMIT 1`"),'Phase6/7 purchase-order creation must enforce organization ownership of inventory items.');
+ok(!route.includes("}).catch(async()=>pool!.query(`UPDATE public_health_response_tasks"),'Phase6/7 response action must not retry the same write after arbitrary database errors.');
 
 const contractNames=(contracts.contracts||contracts.modules||[]).map(x=>x.module||x.name||x.id);
 for(const m of phase67) ok(contractNames.includes(m),`Module contract missing ${m}`);
