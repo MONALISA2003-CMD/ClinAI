@@ -14,7 +14,9 @@ checks.push([!/replaceAll\(cfg\.alias/.test(phase45),'no unsafe SQL alias replac
 checks.push([!/generate_series\([^\n]*\)\s+d\(day\)/.test(phase45+phase3+home),'date series aliases use safe day_date']);
 checks.push([/safeQuery=async/.test(home)&&/widgetErrors/.test(home),'command center isolates widget failures']);
 checks.push([/friendlyFieldLabel/.test(page)&&/semantic-form-sections/.test(page+read('apps/web/app/globals.css')),'semantic clinical form system present']);
-checks.push([!(/Implementation notes|Database → API|Medicines JSON|Discrepancies JSON/.test(page)),'technical implementation labels removed from frontend']);
+checks.push([!(/Implementation notes|Database → API|Medicines JSON|Discrepancies JSON|Authoritative domain|Workflow actions|Data-derived analytics|Synthetic test boundary/.test(page)),'technical implementation labels removed from frontend']);
+checks.push([!(/label:'[^']*\bJSON\b|<span>[^<]*\bJSON\b[^<]*<\/span>/.test(page)),'no JSON labels exposed in data-entry fields']);
+checks.push([/phase3-entry-sections/.test(page)&&/Patient & visit/.test(page)&&/Clinical information/.test(page),'diagnostic and medication forms are grouped into clear clinical sections']);
 checks.push([/p1011-partial-warning/.test(p1011+read('apps/web/app/globals.css')),'partial intelligence warning presentation present']);
 checks.push([/generate_series|safeQuery/.test(home),'phase 10/11 hardening remains in source']);
 for(const [ok,label] of checks) console.log(`${ok?'PASS':'FAIL'} ${label}`);
