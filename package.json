@@ -41,7 +41,8 @@
     "test:workstream7:8": "node tests/workstream7-8-behavioral-audit.mjs && node tests/phase6-7-patient360-workspaces-audit.mjs && node tests/ai-security-scope-audit.mjs && node tests/ai-language-policy-audit.mjs && node tests/production-integrity-ai-audit.mjs && python -m py_compile services/intelligence/main.py services/intelligence/clinical_reasoning.py",
     "test:public-writable": "node tests/public-writable-domain-audit.mjs && npm run test:deployment:vercel-web && npm run test:phase3:validation",
     "test:domain-restoration": "node tests/domain-restoration-audit.mjs && node tests/full-module-domain-audit.mjs && node tests/phase2-module-contract-audit.mjs && node tests/frontend-backend-route-audit.mjs && node tests/public-writable-domain-audit.mjs && node tests/schema-contract-audit.mjs && node tests/ui-responsive-structural-check.mjs",
-    "test:phase1:backend": "node tests/phase1-backend-correctness-audit.mjs"
+    "test:phase1:backend": "node tests/phase1-backend-correctness-audit.mjs",
+    "test:phase1:7:integrity": "node tests/phase1-7-full-integrity-audit.mjs"
   },
   "devDependencies": {
     "@types/node": "latest",

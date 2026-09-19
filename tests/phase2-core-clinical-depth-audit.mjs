@@ -35,9 +35,9 @@ ok('AI response code untouched', !page.includes('private chain') && page.include
 ok('contract scope limited', [...contracts.modules].filter(m=>m.identity?.contractVersion==='2.1.0').every(m=>phase2.has(m.id)));
 ok('all Phase 2 contracts upgraded', [...contracts.modules].filter(m=>phase2.has(m.id)).every(m=>m.identity?.contractVersion==='2.1.0'));
 
-const tsc = spawnSync('tsc',['-p','/tmp/clinai-ts-harness/web-tsconfig.json'],{encoding:'utf8'});
+const tsc = spawnSync('tsc',['-p',path.join(root,'tests/ts-harness/web-tsconfig.json')],{encoding:'utf8'});
 ok('TSX semantic harness', tsc.status===0, (tsc.stdout||'')+(tsc.stderr||''));
-const routeTsc = spawnSync('tsc',['-p','/tmp/clinai-ts-harness/api-route-tsconfig.json'],{encoding:'utf8'});
+const routeTsc = spawnSync('tsc',['-p',path.join(root,'tests/ts-harness/api-route-tsconfig.json')],{encoding:'utf8'});
 ok('Phase 2 API route semantic harness', routeTsc.status===0, (routeTsc.stdout||'')+(routeTsc.stderr||''));
 
 const failed=checks.filter(x=>!x.pass);

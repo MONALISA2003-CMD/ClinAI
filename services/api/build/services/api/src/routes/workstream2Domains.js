@@ -369,7 +369,7 @@ export function registerWorkstream2DomainRoutes(app, pool, ctx) {
             }
             else
                 throw Object.assign(new Error('Provide an insurance provider ID or provider name.'), { statusCode: 400 });
-            const r = await client.query(`INSERT INTO insurance_policies(patient_id,provider_id,policy_number,status,coverage,member_number,effective_from,effective_to,copay_percent,annual_limit) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`, [b.patientId, providerId, b.policyNumber, b.status, b.coverage ? JSON.stringify(b.coverage) : null, b.memberNumber || null, b.effectiveFrom || null, b.effectiveTo || null, b.copayPercent, b.annualLimit ?? null]);
+            const r = await client.query(`INSERT INTO insurance_policies(organization_id,patient_id,provider_id,policy_number,status,coverage,member_number,effective_from,effective_to,copay_percent,annual_limit) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`, [organizationId, b.patientId, providerId, b.policyNumber, b.status, b.coverage ? JSON.stringify(b.coverage) : null, b.memberNumber || null, b.effectiveFrom || null, b.effectiveTo || null, b.copayPercent, b.annualLimit ?? null]);
             await ctx.dbAudit(client, req, 'CREATE', 'insurance_policy', r.rows[0].id, { patientId: b.patientId, policyNumber: b.policyNumber });
             await client.query('COMMIT');
             return reply.code(201).send(r.rows[0]);

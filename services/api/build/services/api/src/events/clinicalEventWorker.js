@@ -58,7 +58,16 @@ export function startClinicalEventWorker(pool) {
                 }
                 catch (error) {
                     const message = String(error?.message || 'CDSS event processing failed').slice(0, 1000);
-                    await pool.query(`UPDATE outbox_events SET status='pending',available_at=now()+interval '30 seconds',locked_at=NULL,worker_id=NULL,last_error=$2 WHERE id=$1`, [event.id, message]);
+                    await pool.query(`
+            UPDATE outbox_events
+            SET status=CASE WHEN attempts >= max_attempts THEN 'dead_lettered' ELSE 'pending' END,
+                available_at=CASE WHEN attempts >= max_attempts THEN available_at ELSE now()+interval '30 seconds' END,
+                locked_at=NULL,
+                worker_id=NULL,
+                last_error=$2,
+                dead_lettered_at=CASE WHEN attempts >= max_attempts THEN now() ELSE dead_lettered_at END
+            WHERE id=$1
+          `, [event.id, message]);
                 }
             }
         }

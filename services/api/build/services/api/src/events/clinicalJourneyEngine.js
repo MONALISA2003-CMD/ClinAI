@@ -71,7 +71,7 @@ async function projectWorkflowEvent(client, event) {
     const inserted = await client.query(`
     INSERT INTO clinical_workflow_events(organization_id,patient_id,encounter_id,event_type,from_state,to_state,payload,actor_id,source_event_id)
     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
-    ON CONFLICT (source_event_id) DO NOTHING
+    ON CONFLICT (source_event_id) WHERE source_event_id IS NOT NULL DO NOTHING
     RETURNING id`, [
         event.organization_id, event.payload?.patientId || null, event.payload?.encounterId || null, event.event_type,
         event.payload?.fromState || null, event.payload?.fromState ? null : null, JSON.stringify(event.payload || {}), null, event.id

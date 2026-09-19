@@ -15,6 +15,10 @@ import { evaluateClinicalContext, SYNCHRONOUS_CDSS_RULES } from './intelligence/
 import { buildPatientIntelligenceLayer, buildClinicalVelocity, buildValueBasedCare, buildGovernanceSummary, buildAIGovernanceLifecycle, calculateClinicalMeasures, recordAICapabilityEvaluation, AI_CAPABILITY_CATALOG, buildPatient360Context, buildAISecurityIntelligence, buildAIRiskIntelligence, buildClinicalVelocityIntelligence, buildValueBasedCareIntelligence, recordSecurityEvent } from './intelligence/enterpriseIntelligence.js';
 import moduleContractCatalog from '../../../packages/module-contracts/contracts.json' with { type: 'json' };
 import { registerWorkstream2DomainRoutes } from './routes/workstream2Domains.js';
+import { registerPhase2CoreClinicalRoutes } from './routes/phase2CoreClinical.js';
+import { registerPhase3DiagnosticsRoutes } from './routes/phase3Diagnostics.js';
+import { registerPhase45AcuteContinuityRoutes } from './routes/phase45AcuteContinuity.js';
+import { registerPhase67FinancePublicHealthRoutes } from './routes/phase67FinancePublicHealth.js';
 import { DOMAIN_MODULE_SPECS } from './domainModuleSpecs.js';
 const MODULE_CONTRACTS = moduleContractCatalog.modules;
 const MODULE_CONTRACT_BY_ID = Object.fromEntries(MODULE_CONTRACTS.map(c => [c.id, c]));
@@ -49,7 +53,7 @@ const READ_ONLY_ROLES = new Set(['viewer', 'analyst']);
 function actor(req) { return req.user?.sub || 'system'; }
 function org(req) { return req.user?.organizationId || null; }
 function canWrite(req) { return Boolean(req.user?.publicSynthetic) || WRITE_ROLES.has(String(req.user?.role || '').toLowerCase()); }
-function isPublicPath(path) { return PUBLIC_API_PATHS.has(path) || path.startsWith('/api/public/test-patients/') || path.startsWith('/api/public/test-modules/') || path.startsWith('/api/public/test-intelligence/'); }
+function isPublicPath(path) { return PUBLIC_API_PATHS.has(path) || path.startsWith('/api/public/test-patients/') || path.startsWith('/api/public/test-modules/') || path.startsWith('/api/public/test-intelligence/') || path.startsWith('/api/public/test-phase45/'); }
 const AI_NON_MUTATING_PATHS = new Set(['/api/ai/assist', '/api/ai/patient-intelligence', '/api/ai/compute', '/api/ai/analyze', '/api/ai/research', '/api/ai/document', '/api/ai/management-brief', '/api/ai/cohort', '/api/ai/role-briefing', '/api/ai/attention', '/api/ai/translate', '/api/ai/language/analyze', '/api/ai/router', '/api/ai/feedback']);
 function isClinicalMutation(req) {
     const path = (req.raw.url || '/').split('?')[0];
@@ -298,6 +302,102 @@ async function ensureRuntimeSchema() {
   `);
 }
 await ensureRuntimeSchema();
+async function ensurePhase3RuntimeSchema() {
+    if (!pool)
+        return;
+    await pool.query(`
+    ALTER TABLE lab_samples ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
+    ALTER TABLE lab_samples ADD COLUMN IF NOT EXISTS received_by uuid REFERENCES users(id);
+    ALTER TABLE lab_samples ADD COLUMN IF NOT EXISTS processed_by uuid REFERENCES users(id);
+    ALTER TABLE lab_samples ADD COLUMN IF NOT EXISTS rejected_at timestamptz;
+    ALTER TABLE lab_samples ADD COLUMN IF NOT EXISTS rejection_reason text;
+    ALTER TABLE lab_samples ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
+    ALTER TABLE lab_results ADD COLUMN IF NOT EXISTS reference_range jsonb NOT NULL DEFAULT '{}';
+    ALTER TABLE lab_results ADD COLUMN IF NOT EXISTS interpretation text;
+    ALTER TABLE lab_results ADD COLUMN IF NOT EXISTS comments text;
+    ALTER TABLE lab_results ADD COLUMN IF NOT EXISTS released_by uuid REFERENCES users(id);
+    ALTER TABLE lab_results ADD COLUMN IF NOT EXISTS released_at timestamptz;
+    ALTER TABLE lab_results ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
+    ALTER TABLE lab_results ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
+    CREATE TABLE IF NOT EXISTS imaging_studies(
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      patient_id uuid NOT NULL REFERENCES patients(id) ON DELETE CASCADE, encounter_id uuid REFERENCES encounters(id) ON DELETE SET NULL,
+      order_id uuid REFERENCES clinical_orders(id) ON DELETE SET NULL, study_code text, study_name text NOT NULL,
+      modality text, body_site text, priority text NOT NULL DEFAULT 'routine', status text NOT NULL DEFAULT 'scheduled',
+      scheduled_at timestamptz, performed_at timestamptz, report text, findings text, impression text,
+      critical boolean NOT NULL DEFAULT false, report_verified_at timestamptz, report_released_at timestamptz,
+      cancel_reason text, created_by uuid REFERENCES users(id), created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+    );
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS organization_id uuid REFERENCES organizations(id) ON DELETE CASCADE;
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS patient_id uuid REFERENCES patients(id) ON DELETE CASCADE;
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS encounter_id uuid REFERENCES encounters(id) ON DELETE SET NULL;
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS order_id uuid REFERENCES clinical_orders(id) ON DELETE SET NULL;
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS study_code text;
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS study_name text;
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS modality text;
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS body_site text;
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS priority text NOT NULL DEFAULT 'routine';
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'scheduled';
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS scheduled_at timestamptz;
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS performed_at timestamptz;
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS report text;
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS findings text;
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS impression text;
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS critical boolean NOT NULL DEFAULT false;
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS report_verified_at timestamptz;
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS report_released_at timestamptz;
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS cancel_reason text;
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS created_by uuid REFERENCES users(id);
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
+    ALTER TABLE imaging_studies ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
+    ALTER TABLE medication_orders ADD COLUMN IF NOT EXISTS prescribed_at timestamptz NOT NULL DEFAULT now();
+    ALTER TABLE medication_orders ADD COLUMN IF NOT EXISTS indication text;
+    ALTER TABLE medication_orders ADD COLUMN IF NOT EXISTS instructions text;
+    ALTER TABLE medication_orders ADD COLUMN IF NOT EXISTS start_date date;
+    ALTER TABLE medication_orders ADD COLUMN IF NOT EXISTS end_date date;
+    ALTER TABLE medication_orders ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
+    ALTER TABLE dispensations ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
+    ALTER TABLE dispensations ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'completed';
+    ALTER TABLE dispensations ADD COLUMN IF NOT EXISTS notes jsonb NOT NULL DEFAULT '{}';
+    CREATE TABLE IF NOT EXISTS medication_reconciliation(
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      patient_id uuid NOT NULL REFERENCES patients(id) ON DELETE CASCADE, encounter_id uuid REFERENCES encounters(id) ON DELETE SET NULL,
+      source text NOT NULL DEFAULT 'clinical-review', medication_name text, status text NOT NULL DEFAULT 'in-review',
+      medicines jsonb NOT NULL DEFAULT '[]', discrepancies jsonb NOT NULL DEFAULT '[]', resolved_count integer NOT NULL DEFAULT 0,
+      reviewed_by uuid REFERENCES users(id), reviewed_at timestamptz, created_by uuid REFERENCES users(id),
+      created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+    );
+    ALTER TABLE medication_reconciliation ADD COLUMN IF NOT EXISTS encounter_id uuid REFERENCES encounters(id) ON DELETE SET NULL;
+    ALTER TABLE medication_reconciliation ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'clinical-review';
+    ALTER TABLE medication_reconciliation ADD COLUMN IF NOT EXISTS medication_name text;
+    ALTER TABLE medication_reconciliation ADD COLUMN IF NOT EXISTS medicines jsonb NOT NULL DEFAULT '[]';
+    ALTER TABLE medication_reconciliation ADD COLUMN IF NOT EXISTS discrepancies jsonb NOT NULL DEFAULT '[]';
+    ALTER TABLE medication_reconciliation ADD COLUMN IF NOT EXISTS resolved_count integer NOT NULL DEFAULT 0;
+    ALTER TABLE medication_reconciliation ADD COLUMN IF NOT EXISTS reviewed_by uuid REFERENCES users(id);
+    ALTER TABLE medication_reconciliation ADD COLUMN IF NOT EXISTS reviewed_at timestamptz;
+    ALTER TABLE medication_reconciliation ADD COLUMN IF NOT EXISTS created_by uuid REFERENCES users(id);
+    ALTER TABLE medication_reconciliation ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
+    ALTER TABLE medication_reconciliation ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
+    CREATE TABLE IF NOT EXISTS medication_reconciliation_items(
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), reconciliation_id uuid NOT NULL REFERENCES medication_reconciliation(id) ON DELETE CASCADE,
+      patient_id uuid NOT NULL REFERENCES patients(id) ON DELETE CASCADE, medication_order_id uuid REFERENCES medication_orders(id) ON DELETE SET NULL,
+      medication_id uuid REFERENCES medications(id) ON DELETE SET NULL, medication_name text, dose text, frequency text, route text,
+      discrepancy_type text, status text NOT NULL DEFAULT 'open', notes text, resolved_by uuid REFERENCES users(id), resolved_at timestamptz,
+      created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS lab_samples_org_status_idx ON lab_samples(order_id,status,collected_at DESC);
+    CREATE INDEX IF NOT EXISTS lab_results_sample_status_idx ON lab_results(sample_id,status,created_at DESC);
+    CREATE INDEX IF NOT EXISTS imaging_studies_org_status_idx ON imaging_studies(organization_id,status,created_at DESC);
+    CREATE INDEX IF NOT EXISTS imaging_studies_patient_created_idx ON imaging_studies(patient_id,created_at DESC);
+    CREATE INDEX IF NOT EXISTS medication_orders_patient_prescribed_idx ON medication_orders(patient_id,prescribed_at DESC);
+    CREATE INDEX IF NOT EXISTS medication_orders_status_idx ON medication_orders(status,prescribed_at DESC);
+    CREATE INDEX IF NOT EXISTS dispensations_order_created_idx ON dispensations(medication_order_id,created_at DESC);
+    CREATE INDEX IF NOT EXISTS medication_reconciliation_org_status_idx ON medication_reconciliation(organization_id,status,created_at DESC);
+    CREATE INDEX IF NOT EXISTS medication_reconciliation_patient_idx ON medication_reconciliation(patient_id,created_at DESC);
+    CREATE INDEX IF NOT EXISTS medication_reconciliation_items_parent_idx ON medication_reconciliation_items(reconciliation_id,status,created_at DESC);
+  `);
+}
+await ensurePhase3RuntimeSchema();
 if (pool) {
     await pool.query(`ALTER TABLE notifications ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now()`);
     await pool.query(`CREATE INDEX IF NOT EXISTS notifications_patient_idx ON notifications(patient_id, created_at DESC)`);
@@ -341,6 +441,12 @@ CREATE TABLE IF NOT EXISTS public_health_response_tasks (id uuid PRIMARY KEY DEF
 CREATE TABLE IF NOT EXISTS public_health_alerts (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE, alert_type text NOT NULL, severity text NOT NULL DEFAULT 'high', title text NOT NULL, message text NOT NULL, source_event_id uuid REFERENCES surveillance_events(id) ON DELETE SET NULL, source_investigation_id uuid REFERENCES public_health_investigations(id) ON DELETE SET NULL, status text NOT NULL DEFAULT 'pending-review', generated_reason jsonb NOT NULL DEFAULT '{}', reviewed_by uuid REFERENCES users(id), reviewed_at timestamptz, created_at timestamptz NOT NULL DEFAULT now());
 CREATE TABLE IF NOT EXISTS mortality_surveillance_records (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE, patient_id uuid REFERENCES patients(id) ON DELETE SET NULL, facility_id uuid REFERENCES facilities(id) ON DELETE SET NULL, death_datetime timestamptz NOT NULL, place_of_death text, immediate_cause text, underlying_cause text, contributing_conditions jsonb NOT NULL DEFAULT '[]', maternal_death boolean NOT NULL DEFAULT false, neonatal_death boolean NOT NULL DEFAULT false, review_status text NOT NULL DEFAULT 'pending', review_findings jsonb NOT NULL DEFAULT '{}', source_guideline text, created_by uuid REFERENCES users(id), created_at timestamptz NOT NULL DEFAULT now());
 CREATE TABLE IF NOT EXISTS districts (  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,  name text NOT NULL, code text, region text, status text NOT NULL DEFAULT 'active', metadata jsonb NOT NULL DEFAULT '{}', created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(), UNIQUE(organization_id,name) ); CREATE TABLE IF NOT EXISTS district_facility_links (  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,  district_id uuid NOT NULL REFERENCES districts(id) ON DELETE CASCADE, facility_id uuid NOT NULL REFERENCES facilities(id) ON DELETE CASCADE,  relationship text NOT NULL DEFAULT 'serves', effective_from timestamptz, effective_to timestamptz, metadata jsonb NOT NULL DEFAULT '{}', created_at timestamptz NOT NULL DEFAULT now(), UNIQUE(organization_id,district_id,facility_id) ); CREATE TABLE IF NOT EXISTS facility_service_capacity (  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,  facility_id uuid NOT NULL REFERENCES facilities(id) ON DELETE CASCADE, service_code text NOT NULL, service_name text NOT NULL,  status text NOT NULL DEFAULT 'available' CHECK(status IN ('available','limited','unavailable','planned')),  capacity_total integer, capacity_available integer, wait_minutes integer, operating_hours jsonb NOT NULL DEFAULT '{}', metadata jsonb NOT NULL DEFAULT '{}', observed_at timestamptz NOT NULL DEFAULT now(), created_at timestamptz NOT NULL DEFAULT now() ); CREATE INDEX IF NOT EXISTS facility_service_capacity_idx ON facility_service_capacity(organization_id,facility_id,service_code,observed_at DESC); CREATE TABLE IF NOT EXISTS facility_resource_status (  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,  facility_id uuid NOT NULL REFERENCES facilities(id) ON DELETE CASCADE, resource_type text NOT NULL, resource_name text NOT NULL,  status text NOT NULL DEFAULT 'available' CHECK(status IN ('available','low','critical','unavailable','unknown')),  quantity numeric, unit text, threshold numeric, notes jsonb NOT NULL DEFAULT '{}', observed_at timestamptz NOT NULL DEFAULT now(), created_at timestamptz NOT NULL DEFAULT now() ); CREATE INDEX IF NOT EXISTS facility_resource_status_idx ON facility_resource_status(organization_id,facility_id,status,observed_at DESC); CREATE TABLE IF NOT EXISTS workforce_capacity_snapshots (  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,  facility_id uuid REFERENCES facilities(id) ON DELETE CASCADE, district_id uuid REFERENCES districts(id) ON DELETE CASCADE,  cadre text NOT NULL, scheduled_count integer NOT NULL DEFAULT 0, available_count integer NOT NULL DEFAULT 0, on_duty_count integer NOT NULL DEFAULT 0,  vacancy_count integer NOT NULL DEFAULT 0, snapshot_at timestamptz NOT NULL DEFAULT now(), metadata jsonb NOT NULL DEFAULT '{}' ); CREATE INDEX IF NOT EXISTS workforce_capacity_idx ON workforce_capacity_snapshots(organization_id,facility_id,cadre,snapshot_at DESC); CREATE TABLE IF NOT EXISTS facility_operational_incidents (  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,  facility_id uuid REFERENCES facilities(id) ON DELETE SET NULL, district_id uuid REFERENCES districts(id) ON DELETE SET NULL,  incident_type text NOT NULL, severity text NOT NULL DEFAULT 'moderate' CHECK(severity IN ('low','moderate','high','critical')),  status text NOT NULL DEFAULT 'open' CHECK(status IN ('open','acknowledged','mitigating','resolved','closed')),  title text NOT NULL, description text, started_at timestamptz NOT NULL DEFAULT now(), resolved_at timestamptz,  response_owner uuid REFERENCES users(id), impact jsonb NOT NULL DEFAULT '{}', created_by uuid REFERENCES users(id), created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now() ); CREATE INDEX IF NOT EXISTS facility_incidents_idx ON facility_operational_incidents(organization_id,status,severity,started_at DESC); CREATE TABLE IF NOT EXISTS facility_performance_snapshots (  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,  facility_id uuid REFERENCES facilities(id) ON DELETE CASCADE, district_id uuid REFERENCES districts(id) ON DELETE CASCADE,  period_start date NOT NULL, period_end date NOT NULL, indicator_code text NOT NULL, indicator_name text NOT NULL,  numerator numeric, denominator numeric, value_numeric numeric, unit text, quality_status text NOT NULL DEFAULT 'unreviewed', dimensions jsonb NOT NULL DEFAULT '{}', source text, created_at timestamptz NOT NULL DEFAULT now() ); CREATE INDEX IF NOT EXISTS facility_performance_idx ON facility_performance_snapshots(organization_id,period_end DESC,indicator_code,facility_id); CREATE TABLE IF NOT EXISTS referral_network_nodes (  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,  from_facility_id uuid NOT NULL REFERENCES facilities(id) ON DELETE CASCADE, to_facility_id uuid NOT NULL REFERENCES facilities(id) ON DELETE CASCADE,  service_code text, status text NOT NULL DEFAULT 'active' CHECK(status IN ('active','restricted','inactive')),  typical_wait_minutes integer, transport_notes jsonb NOT NULL DEFAULT '{}', metadata jsonb NOT NULL DEFAULT '{}', created_at timestamptz NOT NULL DEFAULT now(), UNIQUE(organization_id,from_facility_id,to_facility_id,service_code) ); CREATE INDEX IF NOT EXISTS referral_network_idx ON referral_network_nodes(organization_id,from_facility_id,status);
+
+  ALTER TABLE insurance_policies ADD COLUMN IF NOT EXISTS organization_id uuid;
+  UPDATE insurance_policies ip SET organization_id=p.organization_id FROM patients p WHERE ip.organization_id IS NULL AND ip.patient_id=p.id;
+  DO $$ BEGIN IF EXISTS (SELECT 1 FROM insurance_policies WHERE organization_id IS NULL) THEN RAISE EXCEPTION 'insurance_policies organization backfill incomplete'; END IF; END $$;
+  ALTER TABLE insurance_policies ALTER COLUMN organization_id SET NOT NULL;
+  DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='insurance_policies_organization_id_fkey') THEN ALTER TABLE insurance_policies ADD CONSTRAINT insurance_policies_organization_id_fkey FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE; END IF; END $$;
 `);
 }
 async function ensureDemoTenant() {
@@ -410,7 +516,7 @@ const allergy = z.object({ substance: z.string().min(1), reaction: z.string().op
 const appointment = z.object({ patientId: z.string(), providerId: z.string().optional(), facilityId: z.string().optional(), startAt: z.string(), durationMinutes: z.number().int().positive().default(30), type: z.string().default('consultation'), reason: z.string().optional(), status: z.string().default('scheduled') });
 const encounter = z.object({ patientId: z.string(), appointmentId: z.string().optional(), providerId: z.string().optional(), facilityId: z.string().optional(), reason: z.string().optional(), type: z.string().default('outpatient'), status: z.string().default('in-progress') });
 const order = z.object({ patientId: z.string(), encounterId: z.string().optional(), category: z.enum(['laboratory', 'imaging', 'medication', 'procedure']), code: z.string().min(1), description: z.string().optional(), priority: z.enum(['routine', 'urgent', 'stat']).default('routine'), details: z.record(z.any()).optional() });
-const triage = z.object({ patientId: z.string(), encounterId: z.string().optional(), chiefComplaint: z.string().optional(), temperature: z.number().optional(), heartRate: z.number().optional(), respiratoryRate: z.number().optional(), systolic: z.number().optional(), diastolic: z.number().optional(), spo2: z.number().optional(), pain: z.number().min(0).max(10).optional(), acuity: z.enum(['routine', 'urgent', 'emergency']).default('routine') });
+const triage = z.object({ patientId: z.string(), encounterId: z.string().optional(), arrivedAt: z.string().datetime().optional(), arrivalMode: z.string().min(1).default('walk-in'), chiefComplaint: z.string().optional(), triageNurseId: z.string().optional(), triageCategory: z.string().optional(), temperature: z.number().optional(), heartRate: z.number().optional(), respiratoryRate: z.number().optional(), systolic: z.number().optional(), diastolic: z.number().optional(), spo2: z.number().optional(), pain: z.number().min(0).max(10).optional(), mentalStatus: z.string().optional(), mobilityStatus: z.string().optional(), infectionPrecautions: z.record(z.any()).default({}), riskFlags: z.array(z.any()).default([]), notes: z.string().optional(), disposition: z.string().optional(), acuity: z.enum(['routine', 'urgent', 'emergency']).default('routine'), status: z.enum(['pending', 'completed', 'routed', 'closed', 'cancelled']).default('completed') });
 const generic = z.record(z.any());
 function validationError(message, issues) { return Object.assign(new Error(message), { statusCode: 400, code: 'VALIDATION_FAILED', issues: issues || [] }); }
 function validateContractPayload(contract, body, partial = false) {
@@ -1024,26 +1130,33 @@ app.post('/api/triage', async (req, reply) => {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
-        const p = await client.query('SELECT id FROM patients WHERE id=$1 AND organization_id=$2', [t.patientId, dbOrganizationId(req)]);
+        const oid = dbOrganizationId(req);
+        const p = await client.query('SELECT id FROM patients WHERE id=$1 AND organization_id=$2', [t.patientId, oid]);
         if (!p.rowCount) {
             await client.query('ROLLBACK');
             return reply.code(404).send({ error: 'Patient not found' });
         }
-        const record = { ...t, status: 'completed', completedAt: now() };
-        const tr = await client.query(`INSERT INTO module_records(organization_id,module,status,payload,created_by) VALUES($1,'triage','completed',$2,$3) RETURNING id,created_at AS "createdAt"`, [dbOrganizationId(req), JSON.stringify(record), dbUserId(req)]);
+        if (t.encounterId) {
+            const e = await client.query('SELECT id FROM encounters WHERE id=$1 AND patient_id=$2 AND organization_id=$3', [t.encounterId, t.patientId, oid]);
+            if (!e.rowCount) {
+                await client.query('ROLLBACK');
+                return reply.code(409).send({ error: 'Encounter does not belong to the selected patient' });
+            }
+        }
+        const r = await client.query(`INSERT INTO triage_assessments(organization_id,patient_id,encounter_id,arrived_at,arrival_mode,chief_complaint,triage_nurse_id,acuity,triage_category,temperature,heart_rate,respiratory_rate,systolic,diastolic,spo2,pain,mental_status,mobility_status,infection_precautions,risk_flags,notes,disposition,status,completed_at,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,'completed',now(),$23) RETURNING *`, [oid, t.patientId, t.encounterId || null, t.arrivedAt || now(), t.arrivalMode, t.chiefComplaint, dbUserId(req), t.acuity, t.triageCategory || null, t.temperature ?? null, t.heartRate ?? null, t.respiratoryRate ?? null, t.systolic ?? null, t.diastolic ?? null, t.spo2 ?? null, t.pain ?? null, t.mentalStatus || null, t.mobilityStatus || null, JSON.stringify(t.infectionPrecautions || {}), JSON.stringify(t.riskFlags || []), t.notes || null, t.disposition || null, dbUserId(req)]);
         const vitals = [['temperature', t.temperature, 'Cel'], ['heart-rate', t.heartRate, '/min'], ['respiratory-rate', t.respiratoryRate, '/min'], ['systolic-blood-pressure', t.systolic, 'mmHg'], ['diastolic-blood-pressure', t.diastolic, 'mmHg'], ['oxygen-saturation', t.spo2, '%'], ['pain-score', t.pain, '/10']];
         for (const [code, value, unit] of vitals)
             if (value !== undefined)
                 await client.query(`INSERT INTO observations(patient_id,encounter_id,code_system,code,display,value_numeric,unit,performer_user_id) VALUES($1,$2,'LOINC',$3,$4,$5,$6,$7)`, [t.patientId, t.encounterId || null, code, code, value, unit, dbUserId(req)]);
-        let q = await client.query("SELECT id FROM queues WHERE organization_id=$1 AND code='GENERAL' LIMIT 1", [dbOrganizationId(req)]);
+        let q = await client.query("SELECT id FROM queues WHERE organization_id=$1 AND code='GENERAL' LIMIT 1", [oid]);
         if (!q.rowCount)
-            q = await client.query("INSERT INTO queues(organization_id,code,name) VALUES($1,'GENERAL','General Queue') RETURNING id", [dbOrganizationId(req)]);
+            q = await client.query("INSERT INTO queues(organization_id,code,name) VALUES($1,'GENERAL','General Queue') RETURNING id", [oid]);
         const status = t.acuity === 'emergency' ? 'emergency' : 'waiting-doctor';
-        const qe = await client.query('INSERT INTO queue_entries(queue_id,patient_id,priority,status) VALUES($1,$2,$3,$4) RETURNING id', [q.rows[0].id, t.patientId, t.acuity, status]);
-        await dbAudit(client, req, 'CREATE', 'triage', tr.rows[0].id, { patientId: t.patientId, acuity: t.acuity });
-        await enqueueClinicalEvent(client, { organizationId: dbOrganizationId(req), eventType: CLINICAL_EVENT_TYPES.VITAL_RECORDED, aggregateType: 'triage', aggregateId: tr.rows[0].id, patientId: t.patientId, encounterId: t.encounterId || null, payload: { triageId: tr.rows[0].id, patientId: t.patientId, encounterId: t.encounterId || null, acuity: t.acuity } });
+        const qe = await client.query('INSERT INTO queue_entries(queue_id,patient_id,encounter_id,priority,status) VALUES($1,$2,$3,$4,$5) RETURNING id', [q.rows[0].id, t.patientId, t.encounterId || null, t.acuity, status]);
+        await dbAudit(client, req, 'CREATE', 'triage_assessment', r.rows[0].id, { patientId: t.patientId, acuity: t.acuity, queueEntryId: qe.rows[0].id, compatibilityRoute: true });
+        await queueEvent(client, req, 'triage.assessment.recorded', { triageId: r.rows[0].id, patientId: t.patientId, encounterId: t.encounterId || null, acuity: t.acuity, status: 'completed', queueEntryId: qe.rows[0].id });
         await client.query('COMMIT');
-        return reply.code(201).send({ id: tr.rows[0].id, ...record, queueEntryId: qe.rows[0].id });
+        return reply.code(201).send({ id: r.rows[0].id, ...r.rows[0], queueEntryId: qe.rows[0].id });
     }
     catch (e) {
         await client.query('ROLLBACK');
@@ -1082,24 +1195,22 @@ app.post('/api/orders', async (req, reply) => {
         }
         const r = await client.query(`INSERT INTO clinical_orders(patient_id,encounter_id,ordered_by,order_type,priority,status,details) VALUES($1,$2,$3,$4,$5,'ordered',$6) RETURNING id,patient_id AS "patientId",encounter_id AS "encounterId",order_type AS category,priority,status,details,created_at AS "createdAt"`, [o.patientId, o.encounterId || null, dbUserId(req), o.category, o.priority, JSON.stringify({ code: o.code, description: o.description, ...(o.details || {}) })]);
         const routed = await client.query(`INSERT INTO module_records(organization_id,module,status,payload,created_by) VALUES($1,$2,'ordered',$3,$4) RETURNING id`, [dbOrganizationId(req), o.category, JSON.stringify({ orderId: r.rows[0].id, patientId: o.patientId, encounterId: o.encounterId || null, code: o.code, description: o.description, priority: o.priority, status: 'ordered' }), dbUserId(req)]);
-        let sampleMeta = null;
-        if (o.category === 'laboratory') {
-            let test = await client.query(`SELECT id FROM lab_tests WHERE organization_id=$1 AND code=$2 LIMIT 1`, [dbOrganizationId(req), o.code]);
-            if (!test.rowCount)
-                test = await client.query(`INSERT INTO lab_tests(organization_id,code,name,active) VALUES($1,$2,$3,true) RETURNING id`, [dbOrganizationId(req), o.code, o.description || o.code]);
-            const barcode = `CLN-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
-            const sample = await client.query(`INSERT INTO lab_samples(order_id,barcode,status) VALUES($1,$2,'ordered') RETURNING id,barcode,status`, [r.rows[0].id, barcode]);
-            sampleMeta = sample.rows[0];
-            await client.query(`UPDATE module_records SET payload=payload || $1::jsonb WHERE id=$2`, [JSON.stringify({ sampleId: sample.rows[0].id, barcode: sample.rows[0].barcode }), routed.rows[0].id]);
-        }
         if (o.category === 'laboratory') {
             let test = await client.query(`SELECT id FROM lab_tests WHERE organization_id=$1 AND code=$2 LIMIT 1`, [dbOrganizationId(req), o.code]);
             if (!test.rowCount)
                 test = await client.query(`INSERT INTO lab_tests(organization_id,code,name,active) VALUES($1,$2,$3,true) RETURNING id`, [dbOrganizationId(req), o.code, o.description || o.code]);
             const barcode = `CLN-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
-            const sample = await client.query(`INSERT INTO lab_samples(order_id,barcode,specimen_type,status) VALUES($1,$2,$3,'collected') RETURNING id,barcode`, [r.rows[0].id, barcode, o.details?.specimenType || null]);
+            const sample = await client.query(`INSERT INTO lab_samples(order_id,barcode,specimen_type,status,created_at,updated_at) VALUES($1,$2,$3,'ordered',now(),now()) RETURNING id,barcode`, [r.rows[0].id, barcode, o.details?.specimenType || null]);
             if (o.details?.valueNumeric !== undefined || o.details?.valueText !== undefined)
                 await client.query(`INSERT INTO lab_results(sample_id,test_id,value_numeric,value_text,unit,abnormal_flag,critical,status) VALUES($1,$2,$3,$4,$5,$6,$7,'preliminary')`, [sample.rows[0].id, test.rows[0].id, o.details?.valueNumeric ?? null, o.details?.valueText ?? null, o.details?.unit ?? null, o.details?.abnormalFlag ?? null, Boolean(o.details?.critical)]);
+        }
+        if (o.category === 'imaging') {
+            await client.query(`INSERT INTO imaging_studies(organization_id,patient_id,encounter_id,order_id,study_code,study_name,modality,priority,status,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'scheduled',$9)`, [dbOrganizationId(req), o.patientId, o.encounterId || null, r.rows[0].id, o.code, o.description, o.details?.modality || 'unspecified', o.priority, dbUserId(req)]);
+        }
+        if (o.category === 'medication') {
+            const med = await client.query(`SELECT id FROM medications WHERE organization_id=$1 AND code=$2 LIMIT 1`, [dbOrganizationId(req), o.code]);
+            if (med.rowCount)
+                await client.query(`INSERT INTO medication_orders(patient_id,encounter_id,medication_id,dose,frequency,route,duration,quantity,status,prescribed_by,prescribed_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'active',$9,now(),now())`, [o.patientId, o.encounterId || null, med.rows[0].id, o.details?.dose || o.description || 'as prescribed', o.details?.frequency || 'as directed', o.details?.route || 'oral', o.details?.duration || null, Number(o.details?.quantity || 1), dbUserId(req)]);
         }
         await dbAudit(client, req, 'CREATE', 'clinical_order', r.rows[0].id, { category: o.category, code: o.code, routedRecordId: routed.rows[0].id });
         await queueEvent(client, req, CLINICAL_EVENT_TYPES.ORDER_CREATED, { orderId: r.rows[0].id, category: o.category, patientId: o.patientId, encounterId: o.encounterId || null, code: o.code, description: o.description, priority: o.priority });
@@ -1117,7 +1228,7 @@ app.post('/api/orders', async (req, reply) => {
 app.get('/api/laboratory', async (req) => {
     if (!pool)
         return { data: store.laboratory || [], count: (store.laboratory || []).length };
-    const r = await pool.query(`SELECT ls.id,co.patient_id AS "patientId",co.encounter_id AS "encounterId",co.code,co.details->>'description' AS description,co.priority,ls.barcode,ls.specimen_type AS "specimenType",ls.status,ls.collected_at AS "collectedAt",ls.received_at AS "receivedAt",ls.processed_at AS "processedAt",lr.id AS "resultId",lr.value_numeric AS "valueNumeric",lr.value_text AS "valueText",lr.unit,lr.abnormal_flag AS "abnormalFlag",lr.critical,lr.status AS "resultStatus" FROM lab_samples ls JOIN clinical_orders co ON co.id=ls.order_id JOIN patients p ON p.id=co.patient_id LEFT JOIN lab_results lr ON lr.sample_id=ls.id WHERE p.organization_id=$1 ORDER BY ls.id DESC LIMIT 500`, [dbOrganizationId(req)]);
+    const r = await pool.query(`SELECT ls.id,co.patient_id AS "patientId",co.encounter_id AS "encounterId",co.details->>'code' AS code,co.details->>'description' AS description,co.priority,ls.barcode,ls.specimen_type AS "specimenType",ls.status,ls.collected_at AS "collectedAt",ls.received_at AS "receivedAt",ls.processed_at AS "processedAt",lr.id AS "resultId",lr.value_numeric AS "valueNumeric",lr.value_text AS "valueText",lr.unit,lr.abnormal_flag AS "abnormalFlag",lr.critical,lr.status AS "resultStatus" FROM lab_samples ls JOIN clinical_orders co ON co.id=ls.order_id JOIN patients p ON p.id=co.patient_id LEFT JOIN lab_results lr ON lr.sample_id=ls.id WHERE p.organization_id=$1 ORDER BY ls.id DESC LIMIT 500`, [dbOrganizationId(req)]);
     return { data: r.rows, count: r.rowCount };
 });
 app.get('/api/imaging', async (req) => {
@@ -3247,6 +3358,25 @@ async function ensureV15Schema() {
     );
     CREATE INDEX IF NOT EXISTS ai_work_runs_org_created_idx ON ai_work_runs(organization_id,created_at DESC);
     CREATE INDEX IF NOT EXISTS ai_work_runs_patient_idx ON ai_work_runs(organization_id,patient_id,created_at DESC);
+    CREATE TABLE IF NOT EXISTS ai_providers (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid REFERENCES organizations(id) ON DELETE CASCADE,
+      provider_key text NOT NULL, display_name text NOT NULL, enabled boolean NOT NULL DEFAULT true,
+      governance_class text NOT NULL DEFAULT 'public-free', created_at timestamptz NOT NULL DEFAULT now(),
+      UNIQUE(organization_id,provider_key)
+    );
+    CREATE TABLE IF NOT EXISTS ai_models (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), provider_id uuid REFERENCES ai_providers(id) ON DELETE CASCADE,
+      model_key text NOT NULL, display_name text NOT NULL, capability_profile jsonb NOT NULL DEFAULT '{}',
+      enabled boolean NOT NULL DEFAULT true, priority integer NOT NULL DEFAULT 100, created_at timestamptz NOT NULL DEFAULT now(),
+      UNIQUE(provider_id,model_key)
+    );
+    CREATE TABLE IF NOT EXISTS ai_provider_usage (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), organization_id uuid REFERENCES organizations(id) ON DELETE CASCADE,
+      provider_key text NOT NULL, model_key text NOT NULL, status text NOT NULL, http_status integer, latency_ms integer,
+      input_tokens integer, output_tokens integer, error_code text, created_at timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS ai_provider_usage_created_idx ON ai_provider_usage(organization_id,created_at DESC);
+    CREATE INDEX IF NOT EXISTS ai_provider_usage_provider_idx ON ai_provider_usage(provider_key,model_key,created_at DESC);
   `);
 }
 // --- V14 Integration Completion: patient flow, closed-loop referrals, safety, access and operational intelligence ---
@@ -4096,4 +4226,8 @@ app.post('/api/smart/token', async (req, reply) => { if (!pool)
     return reply.code(400).send({ error: 'Authorization code is invalid, expired or already used.' }); const expected = createHash('sha256').update(b.code_verifier).digest('base64url'); if (expected !== r.rows[0].code_challenge)
     return reply.code(400).send({ error: 'PKCE verification failed.' }); const accessToken = await app.jwt.sign({ sub: r.rows[0].user_id || `smart:${b.client_id}`, organizationId: r.rows[0].organization_id, role: r.rows[0].user_role || 'doctor', scope: r.rows[0].scope || '', smartClientId: b.client_id }, { expiresIn: '15m' }); return { access_token: accessToken, token_type: 'Bearer', expires_in: 900, scope: r.rows[0].scope || '', patient: r.rows[0].patient_id || undefined }; });
 registerWorkstream2DomainRoutes(app, pool, { dbOrganizationId, dbUserId, requireAuthorizedWrite, dbAudit, queueEvent, clinicalEventTypes: CLINICAL_EVENT_TYPES });
+registerPhase2CoreClinicalRoutes(app, pool, { dbOrganizationId, dbUserId, requireAuthorizedWrite, dbAudit, queueEvent });
+registerPhase3DiagnosticsRoutes(app, pool, { dbOrganizationId, dbUserId, requireAuthorizedWrite, dbAudit, queueEvent, clinicalEventTypes: CLINICAL_EVENT_TYPES });
+registerPhase45AcuteContinuityRoutes(app, pool, { dbOrganizationId, dbUserId, requireAuthorizedWrite, dbAudit, queueEvent });
+registerPhase67FinancePublicHealthRoutes(app, pool, { dbOrganizationId, dbUserId, requireAuthorizedWrite, dbAudit, queueEvent });
 app.listen({ port: Number(process.env.PORT || 4000), host: '0.0.0.0' });

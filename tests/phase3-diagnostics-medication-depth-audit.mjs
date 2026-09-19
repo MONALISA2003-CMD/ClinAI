@@ -38,7 +38,7 @@ ok('specialized frontend workspace',page.includes('const PHASE3_MODULES') && pag
 ok('specialized responsive CSS',css.includes('.phase3-workspace') && css.includes('.phase3-kpis') && css.includes('@media (max-width:700px)'));
 ok('existing AI response presentation preserved structurally',page.includes('function AIResponse') && page.includes('ai-response-confidence'));
 ok('no destructive Phase 3 SQL',!/\b(DROP|TRUNCATE|DELETE\s+FROM)\b/i.test(migrationSql));
-ok('API route semantic harness',fs.existsSync('/tmp/clinai-ts-harness/api-route-tsconfig.json'));
-ok('web TSX semantic harness clean',fs.existsSync('/tmp/clinai-ts-harness/web-tsconfig.json'));
+ok('API route semantic harness',fs.existsSync(path.join(root,'tests/ts-harness/api-route-tsconfig.json')));
+ok('web TSX semantic harness clean',fs.existsSync(path.join(root,'tests/ts-harness/web-tsconfig.json')));
 
 const failed=checks.filter(c=>!c.pass); for(const c of checks) console.log(`${c.pass?'PASS':'FAIL'} | ${c.name}${c.detail?` | ${c.detail}`:''}`); if(failed.length){console.error(`\n${failed.length} checks failed.`);process.exit(1)} console.log(`\nPhase 3 diagnostic/medication audit passed: ${checks.length} checks.`);

@@ -1,0 +1,495 @@
+import { z } from 'zod';
+const PHARMACY_STATUS = ['active', 'partially-dispensed', 'dispensed', 'completed', 'discontinued'];
+function requireDb(pool, reply) { if (!pool) {
+    reply.code(501).send({ error: 'PostgreSQL required' });
+    return false;
+} return true; }
+function write(ctx, req) { ctx.requireAuthorizedWrite(req); }
+function iso(v) { return v ? new Date(String(v)).toISOString() : null; }
+function num(v) { if (v === undefined || v === null || v === '')
+    return null; const n = Number(v); return Number.isFinite(n) ? n : null; }
+function filters(req) { return { q: String(req.query?.q || '').trim(), status: String(req.query?.status || '').trim(), patientNumber: String(req.query?.patientNumber || '').trim() }; }
+export function registerPhase3DiagnosticsRoutes(app, pool, ctx) {
+    const oid = (req) => ctx.dbOrganizationId(req);
+    async function patientOk(client, patientId, orgId) { const r = await client.query('SELECT id FROM patients WHERE id=$1 AND organization_id=$2 LIMIT 1', [patientId, orgId]); return Boolean(r.rowCount); }
+    async function encounterOk(client, encounterId, patientId, orgId) { if (!encounterId)
+        return true; const r = await client.query('SELECT id FROM encounters WHERE id=$1 AND patient_id=$2 AND organization_id=$3 LIMIT 1', [encounterId, patientId, orgId]); return Boolean(r.rowCount); }
+    app.get('/api/phase3/laboratory', async (req, reply) => {
+        if (!requireDb(pool, reply))
+            return;
+        const organizationId = oid(req);
+        if (!organizationId)
+            return reply.code(400).send({ error: 'Organization context is required' });
+        const f = filters(req);
+        const params = [organizationId];
+        const where = ['p.organization_id=$1'];
+        if (f.status) {
+            params.push(f.status);
+            where.push(`ls.status=$${params.length}`);
+        }
+        if (f.patientNumber) {
+            params.push(f.patientNumber);
+            where.push(`p.patient_number=$${params.length}`);
+        }
+        if (f.q) {
+            params.push(`%${f.q}%`);
+            where.push(`(p.patient_number ILIKE $${params.length} OR co.details->>'code' ILIKE $${params.length} OR co.details->>'description' ILIKE $${params.length} OR ls.barcode ILIKE $${params.length})`);
+        }
+        const r = await pool.query(`SELECT ls.id,co.id AS "orderId",co.patient_id AS "patientId",co.encounter_id AS "encounterId",p.patient_number AS "patientNumber",p.first_name AS "firstName",p.last_name AS "lastName",co.details->>'code' AS code,co.details->>'description' AS description,co.priority,ls.barcode,ls.specimen_type AS "specimenType",ls.status,ls.collected_at AS "collectedAt",ls.received_at AS "receivedAt",ls.processed_at AS "processedAt",lr.id AS "resultId",lr.value_numeric AS "valueNumeric",lr.value_text AS "valueText",lr.unit,lr.abnormal_flag AS "abnormalFlag",lr.critical,lr.status AS "resultStatus",lr.verified_at AS "verifiedAt",lr.released_at AS "releasedAt",lr.interpretation,lr.reference_range AS "referenceRange" FROM lab_samples ls JOIN clinical_orders co ON co.id=ls.order_id JOIN patients p ON p.id=co.patient_id LEFT JOIN LATERAL (SELECT * FROM lab_results x WHERE x.sample_id=ls.id ORDER BY x.id DESC LIMIT 1) lr ON true WHERE ${where.join(' AND ')} ORDER BY COALESCE(ls.received_at,ls.collected_at,co.created_at) DESC LIMIT 500`, params);
+        return { data: r.rows, count: r.rowCount, module: 'laboratory', source: 'lab_samples' };
+    });
+    app.get('/api/phase3/laboratory/dashboard', async (req, reply) => {
+        if (!requireDb(pool, reply))
+            return;
+        const organizationId = oid(req);
+        if (!organizationId)
+            return reply.code(400).send({ error: 'Organization context is required' });
+        const [summary, trend, breakdown] = await Promise.all([
+            pool.query(`SELECT count(*)::int total,count(*) FILTER(WHERE ls.status IN ('ordered','collected','received','processing','preliminary'))::int pending,count(*) FILTER(WHERE lr.critical=true AND lr.status<>'released')::int critical_open,count(*) FILTER(WHERE ls.status='released' OR lr.status='released')::int released,round(COALESCE(avg(EXTRACT(EPOCH FROM (ls.processed_at-COALESCE(ls.collected_at,co.created_at)))/60) FILTER(WHERE ls.processed_at IS NOT NULL),0)::numeric,1) avg_turnaround_minutes FROM lab_samples ls JOIN clinical_orders co ON co.id=ls.order_id JOIN patients p ON p.id=co.patient_id LEFT JOIN LATERAL(SELECT * FROM lab_results z WHERE z.sample_id=ls.id ORDER BY z.id DESC LIMIT 1) lr ON true WHERE p.organization_id=$1`, [organizationId]),
+            pool.query(`SELECT to_char(d.day,'YYYY-MM-DD') day,count(ls.id)::int count FROM generate_series(current_date-13,current_date,interval '1 day') d(day) LEFT JOIN lab_samples ls ON date_trunc('day',COALESCE(ls.created_at,ls.collected_at,now()))=date_trunc('day',d.day::timestamptz) LEFT JOIN clinical_orders co ON co.id=ls.order_id LEFT JOIN patients p ON p.id=co.patient_id AND p.organization_id=$1 WHERE p.id IS NOT NULL GROUP BY d.day ORDER BY d.day`, [organizationId]),
+            pool.query(`SELECT ls.status AS status,count(*)::int count FROM lab_samples ls JOIN clinical_orders co ON co.id=ls.order_id JOIN patients p ON p.id=co.patient_id WHERE p.organization_id=$1 GROUP BY ls.status ORDER BY count(*) DESC`, [organizationId])
+        ]);
+        return { summary: summary.rows[0], trend: trend.rows, breakdown: breakdown.rows };
+    });
+    app.post('/api/phase3/laboratory', async (req, reply) => {
+        write(ctx, req);
+        if (!requireDb(pool, reply))
+            return;
+        const organizationId = oid(req);
+        const b = z.object({ patientId: z.string().uuid(), encounterId: z.string().uuid().optional(), code: z.string().trim().min(1), description: z.string().trim().min(1), priority: z.enum(['routine', 'urgent', 'stat']).default('routine'), specimenType: z.string().trim().optional() }).parse(req.body || {});
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            if (!await patientOk(client, b.patientId, organizationId))
+                throw Object.assign(new Error('Patient does not belong to the workspace.'), { statusCode: 409 });
+            if (!await encounterOk(client, b.encounterId, b.patientId, organizationId))
+                throw Object.assign(new Error('Encounter does not belong to the selected patient.'), { statusCode: 409 });
+            let test = await client.query('SELECT id FROM lab_tests WHERE organization_id=$1 AND code=$2 LIMIT 1', [organizationId, b.code]);
+            if (!test.rowCount)
+                test = await client.query('INSERT INTO lab_tests(organization_id,code,name,specimen_type,active) VALUES($1,$2,$3,$4,true) RETURNING id', [organizationId, b.code, b.description, b.specimenType || null]);
+            const order = await client.query(`INSERT INTO clinical_orders(patient_id,encounter_id,ordered_by,order_type,priority,status,details) VALUES($1,$2,$3,'laboratory',$4,'ordered',$5) RETURNING id`, [b.patientId, b.encounterId || null, ctx.dbUserId(req), b.priority, JSON.stringify({ code: b.code, description: b.description, specimenType: b.specimenType || null, phase: '3' })]);
+            const barcode = `CLN-LAB-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
+            const sample = await client.query(`INSERT INTO lab_samples(order_id,barcode,specimen_type,status,created_at,updated_at) VALUES($1,$2,$3,'ordered',now(),now()) RETURNING *`, [order.rows[0].id, barcode, b.specimenType || null]);
+            await ctx.dbAudit(client, req, 'CREATE', 'laboratory_order', order.rows[0].id, { sampleId: sample.rows[0].id, code: b.code });
+            await ctx.queueEvent(client, req, ctx.clinicalEventTypes.ORDER_CREATED, { orderId: order.rows[0].id, category: 'laboratory', patientId: b.patientId, encounterId: b.encounterId || null, code: b.code, priority: b.priority });
+            await client.query('COMMIT');
+            return reply.code(201).send({ data: { ...sample.rows[0], orderId: order.rows[0].id, patientId: b.patientId, encounterId: b.encounterId || null, code: b.code, description: b.description, priority: b.priority } });
+        }
+        catch (e) {
+            await client.query('ROLLBACK');
+            throw e;
+        }
+        finally {
+            client.release();
+        }
+    });
+    app.post('/api/phase3/laboratory/:id/result', async (req, reply) => {
+        write(ctx, req);
+        if (!requireDb(pool, reply))
+            return;
+        const organizationId = oid(req);
+        const b = z.object({ testCode: z.string().trim().min(1), testName: z.string().trim().optional(), valueNumeric: z.number().optional(), valueText: z.string().optional(), unit: z.string().optional(), abnormalFlag: z.string().optional(), critical: z.boolean().default(false), interpretation: z.string().optional(), referenceRange: z.record(z.any()).optional() }).parse(req.body || {});
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            const sample = await client.query(`SELECT ls.id,ls.order_id,co.patient_id,co.encounter_id,p.organization_id FROM lab_samples ls JOIN clinical_orders co ON co.id=ls.order_id JOIN patients p ON p.id=co.patient_id WHERE ls.id=$1 AND p.organization_id=$2 FOR UPDATE`, [req.params.id, organizationId]);
+            if (!sample.rowCount)
+                throw Object.assign(new Error('Laboratory specimen not found.'), { statusCode: 404 });
+            let test = await client.query('SELECT id FROM lab_tests WHERE organization_id=$1 AND code=$2 LIMIT 1', [organizationId, b.testCode]);
+            if (!test.rowCount)
+                test = await client.query('INSERT INTO lab_tests(organization_id,code,name,unit,active) VALUES($1,$2,$3,$4,true) RETURNING id', [organizationId, b.testCode, b.testName || b.testCode, b.unit || null]);
+            const result = await client.query(`INSERT INTO lab_results(sample_id,test_id,value_numeric,value_text,unit,abnormal_flag,critical,status,reference_range,interpretation,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,'preliminary',$8,$9,now(),now()) RETURNING *`, [req.params.id, test.rows[0].id, num(b.valueNumeric), b.valueText ?? null, b.unit ?? null, b.abnormalFlag ?? null, b.critical, JSON.stringify(b.referenceRange || {}), b.interpretation ?? null]);
+            await client.query(`UPDATE lab_samples SET status='preliminary',processed_at=COALESCE(processed_at,now()),processed_by=$1,updated_at=now() WHERE id=$2`, [ctx.dbUserId(req), req.params.id]);
+            await ctx.queueEvent(client, req, ctx.clinicalEventTypes.LAB_RESULT_CREATED, { resultId: result.rows[0].id, sampleId: req.params.id, patientId: sample.rows[0].patient_id, encounterId: sample.rows[0].encounter_id, critical: b.critical, status: 'preliminary' });
+            await client.query('COMMIT');
+            return reply.code(201).send({ data: result.rows[0] });
+        }
+        catch (e) {
+            await client.query('ROLLBACK');
+            throw e;
+        }
+        finally {
+            client.release();
+        }
+    });
+    app.post('/api/phase3/laboratory/:id/action', async (req, reply) => {
+        write(ctx, req);
+        if (!requireDb(pool, reply))
+            return;
+        const organizationId = oid(req);
+        const b = z.object({ action: z.enum(['collect', 'receive', 'process', 'verify', 'release', 'reject']), reason: z.string().optional() }).parse(req.body || {});
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            const base = await client.query(`SELECT ls.*,co.patient_id AS "patientId",co.encounter_id AS "encounterId" FROM lab_samples ls JOIN clinical_orders co ON co.id=ls.order_id JOIN patients p ON p.id=co.patient_id WHERE ls.id=$1 AND p.organization_id=$2 FOR UPDATE`, [req.params.id, organizationId]);
+            if (!base.rowCount)
+                throw Object.assign(new Error('Laboratory specimen not found.'), { statusCode: 404 });
+            const status = { collect: 'collected', receive: 'received', process: 'processing', verify: 'verified', release: 'released', reject: 'rejected' }[b.action];
+            if (['verify', 'release'].includes(b.action)) {
+                const r = await client.query('SELECT id FROM lab_results WHERE sample_id=$1 ORDER BY id DESC LIMIT 1 FOR UPDATE', [req.params.id]);
+                if (!r.rowCount)
+                    throw Object.assign(new Error('A laboratory result must be recorded before verification or release.'), { statusCode: 409 });
+                if (b.action === 'verify')
+                    await client.query(`UPDATE lab_results SET status='verified',verified_by=$1,verified_at=now(),updated_at=now() WHERE id=$2`, [ctx.dbUserId(req), r.rows[0].id]);
+                if (b.action === 'release')
+                    await client.query(`UPDATE lab_results SET status='released',released_by=$1,released_at=now(),updated_at=now() WHERE id=$2`, [ctx.dbUserId(req), r.rows[0].id]);
+            }
+            const updated = await client.query(`UPDATE lab_samples SET status=$1,collected_at=CASE WHEN $1='collected' THEN COALESCE(collected_at,now()) ELSE collected_at END,received_at=CASE WHEN $1='received' THEN COALESCE(received_at,now()) ELSE received_at END,processed_at=CASE WHEN $1 IN ('processing','preliminary','verified','released') THEN COALESCE(processed_at,now()) ELSE processed_at END,rejected_at=CASE WHEN $1='rejected' THEN COALESCE(rejected_at,now()) ELSE rejected_at END,rejection_reason=CASE WHEN $1='rejected' THEN COALESCE($2,rejection_reason) ELSE rejection_reason END,received_by=CASE WHEN $1='received' THEN $3 ELSE received_by END,processed_by=CASE WHEN $1='processing' THEN $3 ELSE processed_by END,updated_at=now() WHERE id=$4 RETURNING *`, [status, b.reason || null, ctx.dbUserId(req), req.params.id]);
+            const eventMap = { collect: ctx.clinicalEventTypes.SPECIMEN_COLLECTED, receive: ctx.clinicalEventTypes.SPECIMEN_RECEIVED, process: ctx.clinicalEventTypes.LABORATORY_PROCESSING, verify: ctx.clinicalEventTypes.RESULT_VERIFIED, release: ctx.clinicalEventTypes.RESULT_RELEASED, reject: ctx.clinicalEventTypes.LABORATORY_REJECTED };
+            await ctx.queueEvent(client, req, eventMap[b.action], { sampleId: updated.rows[0].id, patientId: base.rows[0].patientId, encounterId: base.rows[0].encounterId, status, reason: b.reason || null });
+            await ctx.dbAudit(client, req, 'ACTION', 'laboratory_specimen', updated.rows[0].id, { action: b.action });
+            await client.query('COMMIT');
+            return { data: updated.rows[0] };
+        }
+        catch (e) {
+            await client.query('ROLLBACK');
+            throw e;
+        }
+        finally {
+            client.release();
+        }
+    });
+    app.get('/api/phase3/imaging', async (req, reply) => {
+        if (!requireDb(pool, reply))
+            return;
+        const organizationId = oid(req);
+        if (!organizationId)
+            return reply.code(400).send({ error: 'Organization context is required' });
+        const f = filters(req);
+        const params = [organizationId];
+        const where = ['i.organization_id=$1'];
+        if (f.status) {
+            params.push(f.status);
+            where.push(`i.status=$${params.length}`);
+        }
+        if (f.patientNumber) {
+            params.push(f.patientNumber);
+            where.push(`p.patient_number=$${params.length}`);
+        }
+        if (f.q) {
+            params.push(`%${f.q}%`);
+            where.push(`(p.patient_number ILIKE $${params.length} OR i.study_code ILIKE $${params.length} OR i.study_name ILIKE $${params.length} OR i.modality ILIKE $${params.length})`);
+        }
+        const r = await pool.query(`SELECT i.id,i.patient_id AS "patientId",i.encounter_id AS "encounterId",i.order_id AS "orderId",p.patient_number AS "patientNumber",p.first_name AS "firstName",p.last_name AS "lastName",i.study_code AS "studyCode",i.study_name AS "studyName",i.modality,i.body_site AS "bodySite",i.priority,i.status,i.scheduled_at AS "scheduledAt",i.performed_at AS "performedAt",i.report,i.critical,i.report_verified_at AS "reportVerifiedAt",i.report_released_at AS "reportReleasedAt",i.findings,i.impression,i.created_at AS "createdAt" FROM imaging_studies i JOIN patients p ON p.id=i.patient_id WHERE ${where.join(' AND ')} ORDER BY i.created_at DESC LIMIT 500`, params);
+        return { data: r.rows, count: r.rowCount, module: 'imaging', source: 'imaging_studies' };
+    });
+    app.get('/api/phase3/imaging/dashboard', async (req, reply) => {
+        if (!requireDb(pool, reply))
+            return;
+        const organizationId = oid(req);
+        if (!organizationId)
+            return reply.code(400).send({ error: 'Organization context is required' });
+        const [summary, trend, breakdown] = await Promise.all([
+            pool.query(`SELECT count(*)::int total,count(*) FILTER(WHERE status IN ('scheduled','performed'))::int pending,count(*) FILTER(WHERE critical=true AND status<>'released')::int critical_open,count(*) FILTER(WHERE status='released')::int released,round(COALESCE(avg(EXTRACT(EPOCH FROM (report_released_at-performed_at))/60) FILTER(WHERE performed_at IS NOT NULL AND report_released_at IS NOT NULL),0)::numeric,1) avg_turnaround_minutes FROM imaging_studies WHERE organization_id=$1`, [organizationId]),
+            pool.query(`SELECT to_char(d.day,'YYYY-MM-DD') day,count(i.id)::int count FROM generate_series(current_date-13,current_date,interval '1 day') d(day) LEFT JOIN imaging_studies i ON date_trunc('day',i.created_at)=date_trunc('day',d.day::timestamptz) AND i.organization_id=$1 GROUP BY d.day ORDER BY d.day`, [organizationId]),
+            pool.query(`SELECT COALESCE(modality,'Unknown') modality,count(*)::int count FROM imaging_studies WHERE organization_id=$1 GROUP BY modality ORDER BY count(*) DESC`, [organizationId])
+        ]);
+        return { summary: summary.rows[0], trend: trend.rows, breakdown: breakdown.rows };
+    });
+    app.post('/api/phase3/imaging', async (req, reply) => {
+        write(ctx, req);
+        if (!requireDb(pool, reply))
+            return;
+        const organizationId = oid(req);
+        const b = z.object({ patientId: z.string().uuid(), encounterId: z.string().uuid().optional(), orderId: z.string().uuid().optional(), studyCode: z.string().trim().min(1), studyName: z.string().trim().min(1), modality: z.string().trim().min(1), bodySite: z.string().optional(), priority: z.enum(['routine', 'urgent', 'stat']).default('routine'), scheduledAt: z.string().optional() }).parse(req.body || {});
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            if (!await patientOk(client, b.patientId, organizationId))
+                throw Object.assign(new Error('Patient does not belong to the workspace.'), { statusCode: 409 });
+            if (!await encounterOk(client, b.encounterId, b.patientId, organizationId))
+                throw Object.assign(new Error('Encounter does not belong to the selected patient.'), { statusCode: 409 });
+            if (b.orderId) {
+                const o = await client.query(`SELECT id FROM clinical_orders WHERE id=$1 AND patient_id=$2 AND order_type='imaging' LIMIT 1`, [b.orderId, b.patientId]);
+                if (!o.rowCount)
+                    throw Object.assign(new Error('Imaging order does not belong to the selected patient.'), { statusCode: 409 });
+            }
+            const r = await client.query(`INSERT INTO imaging_studies(organization_id,patient_id,encounter_id,order_id,study_code,study_name,modality,body_site,priority,status,scheduled_at,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'scheduled',$10,$11) RETURNING *`, [organizationId, b.patientId, b.encounterId || null, b.orderId || null, b.studyCode, b.studyName, b.modality, b.bodySite || null, b.priority, iso(b.scheduledAt), ctx.dbUserId(req)]);
+            await ctx.dbAudit(client, req, 'CREATE', 'imaging_study', r.rows[0].id, { patientId: b.patientId, studyCode: b.studyCode });
+            await ctx.queueEvent(client, req, ctx.clinicalEventTypes.IMAGING_ORDERED, { studyId: r.rows[0].id, patientId: b.patientId, encounterId: b.encounterId || null, orderId: b.orderId || null, status: 'scheduled', modality: b.modality });
+            await client.query('COMMIT');
+            return reply.code(201).send({ data: r.rows[0] });
+        }
+        catch (e) {
+            await client.query('ROLLBACK');
+            throw e;
+        }
+        finally {
+            client.release();
+        }
+    });
+    app.post('/api/phase3/imaging/:id/action', async (req, reply) => {
+        write(ctx, req);
+        if (!requireDb(pool, reply))
+            return;
+        const organizationId = oid(req);
+        const b = z.object({ action: z.enum(['schedule', 'perform', 'report', 'verify', 'release', 'cancel']), report: z.string().optional(), findings: z.string().optional(), impression: z.string().optional(), critical: z.boolean().optional(), scheduledAt: z.string().optional(), reason: z.string().optional() }).parse(req.body || {});
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            const current = await client.query('SELECT * FROM imaging_studies WHERE id=$1 AND organization_id=$2 FOR UPDATE', [req.params.id, organizationId]);
+            if (!current.rowCount)
+                throw Object.assign(new Error('Imaging study not found.'), { statusCode: 404 });
+            const next = { schedule: 'scheduled', perform: 'performed', report: 'reported', verify: 'verified', release: 'released', cancel: 'cancelled' };
+            const status = next[b.action];
+            if (['verify', 'release'].includes(b.action) && !current.rows[0].report)
+                throw Object.assign(new Error('An imaging report must be recorded before verification or release.'), { statusCode: 409 });
+            const r = await client.query(`UPDATE imaging_studies SET status=$1,scheduled_at=COALESCE($2,scheduled_at),performed_at=CASE WHEN $1='performed' THEN COALESCE(performed_at,now()) ELSE performed_at END,report=COALESCE($3,report),findings=COALESCE($4,findings),impression=COALESCE($5,impression),critical=COALESCE($6,critical),report_verified_at=CASE WHEN $1='verified' THEN COALESCE(report_verified_at,now()) ELSE report_verified_at END,report_released_at=CASE WHEN $1='released' THEN COALESCE(report_released_at,now()) ELSE report_released_at END,cancel_reason=CASE WHEN $1='cancelled' THEN COALESCE($7,cancel_reason) ELSE cancel_reason END,updated_at=now() WHERE id=$8 RETURNING *`, [status, iso(b.scheduledAt), b.report ?? null, b.findings ?? null, b.impression ?? null, b.critical ?? null, b.reason ?? null, req.params.id]);
+            const row = r.rows[0];
+            await ctx.queueEvent(client, req, b.action === 'report' ? ctx.clinicalEventTypes.IMAGING_REPORTED : ctx.clinicalEventTypes.IMAGING_STATUS_CHANGED, { studyId: row.id, patientId: row.patient_id, encounterId: row.encounter_id, orderId: row.order_id, status: row.status, critical: Boolean(row.critical), action: b.action });
+            await ctx.dbAudit(client, req, 'ACTION', 'imaging_study', row.id, { action: b.action });
+            await client.query('COMMIT');
+            return { data: row };
+        }
+        catch (e) {
+            await client.query('ROLLBACK');
+            throw e;
+        }
+        finally {
+            client.release();
+        }
+    });
+    app.get('/api/phase3/pharmacy', async (req, reply) => {
+        if (!requireDb(pool, reply))
+            return;
+        const organizationId = oid(req);
+        if (!organizationId)
+            return reply.code(400).send({ error: 'Organization context is required' });
+        const f = filters(req);
+        const params = [organizationId];
+        const where = ['p.organization_id=$1'];
+        if (f.status) {
+            params.push(f.status);
+            where.push(`mo.status=$${params.length}`);
+        }
+        if (f.patientNumber) {
+            params.push(f.patientNumber);
+            where.push(`p.patient_number=$${params.length}`);
+        }
+        if (f.q) {
+            params.push(`%${f.q}%`);
+            where.push(`(p.patient_number ILIKE $${params.length} OR m.code ILIKE $${params.length} OR m.name ILIKE $${params.length})`);
+        }
+        const r = await pool.query(`SELECT mo.id,mo.patient_id AS "patientId",mo.encounter_id AS "encounterId",p.patient_number AS "patientNumber",p.first_name AS "firstName",p.last_name AS "lastName",mo.medication_id AS "medicationId",m.code AS "medicationCode",m.name AS "medicationName",m.form,mo.dose,mo.frequency,mo.route,mo.duration,mo.quantity,mo.status,mo.prescribed_by AS "prescribedBy",mo.prescribed_at AS "prescribedAt",COALESCE((SELECT sum(d.quantity) FROM dispensations d WHERE d.medication_order_id=mo.id),0)::numeric AS "dispensedQuantity",GREATEST(COALESCE(mo.quantity,0)-COALESCE((SELECT sum(d.quantity) FROM dispensations d WHERE d.medication_order_id=mo.id),0),0)::numeric AS "remainingQuantity" FROM medication_orders mo JOIN medications m ON m.id=mo.medication_id JOIN patients p ON p.id=mo.patient_id WHERE ${where.join(' AND ')} ORDER BY mo.prescribed_at DESC NULLS LAST,mo.id DESC LIMIT 500`, params);
+        return { data: r.rows, count: r.rowCount, module: 'pharmacy', source: 'medication_orders' };
+    });
+    app.get('/api/phase3/pharmacy/dashboard', async (req, reply) => {
+        if (!requireDb(pool, reply))
+            return;
+        const organizationId = oid(req);
+        if (!organizationId)
+            return reply.code(400).send({ error: 'Organization context is required' });
+        const [summary, trend, breakdown] = await Promise.all([
+            pool.query(`SELECT count(*)::int prescriptions,count(*) FILTER(WHERE mo.status IN ('active','partially-dispensed'))::int awaiting_dispense,count(*) FILTER(WHERE mo.status='dispensed')::int dispensed,count(*) FILTER(WHERE mo.status='discontinued')::int discontinued,COALESCE(sum(mo.quantity),0)::numeric prescribed_units,COALESCE((SELECT sum(d.quantity) FROM dispensations d JOIN medication_orders x ON x.id=d.medication_order_id JOIN patients pp ON pp.id=x.patient_id WHERE pp.organization_id=$1),0)::numeric dispensed_units FROM medication_orders mo JOIN patients p ON p.id=mo.patient_id WHERE p.organization_id=$1`, [organizationId]),
+            pool.query(`SELECT to_char(d.day,'YYYY-MM-DD') day,count(mo.id)::int count FROM generate_series(current_date-13,current_date,interval '1 day') d(day) LEFT JOIN medication_orders mo ON date_trunc('day',mo.prescribed_at)=date_trunc('day',d.day::timestamptz) LEFT JOIN patients p ON p.id=mo.patient_id AND p.organization_id=$1 WHERE p.id IS NOT NULL GROUP BY d.day ORDER BY d.day`, [organizationId]),
+            pool.query(`SELECT mo.status,count(*)::int count FROM medication_orders mo JOIN patients p ON p.id=mo.patient_id WHERE p.organization_id=$1 GROUP BY mo.status ORDER BY count(*) DESC`, [organizationId])
+        ]);
+        return { summary: summary.rows[0], trend: trend.rows, breakdown: breakdown.rows };
+    });
+    app.post('/api/phase3/pharmacy', async (req, reply) => {
+        write(ctx, req);
+        if (!requireDb(pool, reply))
+            return;
+        const organizationId = oid(req);
+        const b = z.object({ patientId: z.string().uuid(), encounterId: z.string().uuid().optional(), medicationId: z.string().uuid().optional(), medicationCode: z.string().trim().optional(), medicationName: z.string().trim().optional(), dose: z.string().trim().min(1), frequency: z.string().trim().min(1), route: z.string().trim().min(1), duration: z.string().optional(), quantity: z.number().positive(), status: z.enum(PHARMACY_STATUS).default('active'), indication: z.string().optional(), instructions: z.string().optional(), startDate: z.string().optional(), endDate: z.string().optional() }).parse(req.body || {});
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            if (!await patientOk(client, b.patientId, organizationId))
+                throw Object.assign(new Error('Patient does not belong to the workspace.'), { statusCode: 409 });
+            if (!await encounterOk(client, b.encounterId, b.patientId, organizationId))
+                throw Object.assign(new Error('Encounter does not belong to the selected patient.'), { statusCode: 409 });
+            let medicationId = b.medicationId || null;
+            if (medicationId) {
+                const q = await client.query('SELECT id FROM medications WHERE id=$1 AND organization_id=$2 LIMIT 1', [medicationId, organizationId]);
+                if (!q.rowCount)
+                    throw Object.assign(new Error('Medication does not belong to the workspace.'), { statusCode: 409 });
+            }
+            else if (b.medicationCode) {
+                const q = await client.query('SELECT id FROM medications WHERE organization_id=$1 AND code=$2 LIMIT 1', [organizationId, b.medicationCode]);
+                if (q.rowCount)
+                    medicationId = q.rows[0].id;
+                else {
+                    const created = await client.query('INSERT INTO medications(organization_id,code,name,form,active) VALUES($1,$2,$3,$4,true) RETURNING id', [organizationId, b.medicationCode, b.medicationName || b.medicationCode, 'other']);
+                    medicationId = created.rows[0].id;
+                }
+            }
+            else
+                throw Object.assign(new Error('A medication ID or medication code is required.'), { statusCode: 400 });
+            const r = await client.query(`INSERT INTO medication_orders(patient_id,encounter_id,medication_id,dose,frequency,route,duration,quantity,status,prescribed_by,prescribed_at,indication,instructions,start_date,end_date,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now(),$11,$12,$13,$14,now()) RETURNING *`, [b.patientId, b.encounterId || null, medicationId, b.dose, b.frequency, b.route, b.duration || null, b.quantity, b.status, ctx.dbUserId(req), b.indication || null, b.instructions || null, b.startDate || null, b.endDate || null]);
+            await ctx.dbAudit(client, req, 'CREATE', 'medication_order', r.rows[0].id, { patientId: b.patientId, medicationId });
+            await ctx.queueEvent(client, req, ctx.clinicalEventTypes.MEDICATION_ORDERED, { medicationOrderId: r.rows[0].id, patientId: b.patientId, encounterId: b.encounterId || null, medicationId, quantity: b.quantity, status: b.status });
+            await client.query('COMMIT');
+            return reply.code(201).send({ data: r.rows[0] });
+        }
+        catch (e) {
+            await client.query('ROLLBACK');
+            throw e;
+        }
+        finally {
+            client.release();
+        }
+    });
+    app.post('/api/phase3/pharmacy/:id/action', async (req, reply) => {
+        write(ctx, req);
+        if (!requireDb(pool, reply))
+            return;
+        const organizationId = oid(req);
+        const b = z.object({ action: z.enum(['dispense', 'cancel']), quantity: z.number().positive().optional(), batchId: z.string().uuid().optional(), batch: z.string().optional(), expiryDate: z.string().optional(), reason: z.string().optional() }).parse(req.body || {});
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            const o = await client.query(`SELECT mo.id,mo.patient_id AS "patientId",mo.quantity,mo.status,m.name AS "medicationName",m.code AS "medicationCode" FROM medication_orders mo JOIN medications m ON m.id=mo.medication_id WHERE mo.id=$1 AND EXISTS(SELECT 1 FROM patients p WHERE p.id=mo.patient_id AND p.organization_id=$2) FOR UPDATE`, [req.params.id, organizationId]);
+            if (!o.rowCount)
+                throw Object.assign(new Error('Pharmacy order not found.'), { statusCode: 404 });
+            if (b.action === 'cancel') {
+                const r = await client.query(`UPDATE medication_orders SET status='discontinued',updated_at=now() WHERE id=$1 RETURNING *`, [req.params.id]);
+                await ctx.queueEvent(client, req, ctx.clinicalEventTypes.MEDICATION_DISCONTINUED, { medicationOrderId: req.params.id, patientId: o.rows[0].patientId, reason: b.reason || null });
+                await client.query('COMMIT');
+                return { data: r.rows[0] };
+            }
+            if (!['active', 'partially-dispensed'].includes(o.rows[0].status))
+                throw Object.assign(new Error(`Medication order is ${o.rows[0].status}`), { statusCode: 409 });
+            const qty = Number(b.quantity || o.rows[0].quantity || 1);
+            const already = await client.query('SELECT COALESCE(sum(quantity),0)::numeric total FROM dispensations WHERE medication_order_id=$1', [req.params.id]);
+            const remaining = Number(o.rows[0].quantity || 0) - Number(already.rows[0].total || 0);
+            if (qty > remaining + 0.0001)
+                throw Object.assign(new Error('Dispensing quantity exceeds remaining prescribed quantity.'), { statusCode: 400, remaining });
+            let batchMeta = null;
+            let batchId = b.batchId || null;
+            if (!batchId) {
+                const stock = await client.query(`SELECT ib.id,ib.item_id,ib.quantity,ib.batch_number AS "batchNumber",ib.expiry_date AS "expiryDate" FROM inventory_batches ib JOIN inventory_items ii ON ii.id=ib.item_id WHERE ii.organization_id=$1 AND (ii.sku=$2 OR lower(ii.name)=lower($3)) AND ib.quantity>0 ORDER BY ib.expiry_date NULLS LAST,ib.id LIMIT 1 FOR UPDATE`, [organizationId, o.rows[0].medicationCode, o.rows[0].medicationName]);
+                if (stock.rowCount)
+                    batchId = stock.rows[0].id;
+            }
+            if (batchId) {
+                const stock = await client.query(`SELECT ib.id,ib.item_id,ib.quantity,ib.batch_number AS "batchNumber",ib.expiry_date AS "expiryDate" FROM inventory_batches ib JOIN inventory_items ii ON ii.id=ib.item_id WHERE ib.id=$1 AND ii.organization_id=$2 FOR UPDATE`, [batchId, organizationId]);
+                if (!stock.rowCount)
+                    throw Object.assign(new Error('Inventory batch not found.'), { statusCode: 404 });
+                if (Number(stock.rows[0].quantity) < qty)
+                    throw Object.assign(new Error('Insufficient stock.'), { statusCode: 409, available: Number(stock.rows[0].quantity) });
+                await client.query('UPDATE inventory_batches SET quantity=quantity-$1 WHERE id=$2', [qty, batchId]);
+                await client.query(`INSERT INTO stock_movements(item_id,batch_id,movement_type,quantity,reference_type,reference_id,created_by) VALUES($1,$2,'dispense',$3,'medication_order',$4,$5)`, [stock.rows[0].item_id, batchId, qty, req.params.id, ctx.dbUserId(req)]);
+                batchMeta = { batchId, batch: stock.rows[0].batchNumber, expiryDate: stock.rows[0].expiryDate };
+            }
+            const d = await client.query(`INSERT INTO dispensations(medication_order_id,quantity,batch,expiry_date,dispensed_by,dispensed_at,created_at,status,notes) VALUES($1,$2,$3,$4,$5,now(),now(),'completed',$6) RETURNING *`, [req.params.id, qty, batchMeta?.batch || b.batch || null, batchMeta?.expiryDate || b.expiryDate || null, ctx.dbUserId(req), JSON.stringify({ phase: '3' })]);
+            const next = remaining - qty > 0.0001 ? 'partially-dispensed' : 'dispensed';
+            await client.query(`UPDATE medication_orders SET status=$1,updated_at=now() WHERE id=$2`, [next, req.params.id]);
+            await ctx.queueEvent(client, req, ctx.clinicalEventTypes.MEDICATION_DISPENSED, { medicationOrderId: req.params.id, patientId: o.rows[0].patientId, medicationName: o.rows[0].medicationName, medicationCode: o.rows[0].medicationCode, quantity: qty, batchId: batchMeta?.batchId || null });
+            await ctx.dbAudit(client, req, 'ACTION', 'medication_order', req.params.id, { action: 'dispense', quantity: qty, batchId: batchMeta?.batchId || null });
+            await client.query('COMMIT');
+            return { data: { status: next, dispensation: d.rows[0], inventory: batchMeta } };
+        }
+        catch (e) {
+            await client.query('ROLLBACK');
+            throw e;
+        }
+        finally {
+            client.release();
+        }
+    });
+    app.get('/api/phase3/medication-reconciliation', async (req, reply) => {
+        if (!requireDb(pool, reply))
+            return;
+        const organizationId = oid(req);
+        if (!organizationId)
+            return reply.code(400).send({ error: 'Organization context is required' });
+        const f = filters(req);
+        const params = [organizationId];
+        const where = ['m.organization_id=$1'];
+        if (f.status) {
+            params.push(f.status);
+            where.push(`m.status=$${params.length}`);
+        }
+        if (f.patientNumber) {
+            params.push(f.patientNumber);
+            where.push(`p.patient_number=$${params.length}`);
+        }
+        if (f.q) {
+            params.push(`%${f.q}%`);
+            where.push(`(p.patient_number ILIKE $${params.length} OR COALESCE(m.medication_name,'') ILIKE $${params.length} OR p.first_name ILIKE $${params.length} OR p.last_name ILIKE $${params.length})`);
+        }
+        const r = await pool.query(`SELECT m.id,m.patient_id AS "patientId",m.encounter_id AS "encounterId",p.patient_number AS "patientNumber",p.first_name AS "firstName",p.last_name AS "lastName",m.source,m.status,m.medication_name AS "medicationName",m.medicines,m.discrepancies,m.resolved_count AS "resolvedCount",m.reviewed_by AS "reviewedBy",m.reviewed_at AS "reviewedAt",m.created_at AS "createdAt",COALESCE((SELECT count(*) FROM medication_reconciliation_items i WHERE i.reconciliation_id=m.id AND i.status<>'resolved'),0)::int AS "openItems" FROM medication_reconciliation m JOIN patients p ON p.id=m.patient_id WHERE ${where.join(' AND ')} ORDER BY m.created_at DESC LIMIT 500`, params);
+        return { data: r.rows, count: r.rowCount, module: 'medication-reconciliation', source: 'medication_reconciliation' };
+    });
+    app.get('/api/phase3/medication-reconciliation/dashboard', async (req, reply) => {
+        if (!requireDb(pool, reply))
+            return;
+        const organizationId = oid(req);
+        if (!organizationId)
+            return reply.code(400).send({ error: 'Organization context is required' });
+        const [summary, trend, breakdown] = await Promise.all([
+            pool.query(`SELECT count(*)::int total,count(*) FILTER(WHERE status='in-review')::int in_review,count(*) FILTER(WHERE status IN ('resolved','completed'))::int resolved,COALESCE(sum(CASE WHEN jsonb_typeof(discrepancies)='array' THEN jsonb_array_length(discrepancies) ELSE 0 END),0)::int discrepancies_recorded,COALESCE(sum(CASE WHEN status='in-review' AND jsonb_typeof(discrepancies)='array' THEN jsonb_array_length(discrepancies) ELSE 0 END),0)::int discrepancies_open FROM medication_reconciliation WHERE organization_id=$1`, [organizationId]),
+            pool.query(`SELECT to_char(d.day,'YYYY-MM-DD') day,count(m.id)::int count FROM generate_series(current_date-13,current_date,interval '1 day') d(day) LEFT JOIN medication_reconciliation m ON date_trunc('day',m.created_at)=date_trunc('day',d.day::timestamptz) AND m.organization_id=$1 GROUP BY d.day ORDER BY d.day`, [organizationId]),
+            pool.query(`SELECT status,count(*)::int count FROM medication_reconciliation WHERE organization_id=$1 GROUP BY status ORDER BY count(*) DESC`, [organizationId])
+        ]);
+        return { summary: summary.rows[0], trend: trend.rows, breakdown: breakdown.rows };
+    });
+    app.get('/api/phase3/medication-reconciliation/:id', async (req, reply) => { if (!requireDb(pool, reply))
+        return; const organizationId = oid(req); if (!organizationId)
+        return reply.code(400).send({ error: 'Organization context is required' }); const r = await pool.query(`SELECT m.*,p.patient_number AS "patientNumber",p.first_name AS "firstName",p.last_name AS "lastName" FROM medication_reconciliation m JOIN patients p ON p.id=m.patient_id WHERE m.id=$1 AND m.organization_id=$2`, [req.params.id, organizationId]); if (!r.rowCount)
+        return reply.code(404).send({ error: 'Medication reconciliation not found.' }); const items = await pool.query(`SELECT * FROM medication_reconciliation_items WHERE reconciliation_id=$1 ORDER BY created_at,id`, [req.params.id]); return { data: { ...r.rows[0], items: items.rows } }; });
+    app.post('/api/phase3/medication-reconciliation', async (req, reply) => {
+        write(ctx, req);
+        if (!requireDb(pool, reply))
+            return;
+        const organizationId = oid(req);
+        const b = z.object({ patientId: z.string().uuid(), encounterId: z.string().uuid().optional(), medicationName: z.string().optional(), medicines: z.array(z.record(z.any())).default([]), discrepancies: z.array(z.record(z.any())).default([]), source: z.string().default('clinical-review') }).parse(req.body || {});
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            if (!await patientOk(client, b.patientId, organizationId))
+                throw Object.assign(new Error('Patient does not belong to the workspace.'), { statusCode: 409 });
+            if (!await encounterOk(client, b.encounterId, b.patientId, organizationId))
+                throw Object.assign(new Error('Encounter does not belong to the selected patient.'), { statusCode: 409 });
+            const r = await client.query(`INSERT INTO medication_reconciliation(organization_id,patient_id,encounter_id,source,status,medication_name,medicines,discrepancies,resolved_count,created_by,created_at,updated_at) VALUES($1,$2,$3,$4,'in-review',$5,$6,$7,0,$8,now(),now()) RETURNING *`, [organizationId, b.patientId, b.encounterId || null, b.source, b.medicationName || null, JSON.stringify(b.medicines), JSON.stringify(b.discrepancies), ctx.dbUserId(req)]);
+            const rid = r.rows[0].id;
+            for (const item of [...b.medicines, ...b.discrepancies]) {
+                await client.query(`INSERT INTO medication_reconciliation_items(reconciliation_id,patient_id,medication_order_id,medication_id,medication_name,dose,frequency,route,discrepancy_type,status,notes) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'open',$10)`, [rid, b.patientId, item.medicationOrderId || null, item.medicationId || null, item.medicationName || item.name || null, item.dose || null, item.frequency || null, item.route || null, item.discrepancyType || item.type || null, item.notes || item.description || null]);
+            }
+            await ctx.dbAudit(client, req, 'CREATE', 'medication_reconciliation', rid, { patientId: b.patientId, discrepancyCount: b.discrepancies.length });
+            await ctx.queueEvent(client, req, ctx.clinicalEventTypes.MEDICATION_RECONCILIATION_CREATED, { reconciliationId: rid, patientId: b.patientId, encounterId: b.encounterId || null, status: 'in-review', discrepancyCount: b.discrepancies.length });
+            await client.query('COMMIT');
+            return reply.code(201).send({ data: r.rows[0] });
+        }
+        catch (e) {
+            await client.query('ROLLBACK');
+            throw e;
+        }
+        finally {
+            client.release();
+        }
+    });
+    app.post('/api/phase3/medication-reconciliation/:id/action', async (req, reply) => {
+        write(ctx, req);
+        if (!requireDb(pool, reply))
+            return;
+        const organizationId = oid(req);
+        const b = z.object({ action: z.enum(['resolve', 'reopen']), note: z.string().optional() }).parse(req.body || {});
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            const current = await client.query('SELECT * FROM medication_reconciliation WHERE id=$1 AND organization_id=$2 FOR UPDATE', [req.params.id, organizationId]);
+            if (!current.rowCount)
+                throw Object.assign(new Error('Medication reconciliation not found.'), { statusCode: 404 });
+            const next = b.action === 'resolve' ? 'resolved' : 'in-review';
+            if (b.action === 'resolve')
+                await client.query(`UPDATE medication_reconciliation_items SET status='resolved',resolved_by=$1,resolved_at=now(),notes=COALESCE($2,notes),updated_at=now() WHERE reconciliation_id=$3 AND status<>'resolved'`, [ctx.dbUserId(req), b.note || null, req.params.id]);
+            else
+                await client.query(`UPDATE medication_reconciliation_items SET status='open',resolved_by=NULL,resolved_at=NULL,updated_at=now() WHERE reconciliation_id=$1`, [req.params.id]);
+            const counts = await client.query(`SELECT count(*) FILTER(WHERE status='resolved')::int resolved,count(*)::int total FROM medication_reconciliation_items WHERE reconciliation_id=$1`, [req.params.id]);
+            const r = await client.query(`UPDATE medication_reconciliation SET status=$1,resolved_count=$2,reviewed_by=$3,reviewed_at=now(),updated_at=now() WHERE id=$4 RETURNING *`, [next, counts.rows[0].resolved, ctx.dbUserId(req), req.params.id]);
+            await ctx.dbAudit(client, req, 'ACTION', 'medication_reconciliation', req.params.id, { action: b.action, resolvedCount: counts.rows[0].resolved });
+            await ctx.queueEvent(client, req, ctx.clinicalEventTypes.MEDICATION_RECONCILIATION_COMPLETED, { reconciliationId: req.params.id, patientId: r.rows[0].patient_id, status: next, resolvedCount: counts.rows[0].resolved, note: b.note || null });
+            await client.query('COMMIT');
+            return { data: r.rows[0], resolvedCount: counts.rows[0].resolved, totalItems: counts.rows[0].total };
+        }
+        catch (e) {
+            await client.query('ROLLBACK');
+            throw e;
+        }
+        finally {
+            client.release();
+        }
+    });
+}

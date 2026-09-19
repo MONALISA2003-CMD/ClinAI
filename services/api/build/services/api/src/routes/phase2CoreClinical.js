@@ -1,0 +1,661 @@
+import { z } from 'zod';
+const CORE_MODULES = new Set(['triage', 'diagnoses', 'clinical-notes', 'care-plans', 'referrals', 'referral-transfers', 'care-tasks', 'workflows']);
+const UUID = z.string().uuid();
+const optionalUuid = UUID.optional();
+const triageCreate = z.object({
+    patientId: UUID, encounterId: optionalUuid, arrivedAt: z.string().datetime().optional(), arrivalMode: z.string().min(1).default('walk-in'),
+    chiefComplaint: z.string().trim().min(2), triageNurseId: optionalUuid, acuity: z.enum(['routine', 'urgent', 'emergency']).default('routine'),
+    triageCategory: z.string().optional(), temperature: z.number().min(25).max(50).optional(), heartRate: z.number().min(0).max(260).optional(),
+    respiratoryRate: z.number().min(0).max(100).optional(), systolic: z.number().min(0).max(300).optional(), diastolic: z.number().min(0).max(220).optional(),
+    spo2: z.number().min(0).max(100).optional(), pain: z.number().min(0).max(10).optional(), mentalStatus: z.string().optional(), mobilityStatus: z.string().optional(),
+    infectionPrecautions: z.record(z.any()).default({}), riskFlags: z.array(z.any()).default([]), notes: z.string().optional(), disposition: z.string().optional(), status: z.enum(['pending', 'completed', 'routed', 'closed', 'cancelled']).default('completed')
+});
+const diagnosisCreate = z.object({ patientId: UUID, encounterId: optionalUuid, codeSystem: z.string().optional(), code: z.string().trim().min(1), display: z.string().trim().min(2), diagnosisType: z.string().optional(), status: z.enum(['active', 'resolved', 'provisional']).default('active'), verificationStatus: z.enum(['unverified', 'verified', 'rejected']).default('unverified'), severity: z.string().optional(), certainty: z.string().optional(), onsetDate: z.string().optional(), resolutionDate: z.string().optional(), laterality: z.string().optional(), anatomicalSite: z.string().optional(), notes: z.string().optional() });
+const noteCreate = z.object({ encounterId: UUID, noteType: z.string().trim().min(1), chiefComplaint: z.string().optional(), history: z.string().optional(), subjective: z.string().optional(), objective: z.string().optional(), examination: z.string().optional(), assessment: z.string().optional(), plan: z.string().optional(), diagnosisReferences: z.array(z.any()).default([]), orderReferences: z.array(z.any()).default([]), medicationSummary: z.array(z.any()).default([]), allergySummary: z.array(z.any()).default([]), observationSummary: z.array(z.any()).default([]), followUp: z.record(z.any()).default({}), documentationStatus: z.enum(['draft', 'signed', 'amended', 'voided']).default('draft') });
+const carePlanCreate = z.object({ patientId: UUID, encounterId: optionalUuid, title: z.string().trim().min(2), status: z.enum(['draft', 'active', 'completed', 'cancelled']).default('draft'), priority: z.enum(['low', 'normal', 'high', 'urgent']).default('normal'), goals: z.array(z.any()).default([]), interventions: z.array(z.any()).default([]), outcomeMeasures: z.array(z.any()).default([]), barriers: z.array(z.any()).default([]), ownerId: optionalUuid, reviewAt: z.string().datetime().optional(), nextReviewNote: z.string().optional() });
+const referralCreate = z.object({ patientId: UUID, encounterId: optionalUuid, referralType: z.string().default('clinical'), serviceCode: z.string().optional(), destination: z.string().trim().min(2), destinationFacilityId: optionalUuid, reason: z.string().trim().min(2), urgency: z.enum(['routine', 'urgent', 'emergency']).default('routine'), referringProviderId: optionalUuid, clinicalSummary: z.string().optional(), status: z.enum(['draft', 'sent']).default('draft') });
+const transferCreate = z.object({ referralId: UUID, fromFacilityId: optionalUuid, toFacilityId: optionalUuid, serviceCode: z.string().optional(), urgency: z.enum(['routine', 'urgent', 'emergency']).default('routine'), status: z.enum(['requested', 'accepted', 'in-transit', 'arrived', 'cancelled']).default('requested'), handoverNotes: z.string().optional(), receivingContact: z.string().optional(), transportStatus: z.string().optional(), expectedArrivalAt: z.string().datetime().optional(), transport: z.record(z.any()).default({}) });
+const taskCreate = z.object({ patientId: UUID, encounterId: optionalUuid, taskType: z.string().trim().min(1), taskCategory: z.string().default('clinical'), title: z.string().trim().min(2), priority: z.enum(['low', 'normal', 'high', 'urgent', 'critical']).default('normal'), dueAt: z.string().datetime().optional(), assignedTo: optionalUuid, status: z.enum(['open', 'in-progress', 'completed', 'cancelled']).default('open'), payload: z.record(z.any()).default({}), escalationLevel: z.number().int().min(0).default(0) });
+const workflowCreate = z.object({ name: z.string().trim().min(2), description: z.string().trim().min(2), trigger: z.string().trim().min(1), owner: optionalUuid, steps: z.array(z.any()).min(1), status: z.enum(['draft', 'active', 'paused', 'retired']).default('draft') });
+function db(reply, pool) { if (!pool) {
+    reply.code(501).send({ error: 'PostgreSQL required' });
+    return false;
+} return true; }
+function iso(value) { return value ? new Date(value).toISOString() : null; }
+function normalizeRows(rows) { return rows.map((x) => ({ ...x })); }
+export function registerPhase2CoreClinicalRoutes(app, pool, ctx) {
+    const oid = (req) => ctx.dbOrganizationId(req);
+    const write = (req) => ctx.requireAuthorizedWrite(req);
+    const patientExists = async (client, organizationId, patientId) => {
+        const r = await client.query(`SELECT id FROM patients WHERE id=$1 AND organization_id=$2`, [patientId, organizationId]);
+        return Boolean(r.rowCount);
+    };
+    const encounterForPatient = async (client, organizationId, encounterId, patientId) => {
+        const r = await client.query(`SELECT id,patient_id FROM encounters WHERE id=$1 AND organization_id=$2`, [encounterId, organizationId]);
+        if (!r.rowCount)
+            return null;
+        if (patientId && r.rows[0].patient_id !== patientId)
+            return null;
+        return r.rows[0];
+    };
+    async function listModule(module, req) {
+        const organizationId = oid(req);
+        const patientId = req.query?.patientId ? String(req.query.patientId) : null;
+        const status = req.query?.status ? String(req.query.status) : null;
+        const search = req.query?.q ? String(req.query.q) : null;
+        const limit = Math.min(Math.max(Number(req.query?.limit || 200), 1), 500);
+        if (module === 'triage') {
+            const params = [organizationId];
+            let w = 't.organization_id=$1';
+            if (patientId) {
+                params.push(patientId);
+                w += ` AND t.patient_id=$${params.length}`;
+            }
+            if (status) {
+                params.push(status);
+                w += ` AND t.status=$${params.length}`;
+            }
+            if (search) {
+                params.push(`%${search}%`);
+                w += ` AND (t.chief_complaint ILIKE $${params.length} OR p.patient_number ILIKE $${params.length} OR p.first_name ILIKE $${params.length} OR p.last_name ILIKE $${params.length})`;
+            }
+            const r = await pool.query(`SELECT t.*,p.patient_number AS "patientNumber",p.first_name AS "firstName",p.last_name AS "lastName",e.type AS "encounterType" FROM triage_assessments t JOIN patients p ON p.id=t.patient_id LEFT JOIN encounters e ON e.id=t.encounter_id WHERE ${w} ORDER BY CASE t.acuity WHEN 'emergency' THEN 0 WHEN 'urgent' THEN 1 ELSE 2 END,t.arrived_at DESC LIMIT ${limit}`, params);
+            return normalizeRows(r.rows);
+        }
+        if (module === 'diagnoses') {
+            const params = [organizationId];
+            let w = 'p.organization_id=$1';
+            if (patientId) {
+                params.push(patientId);
+                w += ` AND d.patient_id=$${params.length}`;
+            }
+            if (status) {
+                params.push(status);
+                w += ` AND d.status=$${params.length}`;
+            }
+            if (search) {
+                params.push(`%${search}%`);
+                w += ` AND (d.display ILIKE $${params.length} OR d.code ILIKE $${params.length})`;
+            }
+            const r = await pool.query(`SELECT d.*,p.patient_number AS "patientNumber",p.first_name AS "firstName",p.last_name AS "lastName",e.type AS "encounterType" FROM diagnoses d JOIN patients p ON p.id=d.patient_id LEFT JOIN encounters e ON e.id=d.encounter_id WHERE ${w} ORDER BY COALESCE(d.onset_date::timestamptz,d.id::text::uuid::timestamptz) DESC NULLS LAST`, params).catch(async () => pool.query(`SELECT d.*,p.patient_number AS "patientNumber",p.first_name AS "firstName",p.last_name AS "lastName",e.type AS "encounterType" FROM diagnoses d JOIN patients p ON p.id=d.patient_id LEFT JOIN encounters e ON e.id=d.encounter_id WHERE ${w} ORDER BY d.id DESC LIMIT ${limit}`, params));
+            return normalizeRows(r.rows.slice(0, limit));
+        }
+        if (module === 'clinical-notes') {
+            const params = [organizationId];
+            let w = 'e.organization_id=$1';
+            if (patientId) {
+                params.push(patientId);
+                w += ` AND e.patient_id=$${params.length}`;
+            }
+            if (status) {
+                params.push(status);
+                w += ` AND n.documentation_status=$${params.length}`;
+            }
+            if (search) {
+                params.push(`%${search}%`);
+                w += ` AND (COALESCE(n.note_type,'') ILIKE $${params.length} OR COALESCE(n.assessment,'') ILIKE $${params.length} OR COALESCE(n.chief_complaint,'') ILIKE $${params.length})`;
+            }
+            const r = await pool.query(`SELECT n.*,e.patient_id AS "patientId",p.patient_number AS "patientNumber",p.first_name AS "firstName",p.last_name AS "lastName",e.type AS "encounterType" FROM clinical_notes n JOIN encounters e ON e.id=n.encounter_id JOIN patients p ON p.id=e.patient_id WHERE ${w} ORDER BY n.created_at DESC LIMIT ${limit}`, params);
+            return normalizeRows(r.rows);
+        }
+        if (module === 'care-plans') {
+            const params = [organizationId];
+            let w = 'p.organization_id=$1';
+            if (patientId) {
+                params.push(patientId);
+                w += ` AND c.patient_id=$${params.length}`;
+            }
+            if (status) {
+                params.push(status);
+                w += ` AND c.status=$${params.length}`;
+            }
+            if (search) {
+                params.push(`%${search}%`);
+                w += ` AND c.title ILIKE $${params.length}`;
+            }
+            const r = await pool.query(`SELECT c.*,p.patient_number AS "patientNumber",p.first_name AS "firstName",p.last_name AS "lastName" FROM care_plans c JOIN patients p ON p.id=c.patient_id WHERE ${w} ORDER BY c.review_at NULLS LAST,c.created_at DESC LIMIT ${limit}`, params);
+            return normalizeRows(r.rows);
+        }
+        if (module === 'referrals') {
+            const params = [organizationId];
+            let w = 'p.organization_id=$1';
+            if (patientId) {
+                params.push(patientId);
+                w += ` AND r.patient_id=$${params.length}`;
+            }
+            if (status) {
+                params.push(status);
+                w += ` AND r.status=$${params.length}`;
+            }
+            if (search) {
+                params.push(`%${search}%`);
+                w += ` AND (r.destination ILIKE $${params.length} OR r.reason ILIKE $${params.length})`;
+            }
+            const r = await pool.query(`SELECT r.*,p.patient_number AS "patientNumber",p.first_name AS "firstName",p.last_name AS "lastName",f.name AS "destinationFacilityName",COALESCE(tx.transfer_count,0)::int AS "transferCount" FROM referrals r JOIN patients p ON p.id=r.patient_id LEFT JOIN facilities f ON f.id=r.destination_facility_id LEFT JOIN (SELECT referral_id,count(*)::int AS transfer_count FROM referral_transfers WHERE organization_id=$1 GROUP BY referral_id) tx ON tx.referral_id=r.id WHERE ${w} ORDER BY CASE r.status WHEN 'emergency' THEN 0 WHEN 'urgent' THEN 1 ELSE 2 END,r.requested_at DESC LIMIT ${limit}`, params);
+            return normalizeRows(r.rows);
+        }
+        if (module === 'referral-transfers') {
+            const params = [organizationId];
+            let w = 't.organization_id=$1';
+            if (status) {
+                params.push(status);
+                w += ` AND t.status=$${params.length}`;
+            }
+            if (patientId) {
+                params.push(patientId);
+                w += ` AND r.patient_id=$${params.length}`;
+            }
+            if (search) {
+                params.push(`%${search}%`);
+                w += ` AND (f.name ILIKE $${params.length} OR tf.name ILIKE $${params.length} OR COALESCE(t.handover->>'summary','') ILIKE $${params.length})`;
+            }
+            const r = await pool.query(`SELECT t.*,r.patient_id AS "patientId",p.patient_number AS "patientNumber",p.first_name AS "firstName",p.last_name AS "lastName",r.destination,r.reason,f.name AS "fromFacilityName",tf.name AS "toFacilityName" FROM referral_transfers t JOIN referrals r ON r.id=t.referral_id JOIN patients p ON p.id=r.patient_id LEFT JOIN facilities f ON f.id=t.from_facility_id LEFT JOIN facilities tf ON tf.id=t.to_facility_id WHERE ${w} ORDER BY CASE t.status WHEN 'requested' THEN 0 WHEN 'accepted' THEN 1 WHEN 'in-transit' THEN 2 WHEN 'arrived' THEN 3 ELSE 4 END,t.updated_at DESC LIMIT ${limit}`, params);
+            return normalizeRows(r.rows);
+        }
+        if (module === 'care-tasks') {
+            const params = [organizationId];
+            let w = 't.organization_id=$1';
+            if (patientId) {
+                params.push(patientId);
+                w += ` AND t.patient_id=$${params.length}`;
+            }
+            if (status) {
+                params.push(status);
+                w += ` AND t.status=$${params.length}`;
+            }
+            if (search) {
+                params.push(`%${search}%`);
+                w += ` AND (t.title ILIKE $${params.length} OR t.task_type ILIKE $${params.length})`;
+            }
+            const r = await pool.query(`SELECT t.*,p.patient_number AS "patientNumber",p.first_name AS "firstName",p.last_name AS "lastName" FROM care_tasks t LEFT JOIN patients p ON p.id=t.patient_id WHERE ${w} ORDER BY CASE t.priority WHEN 'critical' THEN 0 WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 ELSE 3 END,t.due_at NULLS LAST,t.created_at DESC LIMIT ${limit}`, params);
+            return normalizeRows(r.rows);
+        }
+        const defs = await pool.query(`SELECT id,organization_id AS "organizationId",module,status,payload,created_by AS "createdBy",created_at AS "createdAt",updated_at AS "updatedAt" FROM module_records WHERE organization_id=$1 AND module='workflows' AND COALESCE(payload->>'coverageVersion','') <> '025' AND COALESCE(payload->>'recordPurpose','') <> 'connected synthetic testing' ORDER BY created_at DESC LIMIT ${limit}`, [organizationId]);
+        return defs.rows.map((x) => ({ ...x, ...x.payload }));
+    }
+    app.get('/api/core-clinical/:module', async (req, reply) => {
+        if (!CORE_MODULES.has(String(req.params.module)))
+            return reply.code(404).send({ error: 'Core clinical module not found' });
+        if (!db(reply, pool))
+            return;
+        try {
+            return { data: await listModule(String(req.params.module), req), module: String(req.params.module) };
+        }
+        catch (e) {
+            req.log.error(e);
+            return reply.code(500).send({ error: 'Clinical workspace could not be loaded.' });
+        }
+    });
+    app.get('/api/core-clinical/:module/dashboard', async (req, reply) => {
+        const module = String(req.params.module);
+        if (!CORE_MODULES.has(module))
+            return reply.code(404).send({ error: 'Core clinical module not found' });
+        if (!db(reply, pool))
+            return;
+        const organizationId = oid(req);
+        const days = Math.min(Math.max(Number(req.query?.days || 14), 7), 90);
+        const count = (sql, params = [organizationId]) => pool.query(sql, params);
+        try {
+            if (module === 'triage') {
+                const [summary, trend, acuity, status] = await Promise.all([
+                    count(`SELECT count(*)::int AS total,count(*) FILTER(WHERE arrived_at>=current_date)::int AS today,count(*) FILTER(WHERE acuity='emergency' AND status NOT IN ('closed','cancelled'))::int AS emergency,count(*) FILTER(WHERE acuity='urgent' AND status NOT IN ('closed','cancelled'))::int AS urgent,count(*) FILTER(WHERE status IN ('completed','routed'))::int AS completed FROM triage_assessments WHERE organization_id=$1`),
+                    count(`SELECT to_char(arrived_at::date,'YYYY-MM-DD') AS day,count(*)::int AS count FROM triage_assessments WHERE organization_id=$1 AND arrived_at>=current_date-$2::int GROUP BY arrived_at::date ORDER BY arrived_at::date`, [organizationId, days]),
+                    count(`SELECT acuity,count(*)::int AS count FROM triage_assessments WHERE organization_id=$1 GROUP BY acuity ORDER BY count DESC`),
+                    count(`SELECT status,count(*)::int AS count FROM triage_assessments WHERE organization_id=$1 GROUP BY status ORDER BY count DESC`)
+                ]);
+                return { summary: summary.rows[0], trend: trend.rows, breakdown: acuity.rows, status: status.rows };
+            }
+            if (module === 'diagnoses') {
+                const [summary, trend, types, verification] = await Promise.all([
+                    count(`SELECT count(*)::int AS total,count(*) FILTER(WHERE status='active')::int AS active,count(*) FILTER(WHERE status='resolved')::int AS resolved,count(*) FILTER(WHERE status='provisional')::int AS provisional,count(*) FILTER(WHERE verification_status<>'verified')::int AS unresolved FROM diagnoses d JOIN patients p ON p.id=d.patient_id WHERE p.organization_id=$1`),
+                    count(`SELECT to_char(d.onset_date,'YYYY-MM-DD') AS day,count(*)::int AS count FROM diagnoses d JOIN patients p ON p.id=d.patient_id WHERE p.organization_id=$1 AND d.onset_date IS NOT NULL GROUP BY d.onset_date ORDER BY d.onset_date`),
+                    count(`SELECT COALESCE(d.diagnosis_type,'unspecified') AS category,count(*)::int AS count FROM diagnoses d JOIN patients p ON p.id=d.patient_id WHERE p.organization_id=$1 GROUP BY 1 ORDER BY count DESC LIMIT 12`),
+                    count(`SELECT verification_status,count(*)::int AS count FROM diagnoses d JOIN patients p ON p.id=d.patient_id WHERE p.organization_id=$1 GROUP BY verification_status ORDER BY count DESC`)
+                ]);
+                return { summary: summary.rows[0], trend: trend.rows.slice(-days), breakdown: types.rows, verification: verification.rows };
+            }
+            if (module === 'clinical-notes') {
+                const [summary, trend, types, statuses] = await Promise.all([
+                    count(`SELECT count(*)::int AS total,count(*) FILTER(WHERE n.created_at>=current_date)::int AS today,count(*) FILTER(WHERE n.documentation_status='draft')::int AS unsigned,count(*) FILTER(WHERE n.documentation_status='amended')::int AS amended,count(DISTINCT n.author_id) FILTER(WHERE n.author_id IS NOT NULL)::int AS clinicians FROM clinical_notes n JOIN encounters e ON e.id=n.encounter_id WHERE e.organization_id=$1`),
+                    count(`SELECT to_char(n.created_at::date,'YYYY-MM-DD') AS day,count(*)::int AS count FROM clinical_notes n JOIN encounters e ON e.id=n.encounter_id WHERE e.organization_id=$1 AND n.created_at>=current_date-$2::int GROUP BY n.created_at::date ORDER BY n.created_at::date`, [organizationId, days]),
+                    count(`SELECT note_type AS type,count(*)::int AS count FROM clinical_notes n JOIN encounters e ON e.id=n.encounter_id WHERE e.organization_id=$1 GROUP BY note_type ORDER BY count DESC`),
+                    count(`SELECT documentation_status AS status,count(*)::int AS count FROM clinical_notes n JOIN encounters e ON e.id=n.encounter_id WHERE e.organization_id=$1 GROUP BY documentation_status ORDER BY count DESC`)
+                ]);
+                return { summary: summary.rows[0], trend: trend.rows, breakdown: types.rows, status: statuses.rows };
+            }
+            if (module === 'care-plans') {
+                const [summary, trend, statuses, priorities] = await Promise.all([
+                    count(`SELECT count(*)::int AS total,count(*) FILTER(WHERE status='active')::int AS active,count(*) FILTER(WHERE status='draft')::int AS draft,count(*) FILTER(WHERE status='completed')::int AS completed,count(*) FILTER(WHERE review_at IS NOT NULL AND review_at<now() AND status='active')::int AS overdue_review FROM care_plans c JOIN patients p ON p.id=c.patient_id WHERE p.organization_id=$1`),
+                    count(`SELECT to_char(c.created_at::date,'YYYY-MM-DD') AS day,count(*)::int AS count FROM care_plans c JOIN patients p ON p.id=c.patient_id WHERE p.organization_id=$1 AND c.created_at>=current_date-$2::int GROUP BY c.created_at::date ORDER BY c.created_at::date`, [organizationId, days]),
+                    count(`SELECT status,count(*)::int AS count FROM care_plans c JOIN patients p ON p.id=c.patient_id WHERE p.organization_id=$1 GROUP BY status ORDER BY count DESC`),
+                    count(`SELECT priority,count(*)::int AS count FROM care_plans c JOIN patients p ON p.id=c.patient_id WHERE p.organization_id=$1 GROUP BY priority ORDER BY count DESC`)
+                ]);
+                return { summary: summary.rows[0], trend: trend.rows, breakdown: priorities.rows, status: statuses.rows };
+            }
+            if (module === 'referrals') {
+                const [summary, trend, statuses, urgency] = await Promise.all([
+                    count(`SELECT count(*)::int AS total,count(*) FILTER(WHERE r.status IN ('draft','sent','accepted','in-progress'))::int AS open,count(*) FILTER(WHERE r.status='completed')::int AS completed,count(*) FILTER(WHERE r.requested_at<now()-interval '7 days' AND r.status NOT IN ('completed','closed','cancelled'))::int AS delayed,count(*) FILTER(WHERE r.urgency='emergency')::int AS emergency FROM referrals r JOIN patients p ON p.id=r.patient_id WHERE p.organization_id=$1`),
+                    count(`SELECT to_char(r.requested_at::date,'YYYY-MM-DD') AS day,count(*)::int AS count FROM referrals r JOIN patients p ON p.id=r.patient_id WHERE p.organization_id=$1 AND r.requested_at>=current_date-$2::int GROUP BY r.requested_at::date ORDER BY r.requested_at::date`, [organizationId, days]),
+                    count(`SELECT r.status,count(*)::int AS count FROM referrals r JOIN patients p ON p.id=r.patient_id WHERE p.organization_id=$1 GROUP BY r.status ORDER BY count DESC`),
+                    count(`SELECT r.urgency,count(*)::int AS count FROM referrals r JOIN patients p ON p.id=r.patient_id WHERE p.organization_id=$1 GROUP BY r.urgency ORDER BY count DESC`)
+                ]);
+                return { summary: summary.rows[0], trend: trend.rows, breakdown: urgency.rows, status: statuses.rows };
+            }
+            if (module === 'referral-transfers') {
+                const [summary, trend, statuses] = await Promise.all([
+                    count(`SELECT count(*)::int AS total,count(*) FILTER(WHERE status IN ('requested','accepted','in-transit'))::int AS active,count(*) FILTER(WHERE status='arrived')::int AS arrived,count(*) FILTER(WHERE status='cancelled')::int AS cancelled,COALESCE(AVG(EXTRACT(EPOCH FROM (arrived_at-requested_at))/60) FILTER(WHERE arrived_at IS NOT NULL),0)::numeric(12,1) AS avg_transport_minutes FROM referral_transfers WHERE organization_id=$1`),
+                    count(`SELECT to_char(requested_at::date,'YYYY-MM-DD') AS day,count(*)::int AS count FROM referral_transfers WHERE organization_id=$1 AND requested_at>=current_date-$2::int GROUP BY requested_at::date ORDER BY requested_at::date`, [organizationId, days]),
+                    count(`SELECT status,count(*)::int AS count FROM referral_transfers WHERE organization_id=$1 GROUP BY status ORDER BY count DESC`)
+                ]);
+                return { summary: summary.rows[0], trend: trend.rows, status: statuses.rows };
+            }
+            if (module === 'care-tasks') {
+                const [summary, trend, statuses, priorities] = await Promise.all([
+                    count(`SELECT count(*)::int AS total,count(*) FILTER(WHERE status='open')::int AS open,count(*) FILTER(WHERE status='in-progress')::int AS in_progress,count(*) FILTER(WHERE status='completed')::int AS completed,count(*) FILTER(WHERE due_at<now() AND status NOT IN ('completed','cancelled'))::int AS overdue,count(*) FILTER(WHERE priority IN ('critical','urgent') AND status NOT IN ('completed','cancelled'))::int AS high_priority FROM care_tasks WHERE organization_id=$1`),
+                    count(`SELECT to_char(created_at::date,'YYYY-MM-DD') AS day,count(*)::int AS count FROM care_tasks WHERE organization_id=$1 AND created_at>=current_date-$2::int GROUP BY created_at::date ORDER BY created_at::date`, [organizationId, days]),
+                    count(`SELECT status,count(*)::int AS count FROM care_tasks WHERE organization_id=$1 GROUP BY status ORDER BY count DESC`),
+                    count(`SELECT priority,count(*)::int AS count FROM care_tasks WHERE organization_id=$1 GROUP BY priority ORDER BY count DESC`)
+                ]);
+                return { summary: summary.rows[0], trend: trend.rows, status: statuses.rows, breakdown: priorities.rows };
+            }
+            const [defs, events, statuses] = await Promise.all([
+                count(`SELECT count(*)::int AS total,count(*) FILTER(WHERE payload->>'status'='active')::int AS active,count(*) FILTER(WHERE payload->>'status'='draft')::int AS draft,count(*) FILTER(WHERE payload->>'status'='paused')::int AS paused FROM module_records WHERE organization_id=$1 AND module='workflows' AND COALESCE(payload->>'coverageVersion','') <> '025' AND COALESCE(payload->>'recordPurpose','') <> 'connected synthetic testing'`),
+                count(`SELECT event_type AS type,count(*)::int AS count FROM clinical_workflow_events WHERE organization_id=$1 AND created_at>=now()-make_interval(days=>$2::int) GROUP BY event_type ORDER BY count DESC LIMIT 20`, [organizationId, days]),
+                count(`SELECT COALESCE(to_state,from_state,'recorded') AS state,count(*)::int AS count FROM clinical_workflow_events WHERE organization_id=$1 AND created_at>=now()-make_interval(days=>$2::int) GROUP BY 1 ORDER BY count DESC`, [organizationId, days])
+            ]);
+            return { summary: defs.rows[0], breakdown: events.rows, status: statuses.rows };
+        }
+        catch (e) {
+            req.log.error(e);
+            return reply.code(500).send({ error: 'Clinical dashboard could not be prepared.' });
+        }
+    });
+    app.get('/api/core-clinical/workflows/activity', async (req, reply) => {
+        if (!db(reply, pool))
+            return;
+        const organizationId = oid(req);
+        const limit = Math.min(Math.max(Number(req.query?.limit || 100), 1), 300);
+        const r = await pool.query(`SELECT e.id,e.event_type AS "eventType",e.from_state AS "fromState",e.to_state AS "toState",e.payload,e.created_at AS "createdAt",e.patient_id AS "patientId",p.patient_number AS "patientNumber",p.first_name AS "firstName",p.last_name AS "lastName" FROM clinical_workflow_events e LEFT JOIN patients p ON p.id=e.patient_id WHERE e.organization_id=$1 ORDER BY e.created_at DESC LIMIT ${limit}`, [organizationId]);
+        return { data: r.rows };
+    });
+    async function createModule(module, body, req, reply) {
+        write(req);
+        if (!db(reply, pool))
+            return;
+        const organizationId = oid(req);
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            let row;
+            if (module === 'triage') {
+                const b = triageCreate.parse(body);
+                if (!await patientExists(client, organizationId, b.patientId)) {
+                    await client.query('ROLLBACK');
+                    return reply.code(404).send({ error: 'Patient not found in the authorized workspace.' });
+                }
+                if (b.encounterId && !await encounterForPatient(client, organizationId, b.encounterId, b.patientId)) {
+                    await client.query('ROLLBACK');
+                    return reply.code(409).send({ error: 'Encounter does not belong to the selected patient.' });
+                }
+                const r = await client.query(`INSERT INTO triage_assessments(organization_id,patient_id,encounter_id,arrived_at,arrival_mode,chief_complaint,triage_nurse_id,acuity,triage_category,temperature,heart_rate,respiratory_rate,systolic,diastolic,spo2,pain,mental_status,mobility_status,infection_precautions,risk_flags,notes,disposition,status,completed_at,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,CASE WHEN $23='completed' THEN now() ELSE NULL END,$24) RETURNING *`, [organizationId, b.patientId, b.encounterId || null, iso(b.arrivedAt) || new Date().toISOString(), b.arrivalMode, b.chiefComplaint, b.triageNurseId || ctx.dbUserId(req), b.acuity, b.triageCategory || null, b.temperature ?? null, b.heartRate ?? null, b.respiratoryRate ?? null, b.systolic ?? null, b.diastolic ?? null, b.spo2 ?? null, b.pain ?? null, b.mentalStatus || null, b.mobilityStatus || null, JSON.stringify(b.infectionPrecautions), JSON.stringify(b.riskFlags), b.notes || null, b.disposition || null, 'completed', ctx.dbUserId(req)]);
+                row = r.rows[0];
+                for (const [code, value, unit] of [['temperature', b.temperature, 'Cel'], ['heart-rate', b.heartRate, '/min'], ['respiratory-rate', b.respiratoryRate, '/min'], ['systolic-blood-pressure', b.systolic, 'mmHg'], ['diastolic-blood-pressure', b.diastolic, 'mmHg'], ['oxygen-saturation', b.spo2, '%'], ['pain-score', b.pain, '/10']])
+                    if (value !== undefined)
+                        await client.query(`INSERT INTO observations(patient_id,encounter_id,code_system,code,display,value_numeric,unit,performer_user_id) VALUES($1,$2,'LOINC',$3,$4,$5,$6,$7)`, [b.patientId, b.encounterId || null, code, code, value, unit, ctx.dbUserId(req)]);
+                let q = await client.query(`SELECT id FROM queues WHERE organization_id=$1 AND code='GENERAL' LIMIT 1`, [organizationId]);
+                if (!q.rowCount)
+                    q = await client.query(`INSERT INTO queues(organization_id,code,name) VALUES($1,'GENERAL','General Queue') RETURNING id`, [organizationId]);
+                const queueStatus = b.acuity === 'emergency' ? 'emergency' : 'waiting-doctor';
+                const qe = await client.query(`INSERT INTO queue_entries(queue_id,patient_id,encounter_id,priority,status) VALUES($1,$2,$3,$4,$5) RETURNING id`, [q.rows[0].id, b.patientId, b.encounterId || null, b.acuity, queueStatus]);
+                await client.query(`UPDATE triage_assessments SET queue_entry_id=$1,updated_at=now() WHERE id=$2`, [qe.rows[0].id, row.id]);
+                row.queue_entry_id = qe.rows[0].id;
+                await ctx.dbAudit(client, req, 'CREATE', 'triage_assessment', row.id, { patientId: b.patientId, acuity: b.acuity, queueEntryId: qe.rows[0].id });
+                await ctx.queueEvent(client, req, 'triage.assessment.recorded', { triageId: row.id, patientId: b.patientId, encounterId: b.encounterId || null, acuity: b.acuity, status: row.status });
+                if (b.acuity !== 'routine')
+                    await ctx.queueEvent(client, req, 'triage.priority.assigned', { triageId: row.id, patientId: b.patientId, encounterId: b.encounterId || null, acuity: b.acuity });
+            }
+            else if (module === 'diagnoses') {
+                const b = diagnosisCreate.parse(body);
+                if (!await patientExists(client, organizationId, b.patientId)) {
+                    await client.query('ROLLBACK');
+                    return reply.code(404).send({ error: 'Patient not found in the authorized workspace.' });
+                }
+                if (b.encounterId && !await encounterForPatient(client, organizationId, b.encounterId, b.patientId)) {
+                    await client.query('ROLLBACK');
+                    return reply.code(409).send({ error: 'Encounter does not belong to the selected patient.' });
+                }
+                const r = await client.query(`INSERT INTO diagnoses(patient_id,encounter_id,code_system,code,display,diagnosis_type,status,verification_status,severity,certainty,onset_date,resolution_date,laterality,anatomical_site,notes,clinician_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *`, [b.patientId, b.encounterId || null, b.codeSystem || null, b.code, b.display, b.diagnosisType || null, b.status, b.verificationStatus, b.severity || null, b.certainty || null, b.onsetDate || null, b.resolutionDate || null, b.laterality || null, b.anatomicalSite || null, b.notes || null, ctx.dbUserId(req)]);
+                row = r.rows[0];
+                await ctx.dbAudit(client, req, 'CREATE', 'diagnosis', row.id, { patientId: b.patientId, code: b.code });
+                await ctx.queueEvent(client, req, 'diagnosis.recorded', { diagnosisId: row.id, patientId: b.patientId, encounterId: b.encounterId || null, code: b.code, display: b.display, status: b.status, verificationStatus: b.verificationStatus });
+            }
+            else if (module === 'clinical-notes') {
+                const b = noteCreate.parse(body);
+                const enc = await encounterForPatient(client, organizationId, b.encounterId);
+                if (!enc) {
+                    await client.query('ROLLBACK');
+                    return reply.code(409).send({ error: 'Encounter does not belong to the authorized workspace.' });
+                }
+                const r = await client.query(`INSERT INTO clinical_notes(encounter_id,note_type,subjective,objective,assessment,plan,author_id,documentation_status,chief_complaint,history,examination,diagnosis_references,order_references,medication_summary,allergy_summary,observation_summary,follow_up,signed_by,signed_at,version) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,CASE WHEN $8='signed' THEN $7 ELSE NULL END,CASE WHEN $8='signed' THEN now() ELSE NULL END,1) RETURNING *`, [b.encounterId, b.noteType, b.subjective || null, b.objective || null, b.assessment || null, b.plan || null, ctx.dbUserId(req), b.documentationStatus, b.chiefComplaint || null, b.history || null, b.examination || null, JSON.stringify(b.diagnosisReferences), JSON.stringify(b.orderReferences), JSON.stringify(b.medicationSummary), JSON.stringify(b.allergySummary), JSON.stringify(b.observationSummary), JSON.stringify(b.followUp)]);
+                row = r.rows[0];
+                await ctx.dbAudit(client, req, 'CREATE', 'clinical_note', row.id, { encounterId: b.encounterId, patientId: enc.patient_id });
+                await ctx.queueEvent(client, req, 'clinical-note.recorded', { clinicalNoteId: row.id, patientId: enc.patient_id, encounterId: b.encounterId, noteType: b.noteType, status: b.documentationStatus });
+            }
+            else if (module === 'care-plans') {
+                const b = carePlanCreate.parse(body);
+                if (!await patientExists(client, organizationId, b.patientId)) {
+                    await client.query('ROLLBACK');
+                    return reply.code(404).send({ error: 'Patient not found in the authorized workspace.' });
+                }
+                if (b.encounterId && !await encounterForPatient(client, organizationId, b.encounterId, b.patientId)) {
+                    await client.query('ROLLBACK');
+                    return reply.code(409).send({ error: 'Encounter does not belong to the selected patient.' });
+                }
+                const r = await client.query(`INSERT INTO care_plans(patient_id,encounter_id,title,status,goals,priority,owner_id,review_at,interventions,outcome_measures,barriers,next_review_note) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`, [b.patientId, b.encounterId || null, b.title, b.status, JSON.stringify(b.goals), b.priority, b.ownerId || ctx.dbUserId(req), b.reviewAt ? iso(b.reviewAt) : null, JSON.stringify(b.interventions), JSON.stringify(b.outcomeMeasures), JSON.stringify(b.barriers), b.nextReviewNote || null]);
+                row = r.rows[0];
+                await ctx.dbAudit(client, req, 'CREATE', 'care_plan', row.id, { patientId: b.patientId });
+                await ctx.queueEvent(client, req, 'care-plan.created', { carePlanId: row.id, patientId: b.patientId, encounterId: b.encounterId || null, status: b.status });
+            }
+            else if (module === 'referrals') {
+                const b = referralCreate.parse(body);
+                if (!await patientExists(client, organizationId, b.patientId)) {
+                    await client.query('ROLLBACK');
+                    return reply.code(404).send({ error: 'Patient not found in the authorized workspace.' });
+                }
+                if (b.encounterId && !await encounterForPatient(client, organizationId, b.encounterId, b.patientId)) {
+                    await client.query('ROLLBACK');
+                    return reply.code(409).send({ error: 'Encounter does not belong to the selected patient.' });
+                }
+                if (b.destinationFacilityId) {
+                    const f = await client.query(`SELECT id FROM facilities WHERE id=$1 AND organization_id=$2`, [b.destinationFacilityId, organizationId]);
+                    if (!f.rowCount) {
+                        await client.query('ROLLBACK');
+                        return reply.code(409).send({ error: 'Destination facility is outside the authorized workspace.' });
+                    }
+                }
+                const r = await client.query(`INSERT INTO referrals(patient_id,encounter_id,destination,reason,status,referral_type,service_code,urgency,destination_facility_id,referring_provider_id,clinical_summary,requested_at,accepted_at,completed_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,now(),NULL,NULL,now()) RETURNING *`, [b.patientId, b.encounterId || null, b.destination, b.reason, b.status, b.referralType, b.serviceCode || null, b.urgency, b.destinationFacilityId || null, b.referringProviderId || ctx.dbUserId(req), b.clinicalSummary || null]);
+                row = r.rows[0];
+                await ctx.dbAudit(client, req, 'CREATE', 'referral', row.id, { patientId: b.patientId, destination: b.destination });
+                await ctx.queueEvent(client, req, 'referral.created', { referralId: row.id, patientId: b.patientId, encounterId: b.encounterId || null, status: b.status, urgency: b.urgency });
+                if (b.status === 'sent')
+                    await ctx.queueEvent(client, req, 'referral.sent', { referralId: row.id, patientId: b.patientId, encounterId: b.encounterId || null, destination: b.destination });
+            }
+            else if (module === 'referral-transfers') {
+                const b = transferCreate.parse(body);
+                const ref = await client.query(`SELECT r.id,r.patient_id FROM referrals r JOIN patients p ON p.id=r.patient_id WHERE r.id=$1 AND p.organization_id=$2`, [b.referralId, organizationId]);
+                if (!ref.rowCount) {
+                    await client.query('ROLLBACK');
+                    return reply.code(404).send({ error: 'Referral not found in the authorized workspace.' });
+                }
+                for (const fId of [b.fromFacilityId, b.toFacilityId].filter(Boolean)) {
+                    const f = await client.query(`SELECT id FROM facilities WHERE id=$1 AND organization_id=$2`, [fId, organizationId]);
+                    if (!f.rowCount) {
+                        await client.query('ROLLBACK');
+                        return reply.code(409).send({ error: 'Transfer facility is outside the authorized workspace.' });
+                    }
+                }
+                const r = await client.query(`INSERT INTO referral_transfers(organization_id,referral_id,from_facility_id,to_facility_id,service_code,urgency,status,handover,transport,expected_arrival_at,receiving_contact,transport_status,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`, [organizationId, b.referralId, b.fromFacilityId || null, b.toFacilityId || null, b.serviceCode || null, b.urgency, b.status, JSON.stringify({ notes: b.handoverNotes || null }), JSON.stringify(b.transport), b.expectedArrivalAt ? iso(b.expectedArrivalAt) : null, b.receivingContact || null, b.transportStatus || null, ctx.dbUserId(req)]);
+                row = r.rows[0];
+                await ctx.dbAudit(client, req, 'CREATE', 'referral_transfer', row.id, { referralId: b.referralId, patientId: ref.rows[0].patient_id });
+                await ctx.queueEvent(client, req, 'referral.transfer.created', { referralId: b.referralId, patientId: ref.rows[0].patient_id, transferId: row.id, status: b.status });
+            }
+            else if (module === 'care-tasks') {
+                const b = taskCreate.parse(body);
+                if (!await patientExists(client, organizationId, b.patientId)) {
+                    await client.query('ROLLBACK');
+                    return reply.code(404).send({ error: 'Patient not found in the authorized workspace.' });
+                }
+                if (b.encounterId && !await encounterForPatient(client, organizationId, b.encounterId, b.patientId)) {
+                    await client.query('ROLLBACK');
+                    return reply.code(409).send({ error: 'Encounter does not belong to the selected patient.' });
+                }
+                const r = await client.query(`INSERT INTO care_tasks(organization_id,patient_id,encounter_id,task_type,task_category,title,priority,status,due_at,assigned_to,payload,escalation_level,started_at,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,CASE WHEN $8='in-progress' THEN now() ELSE NULL END,now(),now()) RETURNING *`, [organizationId, b.patientId, b.encounterId || null, b.taskType, b.taskCategory, b.title, b.priority, b.status, b.dueAt ? iso(b.dueAt) : null, b.assignedTo || null, JSON.stringify(b.payload), b.escalationLevel]);
+                row = r.rows[0];
+                await ctx.dbAudit(client, req, 'CREATE', 'care_task', row.id, { patientId: b.patientId, priority: b.priority });
+                await ctx.queueEvent(client, req, 'care-task.created', { taskId: row.id, patientId: b.patientId, encounterId: b.encounterId || null, priority: b.priority, status: b.status });
+            }
+            else {
+                const b = workflowCreate.parse(body);
+                const r = await client.query(`INSERT INTO module_records(organization_id,module,status,payload,created_by) VALUES($1,'workflows',$2,$3,$4) RETURNING id,organization_id AS "organizationId",module,status,payload,created_by AS "createdBy",created_at AS "createdAt",updated_at AS "updatedAt"`, [organizationId, b.status, JSON.stringify(b), ctx.dbUserId(req)]);
+                row = { ...r.rows[0], ...r.rows[0].payload };
+                await ctx.dbAudit(client, req, 'CREATE', 'workflow_definition', row.id, { name: b.name });
+            }
+            await client.query('COMMIT');
+            return reply.code(201).send({ data: row });
+        }
+        catch (e) {
+            await client.query('ROLLBACK');
+            throw e;
+        }
+        finally {
+            client.release();
+        }
+    }
+    async function updateModule(module, id, body, req, reply) {
+        write(req);
+        if (!db(reply, pool))
+            return;
+        const organizationId = oid(req);
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            let row;
+            if (module === 'triage') {
+                const b = triageCreate.partial().parse(body);
+                const current = await client.query(`SELECT * FROM triage_assessments WHERE id=$1 AND organization_id=$2 FOR UPDATE`, [id, organizationId]);
+                if (!current.rowCount) {
+                    await client.query('ROLLBACK');
+                    return reply.code(404).send({ error: 'Triage assessment not found' });
+                }
+                const x = { ...current.rows[0], ...b };
+                if (b.encounterId && !await encounterForPatient(client, organizationId, b.encounterId, x.patient_id || x.patientId)) {
+                    await client.query('ROLLBACK');
+                    return reply.code(409).send({ error: 'Encounter does not belong to the selected patient.' });
+                }
+                const r = await client.query(`UPDATE triage_assessments SET patient_id=COALESCE($1,patient_id),encounter_id=COALESCE($2,encounter_id),arrived_at=COALESCE($3,arrived_at),arrival_mode=COALESCE($4,arrival_mode),chief_complaint=COALESCE($5,chief_complaint),triage_nurse_id=COALESCE($6,triage_nurse_id),acuity=COALESCE($7,acuity),triage_category=COALESCE($8,triage_category),temperature=COALESCE($9,temperature),heart_rate=COALESCE($10,heart_rate),respiratory_rate=COALESCE($11,respiratory_rate),systolic=COALESCE($12,systolic),diastolic=COALESCE($13,diastolic),spo2=COALESCE($14,spo2),pain=COALESCE($15,pain),mental_status=COALESCE($16,mental_status),mobility_status=COALESCE($17,mobility_status),infection_precautions=COALESCE($18,infection_precautions),risk_flags=COALESCE($19,risk_flags),notes=COALESCE($20,notes),disposition=COALESCE($21,disposition),status=COALESCE($22,status),routed_at=CASE WHEN $22='routed' THEN now() ELSE routed_at END,completed_at=CASE WHEN $22='completed' THEN COALESCE(completed_at,now()) ELSE completed_at END,updated_at=now() WHERE id=$23 AND organization_id=$24 RETURNING *`, [b.patientId || null, b.encounterId || null, b.arrivedAt ? iso(b.arrivedAt) : null, b.arrivalMode || null, b.chiefComplaint || null, b.triageNurseId || null, b.acuity || null, b.triageCategory || null, b.temperature ?? null, b.heartRate ?? null, b.respiratoryRate ?? null, b.systolic ?? null, b.diastolic ?? null, b.spo2 ?? null, b.pain ?? null, b.mentalStatus || null, b.mobilityStatus || null, b.infectionPrecautions ? JSON.stringify(b.infectionPrecautions) : null, b.riskFlags ? JSON.stringify(b.riskFlags) : null, b.notes || null, b.disposition || null, b.status || null, id, organizationId]);
+                row = r.rows[0];
+                await ctx.queueEvent(client, req, 'triage.assessment.updated', { triageId: id, patientId: row.patient_id, encounterId: row.encounter_id, acuity: row.acuity, status: row.status });
+            }
+            else if (module === 'diagnoses') {
+                const b = diagnosisCreate.partial().parse(body);
+                const current = await client.query(`SELECT d.* FROM diagnoses d JOIN patients p ON p.id=d.patient_id WHERE d.id=$1 AND p.organization_id=$2 FOR UPDATE`, [id, organizationId]);
+                if (!current.rowCount) {
+                    await client.query('ROLLBACK');
+                    return reply.code(404).send({ error: 'Diagnosis not found' });
+                }
+                const r = await client.query(`UPDATE diagnoses SET code_system=COALESCE($1,code_system),code=COALESCE($2,code),display=COALESCE($3,display),diagnosis_type=COALESCE($4,diagnosis_type),status=COALESCE($5,status),verification_status=COALESCE($6,verification_status),severity=COALESCE($7,severity),certainty=COALESCE($8,certainty),onset_date=COALESCE($9,onset_date),resolution_date=COALESCE($10,resolution_date),laterality=COALESCE($11,laterality),anatomical_site=COALESCE($12,anatomical_site),notes=COALESCE($13,notes),clinician_id=COALESCE($14,clinician_id) WHERE id=$15 RETURNING *`, [b.codeSystem || null, b.code || null, b.display || null, b.diagnosisType || null, b.status || null, b.verificationStatus || null, b.severity || null, b.certainty || null, b.onsetDate || null, b.resolutionDate || null, b.laterality || null, b.anatomicalSite || null, b.notes || null, ctx.dbUserId(req), id]);
+                row = r.rows[0];
+                await ctx.queueEvent(client, req, 'diagnosis.updated', { diagnosisId: id, patientId: row.patient_id, encounterId: row.encounter_id, status: row.status, verificationStatus: row.verification_status });
+            }
+            else if (module === 'clinical-notes') {
+                const b = noteCreate.partial().parse(body);
+                const current = await client.query(`SELECT n.*,e.patient_id FROM clinical_notes n JOIN encounters e ON e.id=n.encounter_id WHERE n.id=$1 AND e.organization_id=$2 FOR UPDATE`, [id, organizationId]);
+                if (!current.rowCount) {
+                    await client.query('ROLLBACK');
+                    return reply.code(404).send({ error: 'Clinical note not found' });
+                }
+                const r = await client.query(`UPDATE clinical_notes SET note_type=COALESCE($1,note_type),chief_complaint=COALESCE($2,chief_complaint),history=COALESCE($3,history),subjective=COALESCE($4,subjective),objective=COALESCE($5,objective),examination=COALESCE($6,examination),assessment=COALESCE($7,assessment),plan=COALESCE($8,plan),diagnosis_references=COALESCE($9,diagnosis_references),order_references=COALESCE($10,order_references),medication_summary=COALESCE($11,medication_summary),allergy_summary=COALESCE($12,allergy_summary),observation_summary=COALESCE($13,observation_summary),follow_up=COALESCE($14,follow_up),documentation_status=COALESCE($15,documentation_status),version=version+1,updated_at=now() WHERE id=$16 RETURNING *`, [b.noteType || null, b.chiefComplaint || null, b.history || null, b.subjective || null, b.objective || null, b.examination || null, b.assessment || null, b.plan || null, b.diagnosisReferences ? JSON.stringify(b.diagnosisReferences) : null, b.orderReferences ? JSON.stringify(b.orderReferences) : null, b.medicationSummary ? JSON.stringify(b.medicationSummary) : null, b.allergySummary ? JSON.stringify(b.allergySummary) : null, b.observationSummary ? JSON.stringify(b.observationSummary) : null, b.followUp ? JSON.stringify(b.followUp) : null, b.documentationStatus || null, id]);
+                row = r.rows[0];
+                await ctx.queueEvent(client, req, 'clinical-note.updated', { clinicalNoteId: id, patientId: current.rows[0].patient_id, encounterId: row.encounter_id, status: row.documentation_status, version: row.version });
+            }
+            else if (module === 'care-plans') {
+                const b = carePlanCreate.partial().parse(body);
+                const current = await client.query(`SELECT c.* FROM care_plans c JOIN patients p ON p.id=c.patient_id WHERE c.id=$1 AND p.organization_id=$2 FOR UPDATE`, [id, organizationId]);
+                if (!current.rowCount) {
+                    await client.query('ROLLBACK');
+                    return reply.code(404).send({ error: 'Care plan not found' });
+                }
+                const r = await client.query(`UPDATE care_plans SET title=COALESCE($1,title),status=COALESCE($2,status),priority=COALESCE($3,priority),goals=COALESCE($4,goals),interventions=COALESCE($5,interventions),outcome_measures=COALESCE($6,outcome_measures),barriers=COALESCE($7,barriers),owner_id=COALESCE($8,owner_id),review_at=COALESCE($9,review_at),next_review_note=COALESCE($10,next_review_note),updated_at=now() WHERE id=$11 RETURNING *`, [b.title || null, b.status || null, b.priority || null, b.goals ? JSON.stringify(b.goals) : null, b.interventions ? JSON.stringify(b.interventions) : null, b.outcomeMeasures ? JSON.stringify(b.outcomeMeasures) : null, b.barriers ? JSON.stringify(b.barriers) : null, b.ownerId || null, b.reviewAt ? iso(b.reviewAt) : null, b.nextReviewNote || null, id]);
+                row = r.rows[0];
+                await ctx.queueEvent(client, req, 'care-plan.updated', { carePlanId: id, patientId: row.patient_id, encounterId: row.encounter_id, status: row.status });
+            }
+            else if (module === 'referrals') {
+                const b = referralCreate.partial().parse(body);
+                const current = await client.query(`SELECT r.* FROM referrals r JOIN patients p ON p.id=r.patient_id WHERE r.id=$1 AND p.organization_id=$2 FOR UPDATE`, [id, organizationId]);
+                if (!current.rowCount) {
+                    await client.query('ROLLBACK');
+                    return reply.code(404).send({ error: 'Referral not found' });
+                }
+                const r = await client.query(`UPDATE referrals SET referral_type=COALESCE($1,referral_type),service_code=COALESCE($2,service_code),destination=COALESCE($3,destination),reason=COALESCE($4,reason),urgency=COALESCE($5,urgency),destination_facility_id=COALESCE($6,destination_facility_id),referring_provider_id=COALESCE($7,referring_provider_id),clinical_summary=COALESCE($8,clinical_summary),status=COALESCE($9,status),accepted_at=CASE WHEN $9='accepted' THEN COALESCE(accepted_at,now()) ELSE accepted_at END,completed_at=CASE WHEN $9='completed' THEN COALESCE(completed_at,now()) ELSE completed_at END,updated_at=now() WHERE id=$10 RETURNING *`, [b.referralType || null, b.serviceCode || null, b.destination || null, b.reason || null, b.urgency || null, b.destinationFacilityId || null, b.referringProviderId || null, b.clinicalSummary || null, b.status || null, id]);
+                row = r.rows[0];
+                await ctx.queueEvent(client, req, 'referral.updated', { referralId: id, patientId: row.patient_id, status: row.status, urgency: row.urgency });
+            }
+            else if (module === 'referral-transfers') {
+                const b = transferCreate.partial().parse(body);
+                const current = await client.query(`SELECT t.*,r.patient_id FROM referral_transfers t JOIN referrals r ON r.id=t.referral_id JOIN patients p ON p.id=r.patient_id WHERE t.id=$1 AND t.organization_id=$2 FOR UPDATE`, [id, organizationId]);
+                if (!current.rowCount) {
+                    await client.query('ROLLBACK');
+                    return reply.code(404).send({ error: 'Referral transfer not found' });
+                }
+                const r = await client.query(`UPDATE referral_transfers SET from_facility_id=COALESCE($1,from_facility_id),to_facility_id=COALESCE($2,to_facility_id),service_code=COALESCE($3,service_code),urgency=COALESCE($4,urgency),status=COALESCE($5,status),handover=COALESCE($6,handover),transport=COALESCE($7,transport),expected_arrival_at=COALESCE($8,expected_arrival_at),receiving_contact=COALESCE($9,receiving_contact),transport_status=COALESCE($10,transport_status),updated_by=$11,updated_at=now(),accepted_at=CASE WHEN $5='accepted' THEN COALESCE(accepted_at,now()) ELSE accepted_at END,departed_at=CASE WHEN $5='in-transit' THEN COALESCE(departed_at,now()) ELSE departed_at END,arrived_at=CASE WHEN $5='arrived' THEN COALESCE(arrived_at,now()) ELSE arrived_at END WHERE id=$12 RETURNING *`, [b.fromFacilityId || null, b.toFacilityId || null, b.serviceCode || null, b.urgency || null, b.status || null, b.handoverNotes ? JSON.stringify({ notes: b.handoverNotes }) : null, b.transport ? JSON.stringify(b.transport) : null, b.expectedArrivalAt ? iso(b.expectedArrivalAt) : null, b.receivingContact || null, b.transportStatus || null, ctx.dbUserId(req), id]);
+                row = r.rows[0];
+                await ctx.queueEvent(client, req, 'referral.transfer.status', { referralId: row.referral_id, patientId: current.rows[0].patient_id, transferId: id, status: row.status });
+            }
+            else if (module === 'care-tasks') {
+                const b = taskCreate.partial().parse(body);
+                const current = await client.query(`SELECT * FROM care_tasks WHERE id=$1 AND organization_id=$2 FOR UPDATE`, [id, organizationId]);
+                if (!current.rowCount) {
+                    await client.query('ROLLBACK');
+                    return reply.code(404).send({ error: 'Care task not found' });
+                }
+                const r = await client.query(`UPDATE care_tasks SET patient_id=COALESCE($1,patient_id),encounter_id=COALESCE($2,encounter_id),task_type=COALESCE($3,task_type),task_category=COALESCE($4,task_category),title=COALESCE($5,title),priority=COALESCE($6,priority),status=COALESCE($7,status),due_at=COALESCE($8,due_at),assigned_to=COALESCE($9,assigned_to),payload=COALESCE($10,payload),escalation_level=COALESCE($11,escalation_level),started_at=CASE WHEN $7='in-progress' THEN COALESCE(started_at,now()) ELSE started_at END,completed_at=CASE WHEN $7='completed' THEN COALESCE(completed_at,now()) ELSE completed_at END,updated_at=now() WHERE id=$12 RETURNING *`, [b.patientId || null, b.encounterId || null, b.taskType || null, b.taskCategory || null, b.title || null, b.priority || null, b.status || null, b.dueAt ? iso(b.dueAt) : null, b.assignedTo || null, b.payload ? JSON.stringify(b.payload) : null, b.escalationLevel ?? null, id]);
+                row = r.rows[0];
+                await ctx.queueEvent(client, req, 'care-task.updated', { taskId: id, patientId: row.patient_id, encounterId: row.encounter_id, status: row.status, priority: row.priority });
+            }
+            else {
+                const b = workflowCreate.partial().parse(body);
+                const r = await client.query(`UPDATE module_records SET status=COALESCE($1,status),payload=payload || $2::jsonb,updated_at=now() WHERE id=$3 AND organization_id=$4 AND module='workflows' RETURNING id,organization_id AS "organizationId",module,status,payload,created_by AS "createdBy",created_at AS "createdAt",updated_at AS "updatedAt"`, [b.status || null, JSON.stringify(b), id, organizationId]);
+                if (!r.rowCount) {
+                    await client.query('ROLLBACK');
+                    return reply.code(404).send({ error: 'Workflow definition not found' });
+                }
+                row = { ...r.rows[0], ...r.rows[0].payload };
+            }
+            await client.query('COMMIT');
+            return { data: row };
+        }
+        catch (e) {
+            await client.query('ROLLBACK');
+            throw e;
+        }
+        finally {
+            client.release();
+        }
+    }
+    app.post('/api/core-clinical/:module', async (req, reply) => { const module = String(req.params.module); if (!CORE_MODULES.has(module))
+        return reply.code(404).send({ error: 'Core clinical module not found' }); try {
+        return await createModule(module, req.body || {}, req, reply);
+    }
+    catch (e) {
+        req.log.error(e);
+        return reply.code(e?.statusCode || 400).send({ error: e?.message || 'Clinical record could not be created.' });
+    } });
+    app.patch('/api/core-clinical/:module/:id', async (req, reply) => { const module = String(req.params.module); if (!CORE_MODULES.has(module))
+        return reply.code(404).send({ error: 'Core clinical module not found' }); try {
+        return await updateModule(module, String(req.params.id), req.body || {}, req, reply);
+    }
+    catch (e) {
+        req.log.error(e);
+        return reply.code(e?.statusCode || 400).send({ error: e?.message || 'Clinical record could not be updated.' });
+    } });
+    app.post('/api/core-clinical/:module/:id/action', async (req, reply) => {
+        const module = String(req.params.module);
+        const action = String(req.body?.action || '');
+        if (!CORE_MODULES.has(module))
+            return reply.code(404).send({ error: 'Core clinical module not found' });
+        write(req);
+        if (!db(reply, pool))
+            return;
+        const organizationId = oid(req);
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            let row;
+            if (module === 'triage' && action === 'route') {
+                const b = z.object({ destination: z.string().min(1), reason: z.string().optional() }).parse(req.body || {});
+                const r = await client.query(`UPDATE triage_assessments SET status='routed',disposition=$1,routed_at=now(),updated_at=now() WHERE id=$2 AND organization_id=$3 RETURNING *`, [b.destination, String(req.params.id), organizationId]);
+                if (!r.rowCount) {
+                    await client.query('ROLLBACK');
+                    return reply.code(404).send({ error: 'Triage assessment not found' });
+                }
+                row = r.rows[0];
+                await ctx.queueEvent(client, req, 'triage.routed', { triageId: row.id, patientId: row.patient_id, encounterId: row.encounter_id, destination: b.destination, reason: b.reason || null });
+            }
+            else if (module === 'diagnoses' && ['verify', 'resolve', 'reopen'].includes(action)) {
+                const next = action === 'verify' ? { verification_status: 'verified' } : action === 'resolve' ? { status: 'resolved' } : { status: 'active' };
+                const r = await client.query(`UPDATE diagnoses d SET verification_status=COALESCE($1,verification_status),status=COALESCE($2,status),resolution_date=CASE WHEN $2='resolved' THEN COALESCE(resolution_date,current_date) WHEN $2='active' THEN NULL ELSE resolution_date END WHERE d.id=$3 AND EXISTS(SELECT 1 FROM patients p WHERE p.id=d.patient_id AND p.organization_id=$4) RETURNING d.*`, [next.verification_status || null, next.status || null, String(req.params.id), organizationId]);
+                if (!r.rowCount) {
+                    await client.query('ROLLBACK');
+                    return reply.code(404).send({ error: 'Diagnosis not found' });
+                }
+                row = r.rows[0];
+                await ctx.queueEvent(client, req, 'diagnosis.status.changed', { diagnosisId: row.id, patientId: row.patient_id, status: row.status, verificationStatus: row.verification_status });
+            }
+            else if (module === 'clinical-notes' && ['sign', 'amend', 'void'].includes(action)) {
+                const status = action === 'sign' ? 'signed' : action === 'amend' ? 'amended' : 'voided';
+                const amendmentReason = typeof req.body?.reason === 'string' && req.body.reason.trim() ? req.body.reason.trim() : null;
+                const r = await client.query(`UPDATE clinical_notes n SET documentation_status=$1,signed_by=CASE WHEN $1='signed' THEN $2 ELSE signed_by END,signed_at=CASE WHEN $1='signed' THEN now() ELSE signed_at END,amendment_reason=CASE WHEN $1='amended' THEN COALESCE($3,amendment_reason) ELSE amendment_reason END,version=CASE WHEN $1='amended' THEN version+1 ELSE version END,updated_at=now() WHERE n.id=$4 AND EXISTS(SELECT 1 FROM encounters e WHERE e.id=n.encounter_id AND e.organization_id=$5) RETURNING n.*, (SELECT patient_id FROM encounters WHERE id=n.encounter_id) AS patient_id`, [status, ctx.dbUserId(req), amendmentReason, String(req.params.id), organizationId]);
+                if (!r.rowCount) {
+                    await client.query('ROLLBACK');
+                    return reply.code(404).send({ error: 'Clinical note not found' });
+                }
+                row = r.rows[0];
+                await ctx.queueEvent(client, req, 'clinical-note.status.changed', { clinicalNoteId: row.id, patientId: row.patient_id, encounterId: row.encounter_id, status: row.documentation_status, version: row.version });
+            }
+            else if (module === 'care-plans' && ['activate', 'complete', 'cancel', 'reopen'].includes(action)) {
+                const status = action === 'activate' ? 'active' : action === 'complete' ? 'completed' : action === 'cancel' ? 'cancelled' : 'draft';
+                const r = await client.query(`UPDATE care_plans c SET status=$1,updated_at=now() WHERE c.id=$2 AND EXISTS(SELECT 1 FROM patients p WHERE p.id=c.patient_id AND p.organization_id=$3) RETURNING c.*`, [status, String(req.params.id), organizationId]);
+                if (!r.rowCount) {
+                    await client.query('ROLLBACK');
+                    return reply.code(404).send({ error: 'Care plan not found' });
+                }
+                row = r.rows[0];
+                await ctx.queueEvent(client, req, 'care-plan.status.changed', { carePlanId: row.id, patientId: row.patient_id, encounterId: row.encounter_id, status: row.status });
+            }
+            else if (module === 'referrals' && ['send', 'accept', 'complete', 'cancel', 'close'].includes(action)) {
+                const status = action === 'send' ? 'sent' : action === 'accept' ? 'accepted' : action === 'complete' ? 'completed' : action === 'cancel' ? 'cancelled' : 'closed';
+                const r = await client.query(`UPDATE referrals r SET status=$1,accepted_at=CASE WHEN $1='accepted' THEN COALESCE(accepted_at,now()) ELSE accepted_at END,completed_at=CASE WHEN $1='completed' THEN COALESCE(completed_at,now()) ELSE completed_at END,updated_at=now() WHERE r.id=$2 AND EXISTS(SELECT 1 FROM patients p WHERE p.id=r.patient_id AND p.organization_id=$3) RETURNING r.*`, [status, String(req.params.id), organizationId]);
+                if (!r.rowCount) {
+                    await client.query('ROLLBACK');
+                    return reply.code(404).send({ error: 'Referral not found' });
+                }
+                row = r.rows[0];
+                await ctx.queueEvent(client, req, `referral.${status}`, { referralId: row.id, patientId: row.patient_id, encounterId: row.encounter_id, status: row.status });
+            }
+            else if (module === 'referral-transfers' && ['accept', 'depart', 'arrive', 'cancel'].includes(action)) {
+                const status = action === 'accept' ? 'accepted' : action === 'depart' ? 'in-transit' : action === 'arrive' ? 'arrived' : 'cancelled';
+                const r = await client.query(`UPDATE referral_transfers t SET status=$1,accepted_at=CASE WHEN $1='accepted' THEN COALESCE(accepted_at,now()) ELSE accepted_at END,departed_at=CASE WHEN $1='in-transit' THEN COALESCE(departed_at,now()) ELSE departed_at END,arrived_at=CASE WHEN $1='arrived' THEN COALESCE(arrived_at,now()) ELSE arrived_at END,updated_by=$2,updated_at=now() WHERE t.id=$3 AND t.organization_id=$4 RETURNING t.*, (SELECT patient_id FROM referrals WHERE id=t.referral_id) AS patient_id`, [status, ctx.dbUserId(req), String(req.params.id), organizationId]);
+                if (!r.rowCount) {
+                    await client.query('ROLLBACK');
+                    return reply.code(404).send({ error: 'Referral transfer not found' });
+                }
+                row = r.rows[0];
+                await ctx.queueEvent(client, req, 'referral.transfer.status', { referralId: row.referral_id, patientId: row.patient_id, transferId: row.id, status: row.status });
+            }
+            else if (module === 'care-tasks' && ['start', 'complete', 'cancel', 'escalate'].includes(action)) {
+                const status = action === 'start' ? 'in-progress' : action === 'complete' ? 'completed' : action === 'cancel' ? 'cancelled' : undefined;
+                const r = await client.query(`UPDATE care_tasks SET status=COALESCE($1,status),escalation_level=CASE WHEN $2='escalate' THEN escalation_level+1 ELSE escalation_level END,started_at=CASE WHEN $1='in-progress' THEN COALESCE(started_at,now()) ELSE started_at END,completed_at=CASE WHEN $1='completed' THEN COALESCE(completed_at,now()) ELSE completed_at END,updated_at=now() WHERE id=$3 AND organization_id=$4 RETURNING *`, [status, action, String(req.params.id), organizationId]);
+                if (!r.rowCount) {
+                    await client.query('ROLLBACK');
+                    return reply.code(404).send({ error: 'Care task not found' });
+                }
+                row = r.rows[0];
+                await ctx.queueEvent(client, req, 'care-task.status.changed', { taskId: row.id, patientId: row.patient_id, encounterId: row.encounter_id, status: row.status, priority: row.priority, escalationLevel: row.escalation_level });
+            }
+            else {
+                await client.query('ROLLBACK');
+                return reply.code(400).send({ error: 'Unsupported clinical workflow action.' });
+            }
+            await ctx.dbAudit(client, req, 'ACTION', `core-${module}`, String(req.params.id), { action });
+            await client.query('COMMIT');
+            return { data: row };
+        }
+        catch (e) {
+            await client.query('ROLLBACK');
+            throw e;
+        }
+        finally {
+            client.release();
+        }
+    });
+}
