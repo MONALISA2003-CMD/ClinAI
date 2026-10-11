@@ -62,7 +62,8 @@ test('API in-memory helper and write paths make organization context authoritati
   assert.match(main, /function tenantPatientRows\(m:Mod, patientId:string, req:any\):Row\[\]\{ const hasPatient=Boolean\(tenantFind\('patients',patientId,req\)\)/);
   assert.match(main, /const row=\{id:data\.id\|\|randomUUID\(\), createdAt:data\.createdAt\|\|now\(\), updatedAt:now\(\), \.\.\.data, organizationId\}/);
   assert.match(main, /if\(!organizationId\) throw Object\.assign\(new Error\('Organization context is required\.'\)/);
-  assert.match(main, /if\(!req\.user\?\.organizationId\) throw Object\.assign\(new Error\('An organization-bound session is required\.'/);
+  assert.match(main, /typeof claims === 'object'[\s\S]*'organizationId' in claims/, 'the JWT user must be structurally narrowed before reading organizationId');
+  assert.match(main, /typeof organizationId !== 'string' \|\| organizationId\.trim\(\)\.length === 0/, 'the organization claim must be a non-empty string');
 });
 
 test('DB-backed write boundary verifies tenant-owned patients, facilities, districts, invoices, and related care records', () => {

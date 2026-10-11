@@ -648,7 +648,19 @@ app.addHook('preHandler',async(req)=>{
   if(publicPath==='/'||publicPath==='/health'||publicPath==='/api/build-info'||isPublicPath(publicPath)) return;
   try{
     await req.jwtVerify();
-    if(!req.user?.organizationId) throw Object.assign(new Error('An organization-bound session is required.'),{statusCode:403,code:'ORGANIZATION_CONTEXT_REQUIRED'});
+    // Fastify JWT's default user type is a decoded-payload union (string | object | Buffer).
+    // Narrow structurally before reading the tenant claim and reject malformed claims closed.
+    const claims = req.user;
+    const organizationId =
+      typeof claims === 'object' &&
+      claims !== null &&
+      !Buffer.isBuffer(claims) &&
+      'organizationId' in claims
+        ? claims.organizationId
+        : undefined;
+    if(typeof organizationId !== 'string' || organizationId.trim().length === 0) {
+      throw Object.assign(new Error('An organization-bound session is required.'),{statusCode:403,code:'ORGANIZATION_CONTEXT_REQUIRED'});
+    }
     if(isClinicalMutation(req)) requireAuthorizedWrite(req);
   }catch(e:any){
     const status = Number(e?.statusCode || 401);
