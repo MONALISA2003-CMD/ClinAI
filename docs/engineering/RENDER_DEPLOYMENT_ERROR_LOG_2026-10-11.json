@@ -1,0 +1,66 @@
+{
+  "service": {
+    "name": "clinai-api",
+    "id": "srv-daicrqlg1s2s73eqklm0",
+    "dashboard": "https://dashboard.render.com/web/srv-daicrqlg1s2s73eqklm0"
+  },
+  "reviewedDeployment": {
+    "id": "dep-db5hscv79l7c73fle220",
+    "commit": "d78551c606c574dd76d0450268b21c366afed50a",
+    "status": "update_failed",
+    "build": "succeeded",
+    "deploymentEndedAtUtc": "2026-10-11T05:28:28.717Z"
+  },
+  "reviewWindowUtc": {
+    "start": "2026-10-11T05:26:15Z",
+    "end": "2026-10-11T05:29:28Z"
+  },
+  "rootCauses": [
+    {
+      "deploymentId": "dep-db5hsa8ae00c739n9m1g",
+      "commit": "0653fad657483ed9575049052203a938da3a293f",
+      "timeUtc": "2026-10-11T05:27:34.597Z",
+      "error": "TS2339: Property 'organizationId' does not exist on type 'string | object | Buffer<ArrayBufferLike>'.",
+      "file": "services/api/src/main.ts",
+      "line": 651,
+      "effect": "TypeScript build exited with code 2; Render build did not complete.",
+      "resolution": "Subsequent source narrowed req.user structurally before reading organizationId and rejects absent or malformed claims closed. The following deployment's TypeScript build succeeded."
+    },
+    {
+      "deploymentId": "dep-db5hscv79l7c73fle220",
+      "commit": "d78551c606c574dd76d0450268b21c366afed50a",
+      "timeUtc": "2026-10-11T05:28:24.528Z",
+      "error": "ERR_MODULE_NOT_FOUND: Cannot find module '/opt/render/project/src/services/api/build/services/api/src/security/tenant-scope.js' imported from '/opt/render/project/src/services/api/build/services/api/src/main.js'.",
+      "file": "services/api/src/main.ts",
+      "line": 26,
+      "effect": "TypeScript build succeeded, but the API process crashed during startup; deployment status became update_failed.",
+      "resolution": "Convert tenant-scope helper from JS plus declaration-only source to tenant-scope.ts so NodeNext TypeScript compilation emits the imported tenant-scope.js runtime artifact. Extend the build audit to require that artifact and verify relative imports across every emitted JavaScript file."
+    }
+  ],
+  "cascadingErrors": [
+    {
+      "pattern": "npm error Lifecycle script `start` failed with error:; npm error code 1; npm error command sh -c node build/services/api/src/main.js",
+      "meaning": "These are wrapper errors caused by ERR_MODULE_NOT_FOUND, not independent root causes."
+    },
+    {
+      "pattern": "ERR_MODULE_NOT_FOUND repeated during startup retry",
+      "meaning": "The same missing tenant-scope runtime artifact was retried and failed again; the error should not be counted as a different source defect."
+    }
+  ],
+  "fixesInPackage": [
+    "services/api/src/security/tenant-scope.ts emits the required runtime JavaScript module",
+    "services/api/tsconfig.json already includes src/**/*.ts and needs no change",
+    "scripts/api-build-artifact-audit.mjs now checks required entrypoint/catalog/tenant-scope outputs and local relative import targets across emitted JS",
+    "tests/render-runtime-artifact-audit.mjs exercises success and missing-artifact/transitive-import failure cases",
+    "tests/p1-tenant-isolation-audit.mjs imports the TypeScript helper with Node type stripping"
+  ],
+  "validation": {
+    "runtimeArtifactRegression": "passed; missing required helper and missing nested relative import both fail the audit fixture",
+    "jwtClaimTypeRegression": "passed",
+    "tenantIsolation": "10/10 passed",
+    "phase1Hardening": "7/7 passed",
+    "tenantScopeStandaloneTypeScriptEmit": "passed; emitted tenant-scope.js",
+    "fullApiBuild": "not run to completion in this container because npm dependency installation timed out against the registry; must be confirmed by the next Render build",
+    "liveDeployment": "not changed by packaging"
+  }
+}

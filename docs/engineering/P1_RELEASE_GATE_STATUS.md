@@ -10,7 +10,7 @@
 - Existing focused Phase 1 security, backend, synthetic-data, public-release, and production-integrity/AI audits: passed.
 - Differential source audit: modified tree **57/65 passed**; original uploaded baseline **56/64 passed**; all **8 failures are shared** and no new failing test was found.
 - Migration manifest: **1 registered migration checksum validated** by `node scripts/db-migrate.mjs --plan`.
-- Syntax checks: tenant-scope module, tenant audit, and API entry point passed.
+- Syntax checks: tenant-scope TypeScript module, tenant audit, and API entry point passed.
 - ZIP must include the full source tree and omit GitHub workflow files; package checksums are regenerated for the final tree.
 
 ## Blocking gates
@@ -24,3 +24,9 @@
 ## Safety boundary
 
 No live database schema was changed. No production environment variables were changed. No deployment was triggered. The current source package is suitable for code review and continuation of P1 testing, but the blockers above must be cleared before production promotion.
+
+## Render runtime artifact incident (11 October 2026)
+
+The Render logs for deployment `dep-db5hscv79l7c73fle220` revealed a second failure beyond the previously reported JWT TypeScript error: the API compiled successfully but crashed at startup because `services/api/build/services/api/src/security/tenant-scope.js` was not emitted. The source then existed as JavaScript plus declarations, while the API TypeScript config only includes TypeScript files. The helper is now `services/api/src/security/tenant-scope.ts`; the TypeScript compiler emits the expected `.js` file. The build artifact audit now checks that the helper exists and walks relative imports across all emitted API JavaScript, failing the build early on a missing target.
+
+Focused validation after the fix: JWT claims regression audit passed; tenant isolation checks passed 10/10; P1 hardening checks passed 7/7; runtime-artifact audit tests passed, including a fixture for missing required modules and missing transitive imports; standalone TypeScript compilation of `tenant-scope.ts` emitted `tenant-scope.js`. The full `npm run build:api` could not be rerun in this container because dependency installation timed out against the npm registry, so the live Render build must still confirm the complete integration.

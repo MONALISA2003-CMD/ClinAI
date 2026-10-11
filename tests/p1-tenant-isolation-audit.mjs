@@ -6,7 +6,7 @@ import {
   findForOrganization,
   rowsForPatientInOrganization,
   patientEncounterLinkIsValid,
-} from '../services/api/src/security/tenant-scope.js';
+} from '../services/api/src/security/tenant-scope.ts';
 
 const main = await readFile('services/api/src/main.ts', 'utf8');
 
