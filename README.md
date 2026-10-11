@@ -228,3 +228,18 @@ The repository intentionally keeps implementation history out of the user-facing
 - Observable, testable backend workflows
 - Mobile-first clinical usability without sacrificing desktop workflows
 - Clear separation between public synthetic testing and protected healthcare data
+
+## Phase 1 security hardening increment
+
+The current Phase 1 implementation increment and its remaining release gates are documented in [`docs/engineering/PHASE1_SECURITY_HARDENING.md`](docs/engineering/PHASE1_SECURITY_HARDENING.md). Before running the API in production, configure all required values from a secret manager, reconcile the historical database migration baseline, and apply/test the registered migration in a backed-up staging database. Offline clinical write replay remains disabled until session, tenant, device, and replay controls are validated.
+
+Useful checks that do not require a live database:
+
+```sh
+npm run test:p1:hardening
+npm run db:migrate:plan
+node tests/phase1-security-boundary-audit.mjs
+node tests/phase1-backend-correctness-audit.mjs
+```
+
+A full dependency install and production build were not verified in the packaging environment because its configured npm registry was unreachable and this source snapshot has no lockfile. See the Phase 1 report for the verified checks and remaining gates.

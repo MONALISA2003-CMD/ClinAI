@@ -7,3 +7,9 @@ __pycache__
 .venv
 coverage
 dist
+
+# Runtime-only local JSON store (never commit patient or test records)
+.clinai-data/
+
+# API TypeScript compilation output (generated; not source)
+/services/api/build/

@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "owner": "ClinAI platform engineering",
+  "policy": "Registered migrations are checksum-immutable and never execute during application startup. Historical migration provenance must be reconciled before the legacy set can be registered or replayed.",
+  "migrations": [
+    {
+      "version": "034-runtime-schema-consolidation",
+      "file": "034-runtime-schema-consolidation.sql",
+      "sha256": "4c9922ab9ed2788b87b95d44c1729d8f2a707dc694060f210ac87997ee914d02",
+      "kind": "consolidation",
+      "intent": "Move schema DDL previously executed at API startup into an explicit, transactional operator-run migration. Requires verified existing core tables and a reviewed staging plan."
+    }
+  ]
+}

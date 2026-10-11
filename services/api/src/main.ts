@@ -6,6 +6,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { Pool } from 'pg';
+import { resolveRuntimeConfig } from './config/runtime-config.js';
 import { validateRecord, firstValidationMessage, isUuid, WORKFLOW_VALIDATION_CONTRACTS } from '../../../packages/domain/validation/index.js';
 import { registerAI, registerPublicAI } from './ai/ai-orchestrator.js';
 import { enqueueClinicalEvent, CLINICAL_EVENT_TYPES } from './events/clinicalEvents.js';
@@ -22,37 +23,73 @@ import { registerPhase67FinancePublicHealthRoutes } from './routes/financePublic
 import { registerPhase89FacilityPlatformRoutes } from './routes/platformOperationsRoutes.js';
 import { registerPhase1011Routes } from './routes/intelligenceCommandCenterRoutes.js';
 import { DOMAIN_MODULE_SPECS } from './domainModuleSpecs.js';
+import { rowsForOrganization, findForOrganization, rowsForPatientInOrganization, patientEncounterLinkIsValid } from './security/tenant-scope.js';
 
 const MODULE_CONTRACTS = moduleContractCatalog.modules as any[];
 const MODULE_CONTRACT_BY_ID:Record<string,any> = Object.fromEntries(MODULE_CONTRACTS.map(c=>[c.id,c]));
 
+const PRODUCTION = process.env.NODE_ENV === 'production';
+const runtimeConfig = resolveRuntimeConfig(process.env);
+const RUNTIME_SCHEMA_DDL_ENABLED = runtimeConfig.runtimeSchemaDdlEnabled;
+const REQUIRED_SCHEMA_MIGRATION = '034-runtime-schema-consolidation';
+const REQUIRED_SCHEMA_MIGRATION_SHA256 = '4c9922ab9ed2788b87b95d44c1729d8f2a707dc694060f210ac87997ee914d02';
 const app = Fastify({ logger: true });
-const pool = process.env.DATABASE_URL ? new Pool({ connectionString: process.env.DATABASE_URL, max: 10 }) : null;
-await app.register(cors, { origin: true });
-await app.register(jwt, { secret: process.env.JWT_SECRET || 'clinai-local-development-secret' });
+const pool = runtimeConfig.databaseUrl ? new Pool({ connectionString: runtimeConfig.databaseUrl, max: 10 }) : null;
+
+async function assertRequiredSchemaMigrationHistory(){
+  if (!runtimeConfig.enforceMigrationHistory) return;
+  if (!pool) throw new Error('Database schema migration gate failed: DATABASE_URL is required.');
+  try {
+    const result = await pool.query("SELECT checksum FROM public.clinai_schema_migrations WHERE version=$1 AND status='applied' LIMIT 1", [REQUIRED_SCHEMA_MIGRATION]);
+    if (!result.rowCount || result.rows[0].checksum !== REQUIRED_SCHEMA_MIGRATION_SHA256) throw new Error('Migration record is absent or its checksum does not match the registered SQL.');
+  } catch {
+    throw new Error(`Startup blocked: required migration ${REQUIRED_SCHEMA_MIGRATION} is not recorded as applied. Back up and review the database, then run the documented migration command before starting production.`);
+  }
+}
+await assertRequiredSchemaMigrationHistory();
+
+await app.register(cors, {
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, false);
+    if (runtimeConfig.allowedOrigins.includes(origin)) return callback(null, origin);
+    return callback(null, false);
+  },
+  methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Authorization', 'Content-Type', 'Idempotency-Key', 'Accept', 'X-Request-Id'],
+});
+await app.register(jwt, {
+  secret: runtimeConfig.jwtSecret,
+  sign: { algorithm: 'HS256', iss: runtimeConfig.jwtIssuer, aud: runtimeConfig.jwtAudience },
+  verify: { algorithms: ['HS256'], allowedIss: runtimeConfig.jwtIssuer, allowedAud: runtimeConfig.jwtAudience, maxAge: '8h' },
+});
 
 const modules = MODULE_CONTRACTS.map(c=>c.id) as string[];
 type Mod = string;
 type Row = Record<string, any>;
-const file = process.env.CLINAI_STORE || '.clinai-data/store.json';
+const file = runtimeConfig.jsonStorePath;
 const store: Record<string, Row[]> = Object.fromEntries(modules.map(m => [m, []]));
 const audit: Row[] = []; const events: Row[] = [];
 
-async function loadStore(){ try { const raw=await readFile(file,'utf8'); const parsed=JSON.parse(raw); for(const m of modules) store[m]=Array.isArray(parsed.store?.[m])?parsed.store[m]:[]; audit.push(...(parsed.audit||[])); events.push(...(parsed.events||[])); } catch {} }
+async function loadStore(){
+  if (PRODUCTION) throw new Error('JSON file persistence is disabled in production.');
+  try { const raw=await readFile(file,'utf8'); const parsed=JSON.parse(raw); for(const m of modules) store[m]=Array.isArray(parsed.store?.[m])?parsed.store[m]:[]; audit.push(...(parsed.audit||[])); events.push(...(parsed.events||[])); } catch {}
+}
 let persistTimer: NodeJS.Timeout|undefined;
-function persist(){ clearTimeout(persistTimer); persistTimer=setTimeout(async()=>{await mkdir(dirname(file),{recursive:true}); await writeFile(file,JSON.stringify({store,audit:audit.slice(-2000),events:events.slice(-2000)},null,2));},100); }
-await loadStore();
+function persist(){
+  if (PRODUCTION) throw new Error('JSON file persistence is disabled in production.');
+  clearTimeout(persistTimer); persistTimer=setTimeout(async()=>{await mkdir(dirname(file),{recursive:true}); await writeFile(file,JSON.stringify({store,audit:audit.slice(-2000),events:events.slice(-2000)},null,2));},100);
+}
+if (!PRODUCTION) await loadStore();
 
 const PUBLIC_PREVIEW = process.env.CLINAI_PUBLIC_PREVIEW === 'true';
-const PRODUCTION = process.env.NODE_ENV === 'production';
 const DEMO_AUTH_ENABLED = process.env.NODE_ENV !== 'production' && process.env.CLINAI_ENABLE_DEMO_AUTH === 'true';
 const PUBLIC_API_PATHS = new Set(['/api/public/feedback','/api/public/preview','/api/public/ai-assist','/api/public/ai-status','/api/public/ai-feedback','/api/public/test-dashboard','/api/public/test-patients','/api/public/test-modules','/api/public/test-intelligence','/api/public/test-session']);
-const PUBLIC_TEST_DATA_ENABLED = process.env.CLINAI_PUBLIC_TEST_DATA !== 'false';
+const PUBLIC_TEST_DATA_ENABLED = runtimeConfig.publicTestDataEnabled;
 const WRITE_ROLES = new Set(['admin','doctor','nurse','lab','pharmacist','reception','cashier','inventory','manager']);
 const READ_ONLY_ROLES = new Set(['viewer','analyst']);
 function actor(req:any){ return req.user?.sub || 'system'; }
 function org(req:any){ return req.user?.organizationId || null; }
-function canWrite(req:any){ return Boolean(req.user?.publicSynthetic) || WRITE_ROLES.has(String(req.user?.role || '').toLowerCase()); }
+function canWrite(req:any){ return !req.user?.publicSynthetic && WRITE_ROLES.has(String(req.user?.role || '').toLowerCase()); }
 function isPublicPath(path:string){ return PUBLIC_API_PATHS.has(path) || path.startsWith('/api/public/test-patients/') || path.startsWith('/api/public/test-modules/') || path.startsWith('/api/public/test-intelligence/') || path.startsWith('/api/public/test-phase45/'); }
 const AI_NON_MUTATING_PATHS = new Set(['/api/ai/assist','/api/ai/patient-intelligence','/api/ai/compute','/api/ai/analyze','/api/ai/research','/api/ai/document','/api/ai/management-brief','/api/ai/cohort','/api/ai/role-briefing','/api/ai/attention','/api/ai/translate','/api/ai/language/analyze','/api/ai/router','/api/ai/feedback']);
 function isClinicalMutation(req:any){
@@ -314,7 +351,7 @@ async function ensureRuntimeSchema(){
     CREATE INDEX IF NOT EXISTS pnc_contacts_patient_idx ON postnatal_contacts(patient_id, contact_date DESC);
   `);
 }
-await ensureRuntimeSchema();
+if (RUNTIME_SCHEMA_DDL_ENABLED) await ensureRuntimeSchema();
 async function ensurePhase3RuntimeSchema(){
   if(!pool) return;
   await pool.query(`
@@ -409,8 +446,8 @@ async function ensurePhase3RuntimeSchema(){
     CREATE INDEX IF NOT EXISTS medication_reconciliation_items_parent_idx ON medication_reconciliation_items(reconciliation_id,status,created_at DESC);
   `);
 }
-await ensurePhase3RuntimeSchema();
-if(pool){
+if (RUNTIME_SCHEMA_DDL_ENABLED) await ensurePhase3RuntimeSchema();
+if(RUNTIME_SCHEMA_DDL_ENABLED && pool){
   await pool.query(`ALTER TABLE notifications ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now()`);
   await pool.query(`CREATE INDEX IF NOT EXISTS notifications_patient_idx ON notifications(patient_id, created_at DESC)`);
   await pool.query(`CREATE TABLE IF NOT EXISTS surveillance_events (
@@ -493,14 +530,18 @@ async function ensureDemoTenant(){
 const demoTenant=DEMO_AUTH_ENABLED ? await ensureDemoTenant() : null;
 function dbOrganizationId(req:any){ return req.user?.organizationId || null; }
 function dbUserId(req:any){ return req.user?.sub && req.user.sub!=='system' ? req.user.sub : null; }
+function tenantRows(m:Mod, req:any):Row[]{ return rowsForOrganization<Row>(store[m]||[],org(req)); }
+function tenantFind(m:Mod, id:string, req:any):Row|undefined { return findForOrganization<Row>(store[m]||[],id,org(req)); }
+function tenantPatientRows(m:Mod, patientId:string, req:any):Row[]{ const hasPatient=Boolean(tenantFind('patients',patientId,req)); return rowsForPatientInOrganization<Row>(store[m]||[],patientId,org(req),hasPatient); }
+function tenantEvents(req:any):Row[]{ const organizationId=org(req); if(!organizationId) return []; return events.filter((event:Row)=>event.organizationId===organizationId || event.payload?.organizationId===organizationId); }
 async function dbAudit(client:any, req:any, action:string, entityType:string, entityId:string, metadata:Row={}){
   const organizationId=dbOrganizationId(req), actorId=dbUserId(req);
   if(!organizationId) return;
   await client.query('INSERT INTO audit_logs(organization_id,actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,$2,$3,$4,$5,$6)',[organizationId,actorId,action,entityType,entityId,JSON.stringify(metadata)]);
 }
-function add(m:Mod, data:Row, req:any){ const row={id:data.id||randomUUID(), organizationId:data.organizationId||org(req), createdAt:data.createdAt||now(), updatedAt:now(), ...data}; store[m].push(row); audit.push({id:randomUUID(),action:'CREATE',module:m,resourceId:row.id,actorId:actor(req),at:now()}); events.push({id:randomUUID(),type:`${m}.created`,payload:row,at:now()}); persist(); return row; }
-function patch(m:Mod,id:string,data:Row,req:any){ const row=store[m].find(x=>x.id===id && x.organizationId===req.user?.organizationId); if(!row) return null; Object.assign(row,data,{updatedAt:now()}); audit.push({id:randomUUID(),action:'UPDATE',module:m,resourceId:id,actorId:actor(req),at:now()}); events.push({id:randomUUID(),type:`${m}.updated`,payload:row,at:now()}); persist(); return row; }
-function remove(m:Mod,id:string,req:any){ const i=store[m].findIndex(x=>x.id===id && x.organizationId===req.user?.organizationId); if(i<0)return false; store[m].splice(i,1); audit.push({id:randomUUID(),action:'DELETE',module:m,resourceId:id,actorId:actor(req),at:now()}); persist(); return true; }
+function add(m:Mod, data:Row, req:any){ const organizationId=org(req); if(!organizationId) throw Object.assign(new Error('Organization context is required.'),{statusCode:403,code:'ORGANIZATION_CONTEXT_REQUIRED'}); const row={id:data.id||randomUUID(), createdAt:data.createdAt||now(), updatedAt:now(), ...data, organizationId}; store[m].push(row); audit.push({id:randomUUID(),organizationId,action:'CREATE',module:m,resourceId:row.id,actorId:actor(req),at:now()}); events.push({id:randomUUID(),organizationId,type:`${m}.created`,payload:row,at:now()}); persist(); return row; }
+function patch(m:Mod,id:string,data:Row,req:any){ const row=tenantFind(m,id,req); if(!row) return null; Object.assign(row,data,{organizationId:org(req),updatedAt:now()}); audit.push({id:randomUUID(),organizationId:org(req),action:'UPDATE',module:m,resourceId:id,actorId:actor(req),at:now()}); events.push({id:randomUUID(),organizationId:org(req),type:`${m}.updated`,payload:row,at:now()}); persist(); return row; }
+function remove(m:Mod,id:string,req:any){ const rows=store[m]||[]; const i=rows.findIndex(x=>x.id===id && x.organizationId===org(req)); if(i<0)return false; rows.splice(i,1); audit.push({id:randomUUID(),organizationId:org(req),action:'DELETE',module:m,resourceId:id,actorId:actor(req),at:now()}); persist(); return true; }
 
 const patient=z.object({firstName:z.string().trim().min(1,'First name is required'),middleName:z.string().trim().optional(),lastName:z.string().trim().min(1,'Last name is required'),dateOfBirth:z.string().optional(),sex:z.enum(['male','female','intersex','unknown']).optional(),phone:z.string().trim().optional(),email:z.string().email('Enter a valid email address').optional(),nationalId:z.string().trim().optional(),preferredLanguage:z.string().trim().optional(),address:z.union([z.string(),z.record(z.any())]).optional(),facilityId:z.string().uuid().optional()});
 const contact=z.object({type:z.string().min(1),value:z.string().min(1),isPrimary:z.boolean().default(false)});
@@ -525,24 +566,44 @@ function contractForRequest(req:any){
   const candidates=MODULE_CONTRACTS.filter(c=>c.backend?.createEndpoint && c.backend.createEndpoint!=='/api/contracts/modules/:module');
   return candidates.find(c=>path===c.backend.endpoint || path.startsWith(`${c.backend.endpoint}/`));
 }
-const RELATION_TABLES:Record<string,string>={'patients.id':'patients','encounters.id':'encounters','facilities.id':'facilities','appointments.id':'appointments','invoices.id':'invoices','surveillance_cases.id':'surveillance_cases','surveillance_events.id':'surveillance_events','public_health_investigations.id':'public_health_investigations','districts.id':'districts','sync_devices.id':'sync_devices','lab_samples.id':'lab_samples','medication_orders.id':'medication_orders'};
+const RELATION_TABLES:Record<string,string>={'patients.id':'patients','encounters.id':'encounters','facilities.id':'facilities','appointments.id':'appointments','invoices.id':'invoices','surveillance_cases.id':'surveillance_cases','surveillance_events.id':'surveillance_events','public_health_investigations.id':'public_health_investigations','districts.id':'districts','sync_devices.id':'sync_devices','lab_samples.id':'lab_samples','medication_orders.id':'medication_orders','admissions.id':'admissions','medications.id':'medications','referrals.id':'referrals','clinical_guidelines.id':'clinical_guidelines','users.id':'users'};
+const RELATION_TENANT_QUERIES:Record<string,string>={
+  'lab_samples.id':'SELECT ls.id FROM lab_samples ls JOIN clinical_orders co ON co.id=ls.order_id JOIN patients p ON p.id=co.patient_id WHERE ls.id=$1 AND p.organization_id=$2 LIMIT 1',
+  'medication_orders.id':'SELECT mo.id FROM medication_orders mo JOIN patients p ON p.id=mo.patient_id WHERE mo.id=$1 AND p.organization_id=$2 LIMIT 1',
+  'referrals.id':'SELECT r.id FROM referrals r JOIN patients p ON p.id=r.patient_id WHERE r.id=$1 AND p.organization_id=$2 LIMIT 1',
+  'clinical_guidelines.id':'SELECT id FROM clinical_guidelines WHERE id=$1 AND (organization_id=$2 OR organization_id IS NULL) LIMIT 1',
+  'users.id':'SELECT u.id FROM users u JOIN user_roles ur ON ur.user_id=u.id JOIN roles r ON r.id=ur.role_id WHERE u.id=$1 AND r.organization_id=$2 LIMIT 1'
+};
 async function validateContractRelationships(req:any, contract:any, body:any){
-  if(!pool || !contract?.relationships?.length) return;
+  if(!contract?.relationships?.length) return;
   const oid=dbOrganizationId(req); if(!oid) throw validationError('Organization context is required.');
+  const storeModules:Record<string,Mod>={'patients.id':'patients','encounters.id':'encounters','facilities.id':'facilities','appointments.id':'appointments','invoices.id':'billing','surveillance_cases.id':'surveillance','surveillance_events.id':'surveillance','public_health_investigations.id':'investigations','districts.id':'district-intelligence','sync_devices.id':'offline-sync','lab_samples.id':'laboratory','medication_orders.id':'pharmacy','admissions.id':'inpatient','medications.id':'pharmacy','referrals.id':'referrals','clinical_guidelines.id':'guidelines','users.id':'staff'};
   for(const rel of contract.relationships){
     const value=body?.[rel.field];
     if(value===undefined||value===null||value==='') continue;
     if(!isUuid(value)) throw validationError(`${rel.field} must be a valid identifier.`);
     const table=RELATION_TABLES[rel.target]; if(!table) throw validationError(`Unsupported relationship target for ${rel.field}.`);
-    const q=await pool.query(`SELECT id FROM ${table} WHERE id=$1 AND organization_id=$2 LIMIT 1`,[value,oid]);
+    if(!pool){
+      const moduleId=storeModules[rel.target];
+      if(!moduleId || !tenantFind(moduleId,String(value),req)) throw Object.assign(new Error(`${rel.field} does not belong to the authorized organization.`),{statusCode:409,code:'RELATIONSHIP_INVALID'});
+      continue;
+    }
+    const relationSql=RELATION_TENANT_QUERIES[rel.target] || `SELECT id FROM ${table} WHERE id=$1 AND organization_id=$2 LIMIT 1`;
+    const q=await pool.query(relationSql,[value,oid]);
     if(!q.rowCount) throw Object.assign(new Error(`${rel.field} does not belong to the authorized organization.`),{statusCode:409,code:'RELATIONSHIP_INVALID'});
   }
   const patientId=body?.patientId;
   const encounterId=body?.encounterId;
   if(patientId && encounterId){
-    const q=await pool.query('SELECT e.patient_id FROM encounters e WHERE e.id=$1 AND e.organization_id=$2',[encounterId,oid]);
-    if(!q.rowCount) throw Object.assign(new Error('Encounter not found in the authorized organization.'),{statusCode:409,code:'RELATIONSHIP_INVALID'});
-    if(q.rows[0].patient_id!==patientId) throw Object.assign(new Error('Patient and encounter do not belong to the same care record.'),{statusCode:409,code:'PATIENT_RELATIONSHIP_INVALID'});
+    if(!pool){
+      const encounter=tenantFind('encounters',String(encounterId),req);
+      if(!encounter) throw Object.assign(new Error('Encounter not found in the authorized organization.'),{statusCode:409,code:'RELATIONSHIP_INVALID'});
+      if(String(encounter.patientId)!==String(patientId)) throw Object.assign(new Error('Patient and encounter do not belong to the same care record.'),{statusCode:409,code:'PATIENT_RELATIONSHIP_INVALID'});
+    } else {
+      const q=await pool.query('SELECT e.patient_id FROM encounters e WHERE e.id=$1 AND e.organization_id=$2',[encounterId,oid]);
+      if(!q.rowCount) throw Object.assign(new Error('Encounter not found in the authorized organization.'),{statusCode:409,code:'RELATIONSHIP_INVALID'});
+      if(q.rows[0].patient_id!==patientId) throw Object.assign(new Error('Patient and encounter do not belong to the same care record.'),{statusCode:409,code:'PATIENT_RELATIONSHIP_INVALID'});
+    }
   }
 }
 
@@ -587,6 +648,7 @@ app.addHook('preHandler',async(req)=>{
   if(publicPath==='/'||publicPath==='/health'||publicPath==='/api/build-info'||isPublicPath(publicPath)) return;
   try{
     await req.jwtVerify();
+    if(!req.user?.organizationId) throw Object.assign(new Error('An organization-bound session is required.'),{statusCode:403,code:'ORGANIZATION_CONTEXT_REQUIRED'});
     if(isClinicalMutation(req)) requireAuthorizedWrite(req);
   }catch(e:any){
     const status = Number(e?.statusCode || 401);
@@ -609,6 +671,60 @@ app.addHook('preHandler', async(req:any,reply:any)=>{
   const partial=req.method==='PATCH';
   validateContractPayload(contract,body,partial);
   await validateContractRelationships(req,contract,body);
+});
+
+// Enforce tenant ownership for patient and related-resource identifiers across every DB-backed write route.
+// Route-specific checks remain in place where transactional or domain-specific behavior is required.
+app.addHook('preHandler', async(req:any)=>{
+  if(!pool || !['POST','PUT','PATCH'].includes(req.method)) return;
+  const path=String(req.raw.url||'/').split('?')[0];
+  if(path.startsWith('/api/auth/') || isPublicPath(path)) return;
+  const body=(req.body && typeof req.body==='object' && !Array.isArray(req.body)) ? req.body as Row : {};
+  const organizationId=dbOrganizationId(req);
+  if(!organizationId) throw Object.assign(new Error('Organization context is required.'),{statusCode:403,code:'ORGANIZATION_CONTEXT_REQUIRED'});
+  const uuidField=(key:string):string|null=>{
+    const value=body[key];
+    if(value===undefined||value===null||value==='') return null;
+    if(typeof value!=='string' || !isUuid(value)) throw validationError(`${key} must be a valid identifier.`);
+    return value;
+  };
+  if(body.organizationId!==undefined && body.organizationId!==null && String(body.organizationId)!==String(organizationId)) throw Object.assign(new Error('Organization cannot be changed by the request body.'),{statusCode:403,code:'ORGANIZATION_SCOPE_MISMATCH'});
+  const patientId=uuidField('patientId');
+  if(patientId){
+    const patient=await pool.query('SELECT id,is_test_data FROM patients WHERE id=$1 AND organization_id=$2 LIMIT 1',[patientId,organizationId]);
+    if(!patient.rowCount) throw Object.assign(new Error('Patient not found in the authorized organization.'),{statusCode:404,code:'PATIENT_RELATIONSHIP_INVALID'});
+    if(req.user?.publicSynthetic && !patient.rows[0].is_test_data) throw Object.assign(new Error('Public testing can only use synthetic TEST patients.'),{statusCode:403,code:'SYNTHETIC_DATA_ONLY'});
+  }
+  const encounterId=uuidField('encounterId');
+  if(encounterId){
+    const encounter=await pool.query('SELECT patient_id FROM encounters WHERE id=$1 AND organization_id=$2 LIMIT 1',[encounterId,organizationId]);
+    if(!encounter.rowCount) throw Object.assign(new Error('Encounter not found in the authorized organization.'),{statusCode:404,code:'ENCOUNTER_RELATIONSHIP_INVALID'});
+    if(patientId && String(encounter.rows[0].patient_id)!==patientId) throw Object.assign(new Error('Patient and encounter do not belong to the same care record.'),{statusCode:409,code:'PATIENT_RELATIONSHIP_INVALID'});
+  }
+  const appointmentId=uuidField('appointmentId');
+  if(appointmentId){
+    const appointment=await pool.query('SELECT patient_id FROM appointments WHERE id=$1 AND organization_id=$2 LIMIT 1',[appointmentId,organizationId]);
+    if(!appointment.rowCount) throw Object.assign(new Error('Appointment not found in the authorized organization.'),{statusCode:404,code:'APPOINTMENT_RELATIONSHIP_INVALID'});
+    if(patientId && String(appointment.rows[0].patient_id)!==patientId) throw Object.assign(new Error('Patient and appointment do not belong to the same care record.'),{statusCode:409,code:'PATIENT_RELATIONSHIP_INVALID'});
+  }
+  for(const key of ['facilityId','fromFacilityId','toFacilityId','destinationFacilityId'] ){
+    const facilityId=uuidField(key);
+    if(facilityId){
+      const facility=await pool.query('SELECT id FROM facilities WHERE id=$1 AND organization_id=$2 LIMIT 1',[facilityId,organizationId]);
+      if(!facility.rowCount) throw Object.assign(new Error(`${key} does not belong to the authorized organization.`),{statusCode:409,code:'FACILITY_RELATIONSHIP_INVALID'});
+    }
+  }
+  const districtId=uuidField('districtId');
+  if(districtId){
+    const district=await pool.query('SELECT id FROM districts WHERE id=$1 AND organization_id=$2 LIMIT 1',[districtId,organizationId]);
+    if(!district.rowCount) throw Object.assign(new Error('District does not belong to the authorized organization.'),{statusCode:409,code:'DISTRICT_RELATIONSHIP_INVALID'});
+  }
+  const invoiceId=uuidField('invoiceId');
+  if(invoiceId){
+    const invoice=await pool.query('SELECT patient_id FROM invoices WHERE id=$1 AND organization_id=$2 LIMIT 1',[invoiceId,organizationId]);
+    if(!invoice.rowCount) throw Object.assign(new Error('Invoice not found in the authorized organization.'),{statusCode:404,code:'INVOICE_RELATIONSHIP_INVALID'});
+    if(patientId && invoice.rows[0].patient_id && String(invoice.rows[0].patient_id)!==patientId) throw Object.assign(new Error('Patient and invoice do not belong to the same care record.'),{statusCode:409,code:'PATIENT_RELATIONSHIP_INVALID'});
+  }
 });
 
 app.addHook('preHandler', async(req:any,reply:any)=>{
@@ -832,7 +948,7 @@ app.get('/api/public/test-intelligence/:workspace',async(req:any,reply:any)=>{
 
 
 app.get('/api/dashboard',async(req:any)=>{
-  if(!pool){const count=(m:Mod)=>store[m].length;return {patients:count('patients'),appointments:count('appointments'),waiting:store.queue.filter(x=>['waiting','waiting-triage','waiting-doctor'].includes(x.status)).length,criticalLabs:store.laboratory.filter(x=>x.critical).length,openTasks:store.tasks.filter(x=>x.status==='open').length,unpaid:store.billing.filter(x=>x.status!=='paid').length};}
+  if(!pool){const count=(m:Mod)=>tenantRows(m,req).length;return {patients:count('patients'),appointments:count('appointments'),waiting:tenantRows('queue',req).filter(x=>['waiting','waiting-triage','waiting-doctor'].includes(x.status)).length,criticalLabs:tenantRows('laboratory',req).filter(x=>x.critical).length,openTasks:tenantRows('tasks',req).filter(x=>x.status==='open').length,unpaid:tenantRows('billing',req).filter(x=>x.status!=='paid').length};}
   const oid=dbOrganizationId(req);
   const [p,a,q,l,t,i]=await Promise.all([
     pool.query('SELECT count(*)::int n FROM patients WHERE organization_id=$1',[oid]),
@@ -845,12 +961,12 @@ app.get('/api/dashboard',async(req:any)=>{
   return {patients:p.rows[0].n,appointments:a.rows[0].n,waiting:q.rows[0].n,criticalLabs:l.rows[0].n,openTasks:t.rows[0].n,unpaid:i.rows[0].n};
 });
 app.get('/api/events',async(req:any)=>{
-  if(!pool) return events.slice(-500).reverse();
+  if(!pool) return tenantEvents(req).slice(-500).reverse();
   const r=await pool.query(`SELECT id,event_type AS "type",aggregate_type AS "aggregateType",aggregate_id AS "aggregateId",payload,status,attempts,available_at AS "availableAt",created_at AS "createdAt" FROM outbox_events WHERE organization_id=$1 ORDER BY created_at DESC LIMIT 500`,[dbOrganizationId(req)]);
   return r.rows;
 });
 app.get('/api/patients',async(req:any)=>{
-  if(!pool) return {data:store.patients.filter(x=>x.organizationId===org(req)),count:store.patients.filter(x=>x.organizationId===org(req)).length};
+  if(!pool) {const rows=tenantRows('patients',req); return {data:rows,count:rows.length};}
   const q=String(req.query?.q||'').trim(); const params:any[]=[dbOrganizationId(req)];
   let where='p.organization_id=$1';
   if(q){ params.push(`%${q}%`); where += ' AND (p.patient_number ILIKE $2 OR p.first_name ILIKE $2 OR p.last_name ILIKE $2 OR COALESCE(p.phone,\'\') ILIKE $2)'; }
@@ -863,13 +979,13 @@ app.get('/api/patients/:id',async(req:any,reply)=>{
   if(!r.rowCount) return reply.code(404).send({error:'Patient not found'}); return r.rows[0];
 });
 app.get('/api/appointments',async(req:any)=>{
-  if(!pool) return {data:store.appointments.filter(x=>x.organizationId===org(req)),count:store.appointments.length};
+  if(!pool) {const rows=tenantRows('appointments',req); return {data:rows,count:rows.length};}
   const params:any[]=[dbOrganizationId(req)]; let where='a.organization_id=$1';
   if(req.query?.patientId){params.push(String(req.query.patientId));where+=' AND a.patient_id=$2';}
   const x=await pool.query(`SELECT a.id,a.organization_id AS "organizationId",a.patient_id AS "patientId",a.provider_user_id AS "providerId",a.facility_id AS "facilityId",a.start_at AS "startAt",a.end_at AS "endAt",a.type,a.status,a.reason,a.created_at AS "createdAt" FROM appointments a WHERE ${where} ORDER BY a.start_at DESC LIMIT 200`,params); return {data:x.rows,count:x.rowCount};
 });
 app.get('/api/encounters',async(req:any)=>{
-  if(!pool) return {data:store.encounters.filter(x=>x.organizationId===org(req)),count:store.encounters.length};
+  if(!pool) {const rows=tenantRows('encounters',req); return {data:rows,count:rows.length};}
   const params:any[]=[dbOrganizationId(req)]; let where='e.organization_id=$1';
   if(req.query?.patientId){params.push(String(req.query.patientId));where+=' AND e.patient_id=$2';}
   const x=await pool.query(`SELECT e.id,e.organization_id AS "organizationId",e.patient_id AS "patientId",e.appointment_id AS "appointmentId",e.provider_user_id AS "providerId",e.facility_id AS "facilityId",e.type,e.status,e.started_at AS "startedAt",e.ended_at AS "endedAt" FROM encounters e WHERE ${where} ORDER BY e.started_at DESC LIMIT 200`,params); return {data:x.rows,count:x.rowCount};
@@ -878,17 +994,17 @@ app.post('/api/public/test-session',async(req:any,reply:any)=>{
   if(!pool)return reply.code(503).send({error:'The public clinical workspace is temporarily unavailable.'});
   if(!PUBLIC_TEST_DATA_ENABLED)return reply.code(403).send({error:'Public test data is currently disabled.'});
   try{
-    const orgQ=await pool.query(`SELECT p.organization_id AS "organizationId",COUNT(*)::int AS total,COUNT(*) FILTER (WHERE p.is_test_data=true)::int AS synthetic FROM patients p WHERE p.is_test_data=true AND p.email ILIKE '%@clinaidemoemail.com' GROUP BY p.organization_id ORDER BY COUNT(*) DESC LIMIT 1`);
+    const orgQ=await pool.query(`SELECT p.organization_id AS "organizationId",COUNT(*)::int AS total,COUNT(*) FILTER (WHERE p.is_test_data=true AND p.email ILIKE '%@clinaidemoemail.com')::int AS synthetic FROM patients p WHERE p.organization_id IS NOT NULL GROUP BY p.organization_id HAVING COUNT(*) FILTER (WHERE p.is_test_data=true AND p.email ILIKE '%@clinaidemoemail.com') > 0 ORDER BY COUNT(*) FILTER (WHERE p.is_test_data=true AND p.email ILIKE '%@clinaidemoemail.com') DESC LIMIT 1`);
     if(!orgQ.rowCount || Number(orgQ.rows[0].total)!==Number(orgQ.rows[0].synthetic) || Number(orgQ.rows[0].synthetic)<1) return reply.code(503).send({error:'A dedicated synthetic test workspace is not available.'});
     const organizationId=orgQ.rows[0].organizationId;
-    const token=await app.jwt.sign({sub:'system',organizationId,role:'admin',publicSynthetic:true}, {expiresIn:'2h'});
+    const token=await app.jwt.sign({sub:'system',organizationId,role:'viewer',publicSynthetic:true}, {expiresIn:'2h'});
     return {data:{token,expiresInSeconds:7200,synthetic:true}};
   }catch{ return reply.code(503).send({error:'The public synthetic workspace could not be prepared.'}); }
 });
 
 app.post('/api/patients',async(req:any,reply)=>{
   const p=patient.parse(req.body);
-  if(!pool) return reply.code(201).send(add('patients',{...p,patientNumber:`CLN-${String(store.patients.length+1).padStart(6,'0')}`,status:'active'},req));
+  if(!pool) return reply.code(201).send(add('patients',{...p,patientNumber:`CLN-${String(tenantRows('patients',req).length+1).padStart(6,'0')}`,status:'active'},req));
   const client=await pool.connect();
   try{ await client.query('BEGIN');
     const duplicate=await client.query('SELECT id,patient_number AS "patientNumber",first_name AS "firstName",last_name AS "lastName",phone FROM patients WHERE organization_id=$1 AND phone IS NOT NULL AND phone=$2 AND lower(last_name)=lower($3) LIMIT 1',[dbOrganizationId(req),p.phone||null,p.lastName]);
@@ -899,12 +1015,12 @@ app.post('/api/patients',async(req:any,reply)=>{
     await dbAudit(client,req,'CREATE','patient',r.rows[0].id,{patientNumber:number}); await queueEvent(client,req,CLINICAL_EVENT_TYPES.PATIENT_REGISTERED,{patientId:r.rows[0].id,patientNumber:number}); await client.query('COMMIT'); return reply.code(201).send(r.rows[0]);
   }catch(e:any){ await client.query('ROLLBACK'); if(e.code==='23505') return reply.code(409).send({error:'Patient number already exists'}); throw e; } finally{client.release();}
 });
-app.post('/api/patients/:id/contacts',async(req:any,reply)=>{ const c=contact.parse(req.body); if(!pool)return reply.code(201).send(add('patient-contacts',{patientId:req.params.id,...c},req)); const client=await pool.connect(); try{await client.query('BEGIN'); const ok=await client.query('SELECT id FROM patients WHERE id=$1 AND organization_id=$2',[req.params.id,dbOrganizationId(req)]); if(!ok.rowCount){await client.query('ROLLBACK');return reply.code(404).send({error:'Patient not found'});} if(c.isPrimary) await client.query('UPDATE patient_contacts SET is_primary=false WHERE patient_id=$1',[req.params.id]); const r=await client.query(`INSERT INTO patient_contacts(patient_id,type,value,is_primary) VALUES($1,$2,$3,$4) RETURNING id,type,value,is_primary AS "isPrimary"`,[req.params.id,c.type,c.value,c.isPrimary]); await dbAudit(client,req,'CREATE','patient_contact',r.rows[0].id,{patientId:req.params.id}); await client.query('COMMIT'); return reply.code(201).send(r.rows[0]); }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()} });
-app.post('/api/patients/:id/emergency-contacts',async(req:any,reply)=>{ const c=emergencyContact.parse(req.body); if(!pool)return reply.code(201).send(add('emergency-contacts',{patientId:req.params.id,...c},req)); const client=await pool.connect(); try{await client.query('BEGIN'); const ok=await client.query('SELECT id FROM patients WHERE id=$1 AND organization_id=$2',[req.params.id,dbOrganizationId(req)]); if(!ok.rowCount){await client.query('ROLLBACK');return reply.code(404).send({error:'Patient not found'});} const r=await client.query(`INSERT INTO emergency_contacts(patient_id,name,relationship,phone,address) VALUES($1,$2,$3,$4,$5) RETURNING id,name,relationship,phone,address`,[req.params.id,c.name,c.relationship||null,c.phone||null,c.address||null]); await dbAudit(client,req,'CREATE','emergency_contact',r.rows[0].id,{patientId:req.params.id}); await client.query('COMMIT'); return reply.code(201).send(r.rows[0]); }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()} });
-app.post('/api/patients/:id/allergies',async(req:any,reply)=>{ const a=allergy.parse(req.body); if(!pool)return reply.code(201).send(add('allergies',{patientId:req.params.id,...a},req)); const client=await pool.connect(); try{await client.query('BEGIN'); const ok=await client.query('SELECT id FROM patients WHERE id=$1 AND organization_id=$2',[req.params.id,dbOrganizationId(req)]); if(!ok.rowCount){await client.query('ROLLBACK');return reply.code(404).send({error:'Patient not found'});} const r=await client.query(`INSERT INTO allergies(patient_id,substance,reaction,severity,status) VALUES($1,$2,$3,$4,$5) RETURNING id,substance,reaction,severity,status`,[req.params.id,a.substance,a.reaction||null,a.severity||null,a.status]); await dbAudit(client,req,'CREATE','allergy',r.rows[0].id,{patientId:req.params.id,substance:a.substance}); await queueEvent(client,req,CLINICAL_EVENT_TYPES.ALLERGY_RECORDED,{allergyId:r.rows[0].id,patientId:req.params.id,substance:a.substance,severity:a.severity||null,status:a.status}); await client.query('COMMIT'); return reply.code(201).send(r.rows[0]); }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()} });
+app.post('/api/patients/:id/contacts',async(req:any,reply)=>{ const c=contact.parse(req.body); if(!pool){if(!tenantFind('patients',req.params.id,req)) return reply.code(404).send({error:'Patient not found'}); return reply.code(201).send(add('patient-contacts',{patientId:req.params.id,...c},req));} const client=await pool.connect(); try{await client.query('BEGIN'); const ok=await client.query('SELECT id FROM patients WHERE id=$1 AND organization_id=$2',[req.params.id,dbOrganizationId(req)]); if(!ok.rowCount){await client.query('ROLLBACK');return reply.code(404).send({error:'Patient not found'});} if(c.isPrimary) await client.query('UPDATE patient_contacts SET is_primary=false WHERE patient_id=$1',[req.params.id]); const r=await client.query(`INSERT INTO patient_contacts(patient_id,type,value,is_primary) VALUES($1,$2,$3,$4) RETURNING id,type,value,is_primary AS "isPrimary"`,[req.params.id,c.type,c.value,c.isPrimary]); await dbAudit(client,req,'CREATE','patient_contact',r.rows[0].id,{patientId:req.params.id}); await client.query('COMMIT'); return reply.code(201).send(r.rows[0]); }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()} });
+app.post('/api/patients/:id/emergency-contacts',async(req:any,reply)=>{ const c=emergencyContact.parse(req.body); if(!pool){if(!tenantFind('patients',req.params.id,req)) return reply.code(404).send({error:'Patient not found'}); return reply.code(201).send(add('emergency-contacts',{patientId:req.params.id,...c},req));} const client=await pool.connect(); try{await client.query('BEGIN'); const ok=await client.query('SELECT id FROM patients WHERE id=$1 AND organization_id=$2',[req.params.id,dbOrganizationId(req)]); if(!ok.rowCount){await client.query('ROLLBACK');return reply.code(404).send({error:'Patient not found'});} const r=await client.query(`INSERT INTO emergency_contacts(patient_id,name,relationship,phone,address) VALUES($1,$2,$3,$4,$5) RETURNING id,name,relationship,phone,address`,[req.params.id,c.name,c.relationship||null,c.phone||null,c.address||null]); await dbAudit(client,req,'CREATE','emergency_contact',r.rows[0].id,{patientId:req.params.id}); await client.query('COMMIT'); return reply.code(201).send(r.rows[0]); }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()} });
+app.post('/api/patients/:id/allergies',async(req:any,reply)=>{ const a=allergy.parse(req.body); if(!pool){if(!tenantFind('patients',req.params.id,req)) return reply.code(404).send({error:'Patient not found'}); return reply.code(201).send(add('allergies',{patientId:req.params.id,...a},req));} const client=await pool.connect(); try{await client.query('BEGIN'); const ok=await client.query('SELECT id FROM patients WHERE id=$1 AND organization_id=$2',[req.params.id,dbOrganizationId(req)]); if(!ok.rowCount){await client.query('ROLLBACK');return reply.code(404).send({error:'Patient not found'});} const r=await client.query(`INSERT INTO allergies(patient_id,substance,reaction,severity,status) VALUES($1,$2,$3,$4,$5) RETURNING id,substance,reaction,severity,status`,[req.params.id,a.substance,a.reaction||null,a.severity||null,a.status]); await dbAudit(client,req,'CREATE','allergy',r.rows[0].id,{patientId:req.params.id,substance:a.substance}); await queueEvent(client,req,CLINICAL_EVENT_TYPES.ALLERGY_RECORDED,{allergyId:r.rows[0].id,patientId:req.params.id,substance:a.substance,severity:a.severity||null,status:a.status}); await client.query('COMMIT'); return reply.code(201).send(r.rows[0]); }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()} });
 app.post('/api/appointments',async(req:any,reply)=>{
   const a=appointment.parse(req.body);
-  if(!pool) return reply.code(201).send(add('appointments',a,req));
+  if(!pool){ if(!tenantFind('patients',a.patientId,req)) return reply.code(404).send({error:'Patient not found'}); return reply.code(201).send(add('appointments',a,req)); }
   const client=await pool.connect(); try{ await client.query('BEGIN');
     const pc=await client.query('SELECT id FROM patients WHERE id=$1 AND organization_id=$2',[a.patientId,dbOrganizationId(req)]);
     if(!pc.rowCount){await client.query('ROLLBACK');return reply.code(400).send({error:'Patient not found'});}
@@ -915,7 +1031,7 @@ app.post('/api/appointments',async(req:any,reply)=>{
 });
 app.post('/api/encounters',async(req:any,reply)=>{
   const e=encounter.parse(req.body);
-  if(!pool) return reply.code(201).send(add('encounters',e,req));
+  if(!pool){ if(!tenantFind('patients',e.patientId,req)) return reply.code(404).send({error:'Patient not found'}); if(e.appointmentId&&!tenantFind('appointments',e.appointmentId,req)) return reply.code(404).send({error:'Appointment not found'}); return reply.code(201).send(add('encounters',e,req)); }
   const client=await pool.connect(); try{await client.query('BEGIN');
     const r=await client.query(`INSERT INTO encounters(organization_id,patient_id,appointment_id,provider_user_id,facility_id,type,status) SELECT $1,$2,$3,$4,$5,$6,$7 WHERE EXISTS(SELECT 1 FROM patients WHERE id=$2 AND organization_id=$1) RETURNING id,organization_id AS "organizationId",patient_id AS "patientId",appointment_id AS "appointmentId",provider_user_id AS "providerId",facility_id AS "facilityId",type,status,started_at AS "startedAt"`,[dbOrganizationId(req),e.patientId,e.appointmentId||null,e.providerId||null,e.facilityId||null,e.type,e.status]);
     if(!r.rowCount){await client.query('ROLLBACK');return reply.code(400).send({error:'Patient not found'});}
@@ -924,7 +1040,7 @@ app.post('/api/encounters',async(req:any,reply)=>{
 });
 app.post('/api/triage',async(req:any,reply)=>{
   const t=triage.parse(req.body);
-  if(!pool){const x=add('triage',{...t,status:'completed',completedAt:now()},req);add('queue',{patientId:t.patientId,encounterId:t.encounterId,status:t.acuity==='emergency'?'emergency':'waiting-doctor',priority:t.acuity},req);return reply.code(201).send(x);}
+  if(!pool){if(!tenantFind('patients',t.patientId,req)) return reply.code(404).send({error:'Patient not found'}); const x=add('triage',{...t,status:'completed',completedAt:now()},req);add('queue',{patientId:t.patientId,encounterId:t.encounterId,status:t.acuity==='emergency'?'emergency':'waiting-doctor',priority:t.acuity},req);return reply.code(201).send(x);}
   const client=await pool.connect(); try{await client.query('BEGIN');
     const oid=dbOrganizationId(req);
     const p=await client.query('SELECT id FROM patients WHERE id=$1 AND organization_id=$2',[t.patientId,oid]); if(!p.rowCount){await client.query('ROLLBACK');return reply.code(404).send({error:'Patient not found'});}
@@ -937,10 +1053,10 @@ app.post('/api/triage',async(req:any,reply)=>{
     await dbAudit(client,req,'CREATE','triage_assessment',r.rows[0].id,{patientId:t.patientId,acuity:t.acuity,queueEntryId:qe.rows[0].id,compatibilityRoute:true}); await queueEvent(client,req,'triage.assessment.recorded',{triageId:r.rows[0].id,patientId:t.patientId,encounterId:t.encounterId||null,acuity:t.acuity,status:'completed',queueEntryId:qe.rows[0].id}); await client.query('COMMIT'); return reply.code(201).send({id:r.rows[0].id,...r.rows[0],queueEntryId:qe.rows[0].id});
   }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
 });
-app.get('/api/orders',async(req:any)=>{if(!pool)return {data:store.orders||[],count:(store.orders||[]).length};const params:any[]=[dbOrganizationId(req)];let where='p.organization_id=$1';if(req.query?.patientId){params.push(String(req.query.patientId));where+=' AND o.patient_id=$2';}const r=await pool.query(`SELECT o.id,o.patient_id AS "patientId",o.encounter_id AS "encounterId",o.order_type AS category,o.priority,o.status,o.details,o.created_at AS "createdAt" FROM clinical_orders o JOIN patients p ON p.id=o.patient_id WHERE ${where} ORDER BY o.created_at DESC LIMIT 500`,params);return {data:r.rows,count:r.rowCount};});
+app.get('/api/orders',async(req:any)=>{if(!pool) {const rows=tenantRows('orders',req); return {data:rows,count:rows.length};}const params:any[]=[dbOrganizationId(req)];let where='p.organization_id=$1';if(req.query?.patientId){params.push(String(req.query.patientId));where+=' AND o.patient_id=$2';}const r=await pool.query(`SELECT o.id,o.patient_id AS "patientId",o.encounter_id AS "encounterId",o.order_type AS category,o.priority,o.status,o.details,o.created_at AS "createdAt" FROM clinical_orders o JOIN patients p ON p.id=o.patient_id WHERE ${where} ORDER BY o.created_at DESC LIMIT 500`,params);return {data:r.rows,count:r.rowCount};});
 app.post('/api/orders',async(req:any,reply)=>{
   const o=order.parse(req.body);
-  if(!pool){const x=add('orders',{...o,status:'ordered',orderedAt:now()},req);if(o.category==='laboratory')add('laboratory',{orderId:x.id,patientId:o.patientId,status:'ordered',priority:o.priority,code:o.code,description:o.description},req);if(o.category==='imaging')add('imaging',{orderId:x.id,patientId:o.patientId,status:'ordered',priority:o.priority,code:o.code,description:o.description},req);if(o.category==='medication')add('pharmacy',{orderId:x.id,patientId:o.patientId,status:'prescribed',priority:o.priority,medicationCode:o.code,description:o.description},req);if(o.category==='procedure')add('procedures',{orderId:x.id,patientId:o.patientId,status:'ordered',code:o.code,description:o.description},req);return reply.code(201).send(x);}
+  if(!pool){if(!tenantFind('patients',o.patientId,req)) return reply.code(404).send({error:'Patient not found'}); if(o.encounterId&&!tenantFind('encounters',o.encounterId,req)) return reply.code(404).send({error:'Encounter not found'}); const x=add('orders',{...o,status:'ordered',orderedAt:now()},req);if(o.category==='laboratory')add('laboratory',{orderId:x.id,patientId:o.patientId,status:'ordered',priority:o.priority,code:o.code,description:o.description},req);if(o.category==='imaging')add('imaging',{orderId:x.id,patientId:o.patientId,status:'ordered',priority:o.priority,code:o.code,description:o.description},req);if(o.category==='medication')add('pharmacy',{orderId:x.id,patientId:o.patientId,status:'prescribed',priority:o.priority,medicationCode:o.code,description:o.description},req);if(o.category==='procedure')add('procedures',{orderId:x.id,patientId:o.patientId,status:'ordered',code:o.code,description:o.description},req);return reply.code(201).send(x);}
   const client=await pool.connect();try{await client.query('BEGIN');
     const p=await client.query('SELECT id FROM patients WHERE id=$1 AND organization_id=$2',[o.patientId,dbOrganizationId(req)]);if(!p.rowCount){await client.query('ROLLBACK');return reply.code(404).send({error:'Patient not found'});}
     const r=await client.query(`INSERT INTO clinical_orders(patient_id,encounter_id,ordered_by,order_type,priority,status,details) VALUES($1,$2,$3,$4,$5,'ordered',$6) RETURNING id,patient_id AS "patientId",encounter_id AS "encounterId",order_type AS category,priority,status,details,created_at AS "createdAt"`,[o.patientId,o.encounterId||null,dbUserId(req),o.category,o.priority,JSON.stringify({code:o.code,description:o.description,...(o.details||{})})]);
@@ -965,22 +1081,22 @@ app.post('/api/orders',async(req:any,reply)=>{
 
 
 app.get('/api/laboratory',async(req:any)=>{
- if(!pool)return {data:store.laboratory||[],count:(store.laboratory||[]).length};
+ if(!pool) {const rows=tenantRows('laboratory',req); return {data:rows,count:rows.length};}
  const r=await pool.query(`SELECT ls.id,co.patient_id AS "patientId",co.encounter_id AS "encounterId",co.details->>'code' AS code,co.details->>'description' AS description,co.priority,ls.barcode,ls.specimen_type AS "specimenType",ls.status,ls.collected_at AS "collectedAt",ls.received_at AS "receivedAt",ls.processed_at AS "processedAt",lr.id AS "resultId",lr.value_numeric AS "valueNumeric",lr.value_text AS "valueText",lr.unit,lr.abnormal_flag AS "abnormalFlag",lr.critical,lr.status AS "resultStatus" FROM lab_samples ls JOIN clinical_orders co ON co.id=ls.order_id JOIN patients p ON p.id=co.patient_id LEFT JOIN lab_results lr ON lr.sample_id=ls.id WHERE p.organization_id=$1 ORDER BY ls.id DESC LIMIT 500`,[dbOrganizationId(req)]); return {data:r.rows,count:r.rowCount};
 });
 app.get('/api/imaging',async(req:any)=>{
- if(!pool)return {data:store.imaging||[],count:(store.imaging||[]).length};
+ if(!pool) {const rows=tenantRows('imaging',req); return {data:rows,count:rows.length};}
  const r=await pool.query(`SELECT id,patient_id AS "patientId",encounter_id AS "encounterId",order_id AS "orderId",study_code AS "studyCode",study_name AS "studyName",modality,body_site AS "bodySite",priority,status,scheduled_at AS "scheduledAt",performed_at AS "performedAt",report,critical,report_verified_at AS "reportVerifiedAt",report_released_at AS "reportReleasedAt",created_at AS "createdAt" FROM imaging_studies WHERE organization_id=$1 ORDER BY created_at DESC LIMIT 500`,[dbOrganizationId(req)]); return {data:r.rows,count:r.rowCount};
 });
 app.get('/api/queue',async(req:any)=>{
-  if(!pool) return {data:store.queue.filter(x=>x.organizationId===org(req)).sort((a,b)=>String(a.createdAt).localeCompare(String(b.createdAt))),count:store.queue.length};
+  if(!pool) {const rows=tenantRows('queue',req).sort((a,b)=>String(a.createdAt).localeCompare(String(b.createdAt))); return {data:rows,count:rows.length};}
   const oid=dbOrganizationId(req);
   const r=await pool.query(`SELECT qe.id, q.code AS "queueCode", q.name AS "queueName", qe.patient_id AS "patientId", qe.appointment_id AS "appointmentId", qe.priority, qe.status, qe.joined_at AS "joinedAt", qe.called_at AS "calledAt", qe.completed_at AS "completedAt" FROM queue_entries qe JOIN queues q ON q.id=qe.queue_id WHERE q.organization_id=$1 ORDER BY qe.joined_at ASC LIMIT 500`,[oid]);
   return {data:r.rows,count:r.rowCount};
 });
 app.post('/api/queue',async(req:any,reply)=>{
   const b=z.object({patientId:z.string().uuid(),appointmentId:z.string().uuid().optional(),facilityId:z.string().uuid().optional(),priority:z.enum(['normal','routine','urgent','emergency','stat']).default('normal'),status:z.string().default('waiting')}).parse(req.body);
-  if(!pool)return reply.code(201).send(add('queue',b,req));
+  if(!pool){if(!tenantFind('patients',b.patientId,req)) return reply.code(404).send({error:'Patient not found'}); if(b.appointmentId&&!tenantFind('appointments',b.appointmentId,req)) return reply.code(404).send({error:'Appointment not found'}); return reply.code(201).send(add('queue',b,req));}
   const client=await pool.connect(); try{await client.query('BEGIN');
     const patient=await client.query('SELECT id FROM patients WHERE id=$1 AND organization_id=$2',[b.patientId,dbOrganizationId(req)]);
     if(!patient.rowCount){await client.query('ROLLBACK');return reply.code(404).send({error:'Patient not found'});}
@@ -1022,7 +1138,7 @@ function domainToApi(row:any,spec:any){
   return out;
 }
 async function validateDomainPatient(req:any,patientId:string){
-  if(!pool)return;
+  if(!pool){const patientRow=tenantFind('patients',patientId,req);if(!patientRow)throw Object.assign(new Error('Patient does not belong to the authorized organization.'),{statusCode:409,code:'PATIENT_RELATIONSHIP_INVALID'});if(req.user?.publicSynthetic && !patientRow.isTestData)throw Object.assign(new Error('Public testing can only use synthetic TEST patients.'),{statusCode:403,code:'SYNTHETIC_DATA_ONLY'});return;}
   const q=await pool.query(`SELECT id,is_test_data FROM patients WHERE id=$1 AND organization_id=$2 LIMIT 1`,[patientId,dbOrganizationId(req)]);
   if(!q.rowCount)throw Object.assign(new Error('Patient does not belong to the authorized organization.'),{statusCode:409,code:'PATIENT_RELATIONSHIP_INVALID'});
   if(req.user?.publicSynthetic && !q.rows[0].is_test_data)throw Object.assign(new Error('Public testing can only use synthetic TEST patients.'),{statusCode:403,code:'SYNTHETIC_DATA_ONLY'});
@@ -1031,7 +1147,7 @@ async function authoritativeModuleRows(req:any,reply:any){
   const moduleId=String(req.params.module),spec=domainSpec(moduleId);
   if(!spec)return reply.code(404).send({error:'This clinical workspace is not available.'});
   const oid=dbOrganizationId(req); if(!oid)return reply.code(401).send({error:'Organization context is required'});
-  if(!pool)return {data:(store[moduleId]||[]).filter(x=>x.organizationId===oid),count:(store[moduleId]||[]).length,source:'store',module:moduleId};
+  if(!pool){const rows=tenantRows(moduleId,req);return {data:rows,count:rows.length,source:'store',module:moduleId};}
   const columnRows=await pool.query(`SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name=$1`,[spec.table]);
   const availableColumns=new Set(columnRows.rows.map((x:any)=>String(x.column_name)));
   const hasOrg=availableColumns.has('organization_id');
@@ -1066,9 +1182,15 @@ async function authoritativeModuleCreate(req:any,reply:any){
     if(patientKey && body[patientKey])await validateDomainPatient(req,String(body[patientKey]));
   }
   if(body.encounterId){
-    const encounter=await pool?.query(`SELECT patient_id FROM encounters WHERE id=$1 AND organization_id=$2 LIMIT 1`,[String(body.encounterId),dbOrganizationId(req)]);
-    if(!encounter?.rowCount)throw Object.assign(new Error('Encounter does not belong to the authorized organization.'),{statusCode:409,code:'ENCOUNTER_RELATIONSHIP_INVALID'});
-    if(body.patientId && encounter.rows[0].patient_id!==String(body.patientId))throw Object.assign(new Error('Patient and encounter do not belong to the same care record.'),{statusCode:409,code:'PATIENT_RELATIONSHIP_INVALID'});
+    if(!pool){
+      const encounter=tenantFind('encounters',String(body.encounterId),req);
+      if(!encounter)throw Object.assign(new Error('Encounter does not belong to the authorized organization.'),{statusCode:409,code:'ENCOUNTER_RELATIONSHIP_INVALID'});
+      if(body.patientId && String(encounter.patientId)!==String(body.patientId))throw Object.assign(new Error('Patient and encounter do not belong to the same care record.'),{statusCode:409,code:'PATIENT_RELATIONSHIP_INVALID'});
+    } else {
+      const encounter=await pool.query(`SELECT patient_id FROM encounters WHERE id=$1 AND organization_id=$2 LIMIT 1`,[String(body.encounterId),dbOrganizationId(req)]);
+      if(!encounter.rowCount)throw Object.assign(new Error('Encounter does not belong to the authorized organization.'),{statusCode:409,code:'ENCOUNTER_RELATIONSHIP_INVALID'});
+      if(body.patientId && encounter.rows[0].patient_id!==String(body.patientId))throw Object.assign(new Error('Patient and encounter do not belong to the same care record.'),{statusCode:409,code:'PATIENT_RELATIONSHIP_INVALID'});
+    }
   }
   if(!columns.length)throw validationError('At least one meaningful field is required. Empty records are not allowed.');
   if(!pool){const row=add(moduleId,{...body,status:body.status||'active'},req);return reply.code(201).send({...row,source:'store'});}
@@ -1100,7 +1222,7 @@ async function contractModuleRows(req:any, reply:any){
   if(!contract)return reply.code(404).send({error:'Module contract not found'});
   const organizationId=dbOrganizationId(req);
   if(!organizationId)return reply.code(401).send({error:'Organization context is required'});
-  if(!pool)return {data:(store[moduleId]||[]).filter(x=>x.organizationId===organizationId).slice(-500).reverse(),count:(store[moduleId]||[]).filter(x=>x.organizationId===organizationId).length,contractId:contract.id};
+  if(!pool){const rows=tenantRows(moduleId,req); return {data:rows.slice(-500).reverse(),count:rows.length,contractId:contract.id};}
   const r=await pool.query(`SELECT id,organization_id AS "organizationId",module,status,payload,created_by AS "createdBy",created_at AS "createdAt",updated_at AS "updatedAt" FROM module_records WHERE organization_id=$1 AND module=$2 AND COALESCE(payload->>'coverageVersion','') <> '025' AND COALESCE(payload->>'recordPurpose','') <> 'connected synthetic testing' ORDER BY created_at DESC LIMIT 500`,[organizationId,moduleId]);
   return {data:r.rows.map((x:any)=>({id:x.id,organizationId:x.organizationId,module:x.module,status:x.status,...x.payload,createdBy:x.createdBy,createdAt:x.createdAt,updatedAt:x.updatedAt})),count:r.rowCount,contractId:contract.id};
 }
@@ -1178,7 +1300,7 @@ app.post('/api/workflows/:name',async(req:any,reply)=>{
 
 // --- Production-oriented workflow helpers ---
 app.get('/api/patients/:id/360',async(req:any,reply)=>{
-  if(!pool) { const p=store.patients.find(x=>x.id===req.params.id&&x.organizationId===org(req)); if(!p)return reply.code(404).send({error:'Patient not found'}); const related=(m:Mod)=>store[m].filter(x=>x.patientId===p.id).sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt))); return {patient:p,contacts:store['patient-contacts'].filter(x=>x.patientId===p.id),emergencyContacts:store['emergency-contacts'].filter(x=>x.patientId===p.id),allergies:store.allergies.filter(x=>x.patientId===p.id),timeline:[...related('encounters'),...related('orders'),...related('triage'),...related('laboratory'),...related('pharmacy'),...related('billing'),...related('payments'),...related('referrals'),...related('follow-up')].sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt))),alerts:store.notifications.filter(x=>x.patientId===p.id&&x.status!=='resolved')}; }
+  if(!pool) { const p=tenantFind('patients',req.params.id,req); if(!p)return reply.code(404).send({error:'Patient not found'}); const related=(m:Mod)=>tenantPatientRows(m,p.id,req).sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt))); return {patient:p,contacts:related('patient-contacts'),emergencyContacts:related('emergency-contacts'),allergies:related('allergies'),timeline:[...related('encounters'),...related('orders'),...related('triage'),...related('laboratory'),...related('pharmacy'),...related('billing'),...related('payments'),...related('referrals'),...related('follow-up')].sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt))),alerts:related('notifications').filter(x=>x.status!=='resolved')}; }
   const patientQ=await pool.query(`SELECT p.id,p.organization_id AS "organizationId",p.facility_id AS "facilityId",p.patient_number AS "patientNumber",p.first_name AS "firstName",p.middle_name AS "middleName",p.last_name AS "lastName",p.date_of_birth AS "dateOfBirth",p.sex,p.phone,p.email,p.address,p.national_identifier AS "nationalId",p.preferred_language AS "preferredLanguage",p.status,p.created_at AS "createdAt",p.updated_at AS "updatedAt" FROM patients p WHERE p.id=$1 AND p.organization_id=$2`,[req.params.id,dbOrganizationId(req)]);
   if(!patientQ.rowCount)return reply.code(404).send({error:'Patient not found'}); const id=req.params.id;
   const [contacts,emergency,allergies,appointments,encounters,orders,diagnoses,observations,notes,medications,notifications,admissions,immunizations,chronicCare,telemedicine,remoteMonitoring,carePlans,referrals,followUp,careTasks,clinicalAlerts,invoices,claims,policies,payments,financeReconciliation]=await Promise.all([
@@ -1211,7 +1333,7 @@ app.get('/api/patients/:id/360',async(req:any,reply)=>{
   ]);
   return {patient:patientQ.rows[0],contacts:contacts.rows,emergencyContacts:emergency.rows,allergies:allergies.rows,appointments:appointments.rows,encounters:encounters.rows,orders:orders.rows,diagnoses:diagnoses.rows,observations:observations.rows,clinicalNotes:notes.rows,medications:medications.rows,notifications:notifications.rows,admissions:admissions.rows,immunizations:immunizations.rows,chronicCare:chronicCare.rows,telemedicine:telemedicine.rows,remoteMonitoring:remoteMonitoring.rows,carePlans:carePlans.rows,referrals:referrals.rows,followUp:followUp.rows,careTasks:careTasks.rows,clinicalAlerts:clinicalAlerts.rows,invoices:invoices.rows,claims:claims.rows,insurancePolicies:policies.rows,payments:payments.rows,financeReconciliation:financeReconciliation.rows};
 });
-app.post('/api/queue/:id/transition',async(req:any,reply)=>{const next=String(req.body?.status||'');const allowed=['waiting','called','in-service','completed','cancelled','no-show','waiting-triage','waiting-doctor','emergency'];if(!allowed.includes(next))return reply.code(400).send({error:'Invalid queue status'});if(!pool){const q=store.queue.find(x=>x.id===req.params.id&&x.organizationId===org(req));if(!q)return reply.code(404).send({error:'Queue entry not found'});const from=q.status;const updated=patch('queue',q.id,{status:next,calledAt:next==='called'?now():q.calledAt,completedAt:next==='completed'?now():q.completedAt},req);events.push({id:randomUUID(),type:'queue.transitioned',from,to:next,resourceId:q.id,at:now()});persist();return updated;}const r=await pool.query(`UPDATE queue_entries qe SET status=$1,called_at=CASE WHEN $1='called' THEN now() ELSE qe.called_at END,completed_at=CASE WHEN $1='completed' THEN now() ELSE qe.completed_at END FROM queues q WHERE qe.id=$2 AND qe.queue_id=q.id AND q.organization_id=$3 RETURNING qe.id,qe.patient_id AS "patientId",qe.status,qe.priority,qe.joined_at AS "joinedAt",qe.called_at AS "calledAt",qe.completed_at AS "completedAt"`,[next,req.params.id,dbOrganizationId(req)]);if(!r.rowCount)return reply.code(404).send({error:'Queue entry not found'});await pool.query('INSERT INTO audit_logs(organization_id,actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,$2,$3,$4,$5,$6)',[dbOrganizationId(req),dbUserId(req),'TRANSITION','queue_entry',req.params.id,JSON.stringify({status:next})]);return r.rows[0];});
+app.post('/api/queue/:id/transition',async(req:any,reply)=>{const next=String(req.body?.status||'');const allowed=['waiting','called','in-service','completed','cancelled','no-show','waiting-triage','waiting-doctor','emergency'];if(!allowed.includes(next))return reply.code(400).send({error:'Invalid queue status'});if(!pool){const q=store.queue.find(x=>x.id===req.params.id&&x.organizationId===org(req));if(!q)return reply.code(404).send({error:'Queue entry not found'});const from=q.status;const updated=patch('queue',q.id,{status:next,calledAt:next==='called'?now():q.calledAt,completedAt:next==='completed'?now():q.completedAt},req);events.push({id:randomUUID(),organizationId:org(req),type:'queue.transitioned',from,to:next,resourceId:q.id,at:now()});persist();return updated;}const r=await pool.query(`UPDATE queue_entries qe SET status=$1,called_at=CASE WHEN $1='called' THEN now() ELSE qe.called_at END,completed_at=CASE WHEN $1='completed' THEN now() ELSE qe.completed_at END FROM queues q WHERE qe.id=$2 AND qe.queue_id=q.id AND q.organization_id=$3 RETURNING qe.id,qe.patient_id AS "patientId",qe.status,qe.priority,qe.joined_at AS "joinedAt",qe.called_at AS "calledAt",qe.completed_at AS "completedAt"`,[next,req.params.id,dbOrganizationId(req)]);if(!r.rowCount)return reply.code(404).send({error:'Queue entry not found'});await pool.query('INSERT INTO audit_logs(organization_id,actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,$2,$3,$4,$5,$6)',[dbOrganizationId(req),dbUserId(req),'TRANSITION','queue_entry',req.params.id,JSON.stringify({status:next})]);return r.rows[0];});
 app.post('/api/pharmacy/:id/dispense',async(req:any,reply)=>{
   if(pool){const client=await pool.connect();try{await client.query('BEGIN');
     const o=await client.query(`SELECT mo.id,mo.patient_id AS "patientId",mo.quantity,mo.status,m.name AS "medicationName",m.code AS "medicationCode" FROM medication_orders mo JOIN medications m ON m.id=mo.medication_id WHERE mo.id=$1 AND EXISTS(SELECT 1 FROM patients p WHERE p.id=mo.patient_id AND p.organization_id=$2) FOR UPDATE`,[req.params.id,dbOrganizationId(req)]);
@@ -1229,7 +1351,7 @@ app.post('/api/pharmacy/:id/dispense',async(req:any,reply)=>{
     await dbAudit(client,req,'DISPENSE','medication_order',req.params.id,{quantity:qty,batchId});await enqueueClinicalEvent(client,{organizationId:dbOrganizationId(req),eventType:CLINICAL_EVENT_TYPES.MEDICATION_DISPENSED,aggregateType:'medication_order',aggregateId:req.params.id,patientId:o.rows[0].patientId,payload:{medicationOrderId:req.params.id,patientId:o.rows[0].patientId,medicationName:o.rows[0].medicationName,medicationCode:o.rows[0].medicationCode,quantity:qty,batchId}});
     await client.query('COMMIT');return {...o.rows[0],status:next,dispensation:d.rows[0],inventory:batchMeta};
   }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}}
-  const x=store.pharmacy.find(v=>v.id===req.params.id);if(!x)throw Object.assign(new Error('Pharmacy order not found'),{statusCode:404});const qty=Number(req.body?.quantity||1);if(qty<=0)throw Object.assign(new Error('Quantity must be positive'),{statusCode:400});patch('pharmacy',x.id,{status:'dispensed',quantity:qty,dispensedAt:now(),dispensedBy:actor(req)},req);add('inventory',{itemId:req.body?.itemId||x.medicationCode,quantityDelta:-qty,movement:'dispense',referenceId:x.id},req);add('notifications',{patientId:x.patientId,channel:'in-app',template:'prescription-ready',status:'queued'},req);return store.pharmacy.find(v=>v.id===x.id)});
+  const x=tenantFind('pharmacy',req.params.id,req);if(!x)throw Object.assign(new Error('Pharmacy order not found'),{statusCode:404});const qty=Number(req.body?.quantity||1);if(qty<=0)throw Object.assign(new Error('Quantity must be positive'),{statusCode:400});patch('pharmacy',x.id,{status:'dispensed',quantity:qty,dispensedAt:now(),dispensedBy:actor(req)},req);add('inventory',{itemId:req.body?.itemId||x.medicationCode,quantityDelta:-qty,movement:'dispense',referenceId:x.id},req);add('notifications',{patientId:x.patientId,channel:'in-app',template:'prescription-ready',status:'queued'},req);return tenantFind('pharmacy',x.id,req)});
 app.post('/api/billing/:id/pay',async(req:any,reply)=>{
   if(pool){const client=await pool.connect();try{await client.query('BEGIN');const oid=dbOrganizationId(req);
     const inv=await client.query(`SELECT id,patient_id AS "patientId",total,status,currency FROM invoices WHERE id=$1 AND organization_id=$2 FOR UPDATE`,[req.params.id,oid]);if(!inv.rowCount){await client.query('ROLLBACK');return reply.code(404).send({error:'Invoice not found'});}
@@ -1245,7 +1367,7 @@ app.post('/api/billing/:id/pay',async(req:any,reply)=>{
     else await client.query(`INSERT INTO finance_reconciliations(organization_id,invoice_id,claim_id,invoice_amount,claimed_amount,approved_amount,paid_amount,patient_responsibility,status,notes,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,[oid,req.params.id,claim.rows[0]?.id||null,Number(inv.rows[0].total),Number(claim.rows[0]?.amount||0),Number(claim.rows[0]?.coverage_amount||0),amount,patientResp,newPaid>=Number(inv.rows[0].total)?'reconciled':'partially-paid',JSON.stringify({lastPaymentId:payment.rows[0].id}),dbUserId(req)]);
     await client.query(`INSERT INTO notifications(organization_id,patient_id,channel,template,status,payload) VALUES($1,$2,'in-app','payment-receipt','queued',$3)`,[oid,inv.rows[0].patientId,JSON.stringify({paymentId:payment.rows[0].id})]);await dbAudit(client,req,'PAY','invoice',req.params.id,{paymentId:payment.rows[0].id,amount});await queueEvent(client,req,'invoice.paid',{invoiceId:req.params.id,paymentId:payment.rows[0].id,amount});await client.query('COMMIT');return payment.rows[0];
   }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}}
-  const inv=store.billing.find(v=>v.id===req.params.id);if(!inv)throw Object.assign(new Error('Invoice not found'),{statusCode:404});const amount=Number(req.body?.amount||0);if(amount<=0)throw Object.assign(new Error('Payment amount must be positive'),{statusCode:400});const payment=add('payments',{invoiceId:inv.id,patientId:inv.patientId,amount,method:req.body?.method||'cash',status:'completed',paidAt:now()},req);const total=Number(inv.total||0), paid=store.payments.filter(x=>x.invoiceId===inv.id&&x.status==='completed').reduce((s,x)=>s+Number(x.amount||0),0);patch('billing',inv.id,{paidAmount:paid,status:paid>=total?'paid':'partially-paid'},req);add('notifications',{patientId:inv.patientId,channel:'in-app',template:'payment-receipt',status:'queued',payload:{paymentId:payment.id}},req);return payment});
+  const inv=tenantFind('billing',req.params.id,req);if(!inv)throw Object.assign(new Error('Invoice not found'),{statusCode:404});const amount=Number(req.body?.amount||0);if(amount<=0)throw Object.assign(new Error('Payment amount must be positive'),{statusCode:400});const payment=add('payments',{invoiceId:inv.id,patientId:inv.patientId,amount,method:req.body?.method||'cash',status:'completed',paidAt:now()},req);const total=Number(inv.total||0), paid=tenantRows('payments',req).filter(x=>x.invoiceId===inv.id&&x.status==='completed').reduce((s,x)=>s+Number(x.amount||0),0);patch('billing',inv.id,{paidAmount:paid,status:paid>=total?'paid':'partially-paid'},req);add('notifications',{patientId:inv.patientId,channel:'in-app',template:'payment-receipt',status:'queued',payload:{paymentId:payment.id}},req);return payment});
 
 app.post('/api/laboratory/results',async(req:any,reply)=>{
   const b=(req.body||{}) as Row;
@@ -1360,77 +1482,84 @@ app.post('/api/actions/:module/:id/:action',async(req:any,reply)=>{
 
 app.post('/api/medication-administrations',async(req:any,reply)=>{
   const b=z.object({medicationOrderId:z.string().uuid(),dose:z.string().optional(),route:z.string().optional(),scheduledAt:z.string().optional(),status:z.enum(['given','held','refused','missed']).default('given'),reason:z.string().optional()}).parse(req.body);
-  if(!pool)return reply.code(201).send(add('nursing',{...b,administeredAt:now()},req));
+  if(!pool){const order=tenantFind('pharmacy',b.medicationOrderId,req); if(!order) return reply.code(404).send({error:'Medication order not found'}); return reply.code(201).send(add('nursing',{...b,patientId:order.patientId,administeredAt:now()},req));}
   const client=await pool.connect(); try{await client.query('BEGIN'); const mo=await client.query(`SELECT mo.id,mo.patient_id AS "patientId" FROM medication_orders mo JOIN patients p ON p.id=mo.patient_id WHERE mo.id=$1 AND p.organization_id=$2`,[b.medicationOrderId,dbOrganizationId(req)]); if(!mo.rowCount){await client.query('ROLLBACK');return reply.code(404).send({error:'Medication order not found'});} const r=await client.query(`INSERT INTO medication_administrations(medication_order_id,dose,route,scheduled_at,administered_at,status,administered_by,reason) VALUES($1,$2,$3,$4,CASE WHEN $5 IN ('given','held','refused') THEN now() ELSE NULL END,$5,$6,$7) RETURNING id,medication_order_id AS "medicationOrderId",dose,route,scheduled_at AS "scheduledAt",administered_at AS "administeredAt",status,reason`,[b.medicationOrderId,b.dose||null,b.route||null,b.scheduledAt||null,b.status,dbUserId(req),b.reason||null]); await dbAudit(client,req,'ADMINISTER_MEDICATION','medication_order',b.medicationOrderId,{status:b.status}); await queueEvent(client,req,CLINICAL_EVENT_TYPES.MEDICATION_ADMINISTERED,{patientId:mo.rows[0].patientId,medicationOrderId:b.medicationOrderId,administrationId:r.rows[0].id,status:b.status}); await client.query('COMMIT'); return reply.code(201).send({...r.rows[0],patientId:mo.rows[0].patientId}); }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
 });
 
 // --- Advanced clinical services: emergency, inpatient, nursing, surgery, maternity, pediatrics, immunization, chronic care, telemedicine, remote monitoring ---
 const advancedAction=z.object({action:z.string(),payload:z.record(z.any()).default({})});
-async function requirePatient(client:any,req:any,patientId:string){
-  const r=await client.query('SELECT id FROM patients WHERE id=$1 AND organization_id=$2',[patientId,dbOrganizationId(req)]);
-  if(!r.rowCount) throw Object.assign(new Error('Patient not found'),{statusCode:404});
+async function requirePatient(client:any,req:any,patientId:string,encounterId?:string){
+  const organizationId=dbOrganizationId(req);
+  if(!organizationId) throw Object.assign(new Error('Organization context is required.'),{statusCode:403,code:'ORGANIZATION_CONTEXT_REQUIRED'});
+  const r=await client.query('SELECT id FROM patients WHERE id=$1 AND organization_id=$2',[patientId,organizationId]);
+  if(!r.rowCount) throw Object.assign(new Error('Patient not found'),{statusCode:404,code:'PATIENT_NOT_FOUND'});
+  if(encounterId){
+    const encounter=await client.query('SELECT patient_id FROM encounters WHERE id=$1 AND organization_id=$2',[encounterId,organizationId]);
+    if(!encounter.rowCount) throw Object.assign(new Error('Encounter not found'),{statusCode:404,code:'ENCOUNTER_NOT_FOUND'});
+    if(!patientEncounterLinkIsValid(String(patientId),String(encounter.rows[0].patient_id),organizationId,organizationId)) throw Object.assign(new Error('Patient and encounter do not belong to the same care record.'),{statusCode:409,code:'PATIENT_RELATIONSHIP_INVALID'});
+  }
 }
-function fallbackAdvanced(module:string,body:any,req:any){return add(module as Mod,{...body},req)}
+function fallbackAdvanced(module:string,body:any,req:any){ if(body?.patientId&&!tenantFind('patients',String(body.patientId),req)) throw Object.assign(new Error('Patient not found'),{statusCode:404}); if(body?.encounterId&&!tenantFind('encounters',String(body.encounterId),req)) throw Object.assign(new Error('Encounter not found'),{statusCode:404}); return add(module as Mod,{...body},req); }
 
 app.post('/api/emergency/cases',async(req:any,reply)=>{
   const b=z.object({patientId:z.string().uuid(),encounterId:z.string().uuid().optional(),acuity:z.enum(['urgent','emergency']).default('urgent'),chiefComplaint:z.string().optional(),triageLevel:z.string().optional(),status:z.string().default('arrived'),notes:z.record(z.any()).default({})}).parse(req.body||{});
   if(!pool)return reply.code(201).send(fallbackAdvanced('emergency',b,req));
   const c=await pool.connect();try{await c.query('BEGIN');await requirePatient(c,req,b.patientId);const r=await c.query(`INSERT INTO emergency_cases(organization_id,patient_id,encounter_id,acuity,chief_complaint,triage_level,status,notes,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,[dbOrganizationId(req),b.patientId,b.encounterId||null,b.acuity,b.chiefComplaint||null,b.triageLevel||null,b.status,JSON.stringify(b.notes),dbUserId(req)]);await dbAudit(c,req,'CREATE','emergency_case',r.rows[0].id,{acuity:b.acuity});await enqueueClinicalEvent(c,{organizationId:dbOrganizationId(req),eventType:CLINICAL_EVENT_TYPES.EMERGENCY_ARRIVED,aggregateType:'emergency_case',aggregateId:r.rows[0].id,patientId:b.patientId,encounterId:b.encounterId||null,payload:{emergencyCaseId:r.rows[0].id,patientId:b.patientId,encounterId:b.encounterId||null,acuity:b.acuity,triageLevel:b.triageLevel||null}});await c.query('COMMIT');return reply.code(201).send(r.rows[0]);}catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}
 });
-app.get('/api/emergency/cases',async(req:any)=>{if(!pool)return {data:store.emergency,count:store.emergency.length};const r=await pool.query(`SELECT * FROM emergency_cases WHERE organization_id=$1 ORDER BY arrival_at DESC LIMIT 500`,[dbOrganizationId(req)]);return {data:r.rows,count:r.rowCount};});
+app.get('/api/emergency/cases',async(req:any)=>{if(!pool){const rows=tenantRows('emergency',req);return {data:rows,count:rows.length};}const r=await pool.query(`SELECT * FROM emergency_cases WHERE organization_id=$1 ORDER BY arrival_at DESC LIMIT 500`,[dbOrganizationId(req)]);return {data:r.rows,count:r.rowCount};});
 app.post('/api/emergency/cases/:id/disposition',async(req:any,reply)=>{if(!pool){const x=patch('emergency',req.params.id,{status:'disposed',disposition:req.body?.disposition,dispositionAt:now()},req);if(!x)return reply.code(404).send({error:'Emergency case not found'});return x}const r=await pool.query(`UPDATE emergency_cases SET status='disposed',disposition=$1,disposition_at=now(),updated_at=now() WHERE id=$2 AND organization_id=$3 RETURNING *`,[req.body?.disposition||'discharged',req.params.id,dbOrganizationId(req)]);if(!r.rowCount)return reply.code(404).send({error:'Emergency case not found'});await pool.query(`INSERT INTO audit_logs(organization_id,actor_user_id,action,entity_type,entity_id,metadata) VALUES($1,$2,'DISPOSITION','emergency_case',$3,$4)`,[dbOrganizationId(req),dbUserId(req),req.params.id,JSON.stringify({disposition:req.body?.disposition})]);return r.rows[0]});
 
 app.post('/api/inpatient/admissions',async(req:any,reply)=>{const b=z.object({patientId:z.string().uuid(),encounterId:z.string().uuid().optional(),ward:z.string(),bed:z.string().optional(),status:z.string().default('admitted')}).parse(req.body||{});if(!pool)return reply.code(201).send(fallbackAdvanced('inpatient',b,req));const c=await pool.connect();try{await c.query('BEGIN');await requirePatient(c,req,b.patientId);const r=await c.query(`INSERT INTO admissions(organization_id,patient_id,encounter_id,ward,bed,status,created_by) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *`,[dbOrganizationId(req),b.patientId,b.encounterId||null,b.ward,b.bed||null,b.status,dbUserId(req)]);await dbAudit(c,req,'ADMIT','patient',b.patientId,{admissionId:r.rows[0].id,ward:b.ward,bed:b.bed});await queueEvent(c,req,CLINICAL_EVENT_TYPES.ADMISSION_STARTED,{admissionId:r.rows[0].id,patientId:b.patientId,encounterId:b.encounterId||null,ward:b.ward,bed:b.bed,status:r.rows[0].status});await c.query('COMMIT');return reply.code(201).send(r.rows[0]);}catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}});
-app.get('/api/inpatient/admissions',async(req:any)=>{if(!pool)return {data:store.inpatient,count:store.inpatient.length};const r=await pool.query(`SELECT * FROM admissions WHERE organization_id=$1 ORDER BY admitted_at DESC LIMIT 500`,[dbOrganizationId(req)]);return {data:r.rows,count:r.rowCount};});
+app.get('/api/inpatient/admissions',async(req:any)=>{if(!pool){const rows=tenantRows('inpatient',req);return {data:rows,count:rows.length};}const r=await pool.query(`SELECT * FROM admissions WHERE organization_id=$1 ORDER BY admitted_at DESC LIMIT 500`,[dbOrganizationId(req)]);return {data:r.rows,count:r.rowCount};});
 app.post('/api/inpatient/admissions/:id/discharge',async(req:any,reply)=>{if(!pool){const x=patch('inpatient',req.params.id,{status:'discharged',dischargedAt:now(),dischargeSummary:req.body?.dischargeSummary||null},req);if(!x)return reply.code(404).send({error:'Admission not found'});return x}const c=await pool.connect();try{await c.query('BEGIN');const r=await c.query(`UPDATE admissions SET status='discharged',discharged_at=now(),discharge_summary=$1,updated_at=now() WHERE id=$2 AND organization_id=$3 RETURNING *`,[req.body?.dischargeSummary||null,req.params.id,dbOrganizationId(req)]);if(!r.rowCount){await c.query('ROLLBACK');return reply.code(404).send({error:'Admission not found'})}const fu=await c.query(`INSERT INTO module_records(organization_id,module,status,payload,created_by) VALUES($1,'follow-up','due',$2,$3) RETURNING id`,[dbOrganizationId(req),JSON.stringify({patientId:r.rows[0].patient_id,reason:'Post-discharge follow-up',dueAt:req.body?.followUpAt||null,status:'due'}),dbUserId(req)]);await dbAudit(c,req,'DISCHARGE','admission',req.params.id,{followUpId:fu.rows[0].id});await queueEvent(c,req,CLINICAL_EVENT_TYPES.DISCHARGE_STARTED,{admissionId:req.params.id,patientId:r.rows[0].patient_id,encounterId:r.rows[0].encounter_id||null,followUpId:fu.rows[0].id,status:'discharged'});await c.query('COMMIT');return {...r.rows[0],followUpId:fu.rows[0].id};}catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}});
 
-app.post('/api/nursing/assessments',async(req:any,reply)=>{const b=z.object({patientId:z.string().uuid(),encounterId:z.string().uuid().optional(),assessmentType:z.string().default('initial'),findings:z.record(z.any()).default({}),painScore:z.number().optional(),riskFlags:z.array(z.string()).default([])}).parse(req.body||{});if(!pool)return reply.code(201).send(fallbackAdvanced('nursing',b,req));const r=await pool.query(`INSERT INTO nursing_assessments(organization_id,patient_id,encounter_id,nurse_user_id,assessment_type,findings,pain_score,risk_flags) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,[dbOrganizationId(req),b.patientId,b.encounterId||null,dbUserId(req),b.assessmentType,JSON.stringify(b.findings),b.painScore||null,JSON.stringify(b.riskFlags)]);return reply.code(201).send(r.rows[0]);});
-app.get('/api/nursing/assessments',async(req:any)=>{if(!pool)return {data:store.nursing,count:store.nursing.length};const r=await pool.query(`SELECT * FROM nursing_assessments WHERE organization_id=$1 ORDER BY created_at DESC LIMIT 500`,[dbOrganizationId(req)]);return {data:r.rows,count:r.rowCount};});
+app.post('/api/nursing/assessments',async(req:any,reply)=>{const b=z.object({patientId:z.string().uuid(),encounterId:z.string().uuid().optional(),assessmentType:z.string().default('initial'),findings:z.record(z.any()).default({}),painScore:z.number().optional(),riskFlags:z.array(z.string()).default([])}).parse(req.body||{});if(!pool)return reply.code(201).send(fallbackAdvanced('nursing',b,req));await requirePatient(pool,req,b.patientId,b.encounterId);const r=await pool.query(`INSERT INTO nursing_assessments(organization_id,patient_id,encounter_id,nurse_user_id,assessment_type,findings,pain_score,risk_flags) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,[dbOrganizationId(req),b.patientId,b.encounterId||null,dbUserId(req),b.assessmentType,JSON.stringify(b.findings),b.painScore||null,JSON.stringify(b.riskFlags)]);return reply.code(201).send(r.rows[0]);});
+app.get('/api/nursing/assessments',async(req:any)=>{if(!pool){const rows=tenantRows('nursing',req);return {data:rows,count:rows.length};}const r=await pool.query(`SELECT * FROM nursing_assessments WHERE organization_id=$1 ORDER BY created_at DESC LIMIT 500`,[dbOrganizationId(req)]);return {data:r.rows,count:r.rowCount};});
 
-app.post('/api/surgery/cases',async(req:any,reply)=>{const b=z.object({patientId:z.string().uuid(),encounterId:z.string().uuid().optional(),procedureName:z.string(),scheduledAt:z.string().optional(),consentConfirmed:z.boolean().default(false),surgeonUserId:z.string().uuid().optional(),anaesthesiaPlan:z.string().optional(),checklist:z.record(z.any()).default({})}).parse(req.body||{});if(!pool)return reply.code(201).send(fallbackAdvanced('surgery',b,req));const client=await pool.connect();try{await client.query('BEGIN');const r=await client.query(`INSERT INTO surgery_cases(organization_id,patient_id,encounter_id,procedure_name,scheduled_at,consent_confirmed,surgeon_user_id,anaesthesia_plan,checklist) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,[dbOrganizationId(req),b.patientId,b.encounterId||null,b.procedureName,b.scheduledAt||null,b.consentConfirmed,b.surgeonUserId||null,b.anaesthesiaPlan||null,JSON.stringify(b.checklist)]);if(b.scheduledAt) await enqueueClinicalEvent(client,{organizationId:dbOrganizationId(req),eventType:CLINICAL_EVENT_TYPES.APPOINTMENT_CREATED,aggregateType:'surgery_case',aggregateId:r.rows[0].id,patientId:b.patientId,encounterId:b.encounterId||null,payload:{surgeryCaseId:r.rows[0].id,patientId:b.patientId,encounterId:b.encounterId||null,procedureName:b.procedureName,scheduledAt:b.scheduledAt}});if(b.consentConfirmed) await enqueueClinicalEvent(client,{organizationId:dbOrganizationId(req),eventType:'surgery.consent.confirmed',aggregateType:'surgery_case',aggregateId:r.rows[0].id,patientId:b.patientId,encounterId:b.encounterId||null,payload:{surgeryCaseId:r.rows[0].id,patientId:b.patientId}});await client.query('COMMIT');return reply.code(201).send(r.rows[0]);}catch(e){await client.query('ROLLBACK');throw e}finally{client.release()};});
-app.get('/api/surgery/cases',async(req:any)=>{if(!pool)return {data:store.surgery,count:store.surgery.length};const r=await pool.query(`SELECT * FROM surgery_cases WHERE organization_id=$1 ORDER BY scheduled_at DESC NULLS LAST LIMIT 500`,[dbOrganizationId(req)]);return {data:r.rows,count:r.rowCount};});
+app.post('/api/surgery/cases',async(req:any,reply)=>{const b=z.object({patientId:z.string().uuid(),encounterId:z.string().uuid().optional(),procedureName:z.string(),scheduledAt:z.string().optional(),consentConfirmed:z.boolean().default(false),surgeonUserId:z.string().uuid().optional(),anaesthesiaPlan:z.string().optional(),checklist:z.record(z.any()).default({})}).parse(req.body||{});if(!pool)return reply.code(201).send(fallbackAdvanced('surgery',b,req));const client=await pool.connect();try{await client.query('BEGIN');await requirePatient(client,req,b.patientId,b.encounterId);const r=await client.query(`INSERT INTO surgery_cases(organization_id,patient_id,encounter_id,procedure_name,scheduled_at,consent_confirmed,surgeon_user_id,anaesthesia_plan,checklist) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,[dbOrganizationId(req),b.patientId,b.encounterId||null,b.procedureName,b.scheduledAt||null,b.consentConfirmed,b.surgeonUserId||null,b.anaesthesiaPlan||null,JSON.stringify(b.checklist)]);if(b.scheduledAt) await enqueueClinicalEvent(client,{organizationId:dbOrganizationId(req),eventType:CLINICAL_EVENT_TYPES.APPOINTMENT_CREATED,aggregateType:'surgery_case',aggregateId:r.rows[0].id,patientId:b.patientId,encounterId:b.encounterId||null,payload:{surgeryCaseId:r.rows[0].id,patientId:b.patientId,encounterId:b.encounterId||null,procedureName:b.procedureName,scheduledAt:b.scheduledAt}});if(b.consentConfirmed) await enqueueClinicalEvent(client,{organizationId:dbOrganizationId(req),eventType:'surgery.consent.confirmed',aggregateType:'surgery_case',aggregateId:r.rows[0].id,patientId:b.patientId,encounterId:b.encounterId||null,payload:{surgeryCaseId:r.rows[0].id,patientId:b.patientId}});await client.query('COMMIT');return reply.code(201).send(r.rows[0]);}catch(e){await client.query('ROLLBACK');throw e}finally{client.release()};});
+app.get('/api/surgery/cases',async(req:any)=>{if(!pool){const rows=tenantRows('surgery',req);return {data:rows,count:rows.length};}const r=await pool.query(`SELECT * FROM surgery_cases WHERE organization_id=$1 ORDER BY scheduled_at DESC NULLS LAST LIMIT 500`,[dbOrganizationId(req)]);return {data:r.rows,count:r.rowCount};});
 app.post('/api/surgery/cases/:id/checklist',async(req:any,reply)=>{if(!pool){const x=patch('surgery',req.params.id,{checklist:req.body,status:req.body?.completed?'ready':'scheduled'},req);if(!x)return reply.code(404).send({error:'Surgery case not found'});return x}const r=await pool.query(`UPDATE surgery_cases SET checklist=$1,status=$2,updated_at=now() WHERE id=$3 AND organization_id=$4 RETURNING *`,[JSON.stringify(req.body||{}),req.body?.completed?'ready':'scheduled',req.params.id,dbOrganizationId(req)]);if(!r.rowCount)return reply.code(404).send({error:'Surgery case not found'});return r.rows[0]});
 
-app.post('/api/maternity/records',async(req:any,reply)=>{const b=z.object({patientId:z.string().uuid(),encounterId:z.string().uuid().optional(),eventType:z.string(),gestationalAgeWeeks:z.number().optional(),gravida:z.number().int().optional(),para:z.number().int().optional(),maternalObservations:z.record(z.any()).default({}),fetalObservations:z.record(z.any()).default({}),status:z.string().default('active'),notes:z.string().optional()}).parse(req.body||{});if(!pool)return reply.code(201).send(fallbackAdvanced('maternity',b,req));const client=await pool.connect();try{await client.query('BEGIN');const r=await client.query(`INSERT INTO maternity_records(organization_id,patient_id,encounter_id,event_type,gestational_age_weeks,gravida,para,maternal_observations,fetal_observations,status,notes) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,[dbOrganizationId(req),b.patientId,b.encounterId||null,b.eventType,b.gestationalAgeWeeks||null,b.gravida??null,b.para??null,JSON.stringify(b.maternalObservations),JSON.stringify(b.fetalObservations),b.status,b.notes||null]);const et=String(b.eventType).toLowerCase();const map:any={'anc':'maternity.anc.recorded','risk':'maternity.risk.assessed','danger-signs':'maternity.danger-signs.recorded','labour':'maternity.labour.started','birth':'maternity.birth.recorded','newborn':'maternity.newborn.recorded','pnc':'maternity.pnc.recorded','delivery-planning':'maternity.delivery-planned'};if(map[et]) await enqueueClinicalEvent(client,{organizationId:dbOrganizationId(req),eventType:map[et],aggregateType:'maternity_record',aggregateId:r.rows[0].id,patientId:b.patientId,encounterId:b.encounterId||null,payload:{maternityRecordId:r.rows[0].id,patientId:b.patientId,encounterId:b.encounterId||null,eventType:b.eventType,gestationalAgeWeeks:b.gestationalAgeWeeks||null}});await client.query('COMMIT');return reply.code(201).send(r.rows[0]);}catch(e){await client.query('ROLLBACK');throw e}finally{client.release()};});
-app.get('/api/maternity/records',async(req:any)=>{if(!pool)return {data:store.maternity,count:store.maternity.length};const r=await pool.query(`SELECT * FROM maternity_records WHERE organization_id=$1 ORDER BY event_at DESC LIMIT 500`,[dbOrganizationId(req)]);return {data:r.rows,count:r.rowCount};});
+app.post('/api/maternity/records',async(req:any,reply)=>{const b=z.object({patientId:z.string().uuid(),encounterId:z.string().uuid().optional(),eventType:z.string(),gestationalAgeWeeks:z.number().optional(),gravida:z.number().int().optional(),para:z.number().int().optional(),maternalObservations:z.record(z.any()).default({}),fetalObservations:z.record(z.any()).default({}),status:z.string().default('active'),notes:z.string().optional()}).parse(req.body||{});if(!pool)return reply.code(201).send(fallbackAdvanced('maternity',b,req));const client=await pool.connect();try{await client.query('BEGIN');await requirePatient(client,req,b.patientId,b.encounterId);const r=await client.query(`INSERT INTO maternity_records(organization_id,patient_id,encounter_id,event_type,gestational_age_weeks,gravida,para,maternal_observations,fetal_observations,status,notes) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,[dbOrganizationId(req),b.patientId,b.encounterId||null,b.eventType,b.gestationalAgeWeeks||null,b.gravida??null,b.para??null,JSON.stringify(b.maternalObservations),JSON.stringify(b.fetalObservations),b.status,b.notes||null]);const et=String(b.eventType).toLowerCase();const map:any={'anc':'maternity.anc.recorded','risk':'maternity.risk.assessed','danger-signs':'maternity.danger-signs.recorded','labour':'maternity.labour.started','birth':'maternity.birth.recorded','newborn':'maternity.newborn.recorded','pnc':'maternity.pnc.recorded','delivery-planning':'maternity.delivery-planned'};if(map[et]) await enqueueClinicalEvent(client,{organizationId:dbOrganizationId(req),eventType:map[et],aggregateType:'maternity_record',aggregateId:r.rows[0].id,patientId:b.patientId,encounterId:b.encounterId||null,payload:{maternityRecordId:r.rows[0].id,patientId:b.patientId,encounterId:b.encounterId||null,eventType:b.eventType,gestationalAgeWeeks:b.gestationalAgeWeeks||null}});await client.query('COMMIT');return reply.code(201).send(r.rows[0]);}catch(e){await client.query('ROLLBACK');throw e}finally{client.release()};});
+app.get('/api/maternity/records',async(req:any)=>{if(!pool){const rows=tenantRows('maternity',req);return {data:rows,count:rows.length};}const r=await pool.query(`SELECT * FROM maternity_records WHERE organization_id=$1 ORDER BY event_at DESC LIMIT 500`,[dbOrganizationId(req)]);return {data:r.rows,count:r.rowCount};});
 
-app.post('/api/pediatrics/assessments',async(req:any,reply)=>{const b=z.object({patientId:z.string().uuid(),encounterId:z.string().uuid().optional(),ageMonths:z.number().int().optional(),weightKg:z.number().optional(),heightCm:z.number().optional(),muacMm:z.number().optional(),temperature:z.number().optional(),respiratoryRate:z.number().optional(),spo2:z.number().optional(),assessment:z.record(z.any()).default({}),imciClassification:z.record(z.any()).default({}),nutritionStatus:z.string().optional(),referralRequired:z.boolean().default(false)}).parse(req.body||{});if(!pool)return reply.code(201).send(fallbackAdvanced('pediatrics',b,req));const r=await pool.query(`INSERT INTO pediatric_assessments(organization_id,patient_id,encounter_id,age_months,weight_kg,height_cm,muac_mm,temperature,respiratory_rate,spo2,assessment,imci_classification,nutrition_status,referral_required) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,[dbOrganizationId(req),b.patientId,b.encounterId||null,b.ageMonths??null,b.weightKg??null,b.heightCm??null,b.muacMm??null,b.temperature??null,b.respiratoryRate??null,b.spo2??null,JSON.stringify(b.assessment),JSON.stringify(b.imciClassification),b.nutritionStatus||null,b.referralRequired]);return reply.code(201).send(r.rows[0]);});
-app.get('/api/pediatrics/assessments',async(req:any)=>{if(!pool)return {data:store.pediatrics,count:store.pediatrics.length};const r=await pool.query(`SELECT * FROM pediatric_assessments WHERE organization_id=$1 ORDER BY created_at DESC LIMIT 500`,[dbOrganizationId(req)]);return {data:r.rows,count:r.rowCount};});
+app.post('/api/pediatrics/assessments',async(req:any,reply)=>{const b=z.object({patientId:z.string().uuid(),encounterId:z.string().uuid().optional(),ageMonths:z.number().int().optional(),weightKg:z.number().optional(),heightCm:z.number().optional(),muacMm:z.number().optional(),temperature:z.number().optional(),respiratoryRate:z.number().optional(),spo2:z.number().optional(),assessment:z.record(z.any()).default({}),imciClassification:z.record(z.any()).default({}),nutritionStatus:z.string().optional(),referralRequired:z.boolean().default(false)}).parse(req.body||{});if(!pool)return reply.code(201).send(fallbackAdvanced('pediatrics',b,req));await requirePatient(pool,req,b.patientId,b.encounterId);const r=await pool.query(`INSERT INTO pediatric_assessments(organization_id,patient_id,encounter_id,age_months,weight_kg,height_cm,muac_mm,temperature,respiratory_rate,spo2,assessment,imci_classification,nutrition_status,referral_required) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,[dbOrganizationId(req),b.patientId,b.encounterId||null,b.ageMonths??null,b.weightKg??null,b.heightCm??null,b.muacMm??null,b.temperature??null,b.respiratoryRate??null,b.spo2??null,JSON.stringify(b.assessment),JSON.stringify(b.imciClassification),b.nutritionStatus||null,b.referralRequired]);return reply.code(201).send(r.rows[0]);});
+app.get('/api/pediatrics/assessments',async(req:any)=>{if(!pool){const rows=tenantRows('pediatrics',req);return {data:rows,count:rows.length};}const r=await pool.query(`SELECT * FROM pediatric_assessments WHERE organization_id=$1 ORDER BY created_at DESC LIMIT 500`,[dbOrganizationId(req)]);return {data:r.rows,count:r.rowCount};});
 
-app.post('/api/immunizations',async(req:any,reply)=>{const b=z.object({patientId:z.string().uuid(),vaccineCode:z.string(),vaccineName:z.string(),doseNumber:z.string().optional(),administeredAt:z.string().optional(),lotNumber:z.string().optional(),expiryDate:z.string().optional(),route:z.string().optional(),site:z.string().optional(),nextDueAt:z.string().optional(),notes:z.string().optional()}).parse(req.body||{});if(!pool)return reply.code(201).send(fallbackAdvanced('immunization',b,req));const r=await pool.query(`INSERT INTO immunizations(organization_id,patient_id,vaccine_code,vaccine_name,dose_number,administered_at,lot_number,expiry_date,route,site,vaccinator_user_id,next_due_at,notes) VALUES($1,$2,$3,$4,$5,COALESCE($6,now()),$7,$8,$9,$10,$11,$12,$13) RETURNING *`,[dbOrganizationId(req),b.patientId,b.vaccineCode,b.vaccineName,b.doseNumber||null,b.administeredAt||null,b.lotNumber||null,b.expiryDate||null,b.route||null,b.site||null,dbUserId(req),b.nextDueAt||null,b.notes||null]);return reply.code(201).send(r.rows[0]);});
-app.get('/api/immunizations',async(req:any)=>{if(!pool)return {data:store.immunization,count:store.immunization.length};const r=await pool.query(`SELECT * FROM immunizations WHERE organization_id=$1 ORDER BY administered_at DESC LIMIT 500`,[dbOrganizationId(req)]);return {data:r.rows,count:r.rowCount};});
+app.post('/api/immunizations',async(req:any,reply)=>{const b=z.object({patientId:z.string().uuid(),vaccineCode:z.string(),vaccineName:z.string(),doseNumber:z.string().optional(),administeredAt:z.string().optional(),lotNumber:z.string().optional(),expiryDate:z.string().optional(),route:z.string().optional(),site:z.string().optional(),nextDueAt:z.string().optional(),notes:z.string().optional()}).parse(req.body||{});if(!pool)return reply.code(201).send(fallbackAdvanced('immunization',b,req));await requirePatient(pool,req,b.patientId);const r=await pool.query(`INSERT INTO immunizations(organization_id,patient_id,vaccine_code,vaccine_name,dose_number,administered_at,lot_number,expiry_date,route,site,vaccinator_user_id,next_due_at,notes) VALUES($1,$2,$3,$4,$5,COALESCE($6,now()),$7,$8,$9,$10,$11,$12,$13) RETURNING *`,[dbOrganizationId(req),b.patientId,b.vaccineCode,b.vaccineName,b.doseNumber||null,b.administeredAt||null,b.lotNumber||null,b.expiryDate||null,b.route||null,b.site||null,dbUserId(req),b.nextDueAt||null,b.notes||null]);return reply.code(201).send(r.rows[0]);});
+app.get('/api/immunizations',async(req:any)=>{if(!pool){const rows=tenantRows('immunization',req);return {data:rows,count:rows.length};}const r=await pool.query(`SELECT * FROM immunizations WHERE organization_id=$1 ORDER BY administered_at DESC LIMIT 500`,[dbOrganizationId(req)]);return {data:r.rows,count:r.rowCount};});
 
-app.post('/api/chronic-care/records',async(req:any,reply)=>{const b=z.object({patientId:z.string().uuid(),encounterId:z.string().uuid().optional(),conditionCode:z.string(),conditionName:z.string(),status:z.string().default('active'),goals:z.array(z.any()).default([]),measures:z.record(z.any()).default({}),medications:z.array(z.any()).default([]),nextReviewAt:z.string().optional(),riskLevel:z.string().optional(),carePlan:z.record(z.any()).default({})}).parse(req.body||{});if(!pool)return reply.code(201).send(fallbackAdvanced('chronic-care',b,req));const r=await pool.query(`INSERT INTO chronic_care_records(organization_id,patient_id,encounter_id,condition_code,condition_name,status,goals,measures,medications,next_review_at,risk_level,care_plan) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,[dbOrganizationId(req),b.patientId,b.encounterId||null,b.conditionCode,b.conditionName,b.status,JSON.stringify(b.goals),JSON.stringify(b.measures),JSON.stringify(b.medications),b.nextReviewAt||null,b.riskLevel||null,JSON.stringify(b.carePlan)]);return reply.code(201).send(r.rows[0]);});
-app.get('/api/chronic-care/records',async(req:any)=>{if(!pool)return {data:store['chronic-care'],count:store['chronic-care'].length};const r=await pool.query(`SELECT * FROM chronic_care_records WHERE organization_id=$1 ORDER BY next_review_at NULLS LAST,updated_at DESC LIMIT 500`,[dbOrganizationId(req)]);return {data:r.rows,count:r.rowCount};});
+app.post('/api/chronic-care/records',async(req:any,reply)=>{const b=z.object({patientId:z.string().uuid(),encounterId:z.string().uuid().optional(),conditionCode:z.string(),conditionName:z.string(),status:z.string().default('active'),goals:z.array(z.any()).default([]),measures:z.record(z.any()).default({}),medications:z.array(z.any()).default([]),nextReviewAt:z.string().optional(),riskLevel:z.string().optional(),carePlan:z.record(z.any()).default({})}).parse(req.body||{});if(!pool)return reply.code(201).send(fallbackAdvanced('chronic-care',b,req));await requirePatient(pool,req,b.patientId,b.encounterId);const r=await pool.query(`INSERT INTO chronic_care_records(organization_id,patient_id,encounter_id,condition_code,condition_name,status,goals,measures,medications,next_review_at,risk_level,care_plan) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,[dbOrganizationId(req),b.patientId,b.encounterId||null,b.conditionCode,b.conditionName,b.status,JSON.stringify(b.goals),JSON.stringify(b.measures),JSON.stringify(b.medications),b.nextReviewAt||null,b.riskLevel||null,JSON.stringify(b.carePlan)]);return reply.code(201).send(r.rows[0]);});
+app.get('/api/chronic-care/records',async(req:any)=>{if(!pool){const rows=tenantRows('chronic-care',req);return {data:rows,count:rows.length};}const r=await pool.query(`SELECT * FROM chronic_care_records WHERE organization_id=$1 ORDER BY next_review_at NULLS LAST,updated_at DESC LIMIT 500`,[dbOrganizationId(req)]);return {data:r.rows,count:r.rowCount};});
 
-app.post('/api/telemedicine/sessions',async(req:any,reply)=>{const b=z.object({patientId:z.string().uuid(),appointmentId:z.string().uuid().optional(),encounterId:z.string().uuid().optional(),scheduledAt:z.string(),meetingUrl:z.string().url().optional(),providerUserId:z.string().uuid().optional(),consentConfirmed:z.boolean().default(false)}).parse(req.body||{});if(!pool)return reply.code(201).send(fallbackAdvanced('telemedicine',b,req));if(!b.consentConfirmed)return reply.code(409).send({error:'Telemedicine consent must be confirmed'});const r=await pool.query(`INSERT INTO telemedicine_sessions(organization_id,patient_id,appointment_id,encounter_id,scheduled_at,meeting_url,provider_user_id,consent_confirmed) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,[dbOrganizationId(req),b.patientId,b.appointmentId||null,b.encounterId||null,b.scheduledAt,b.meetingUrl||null,b.providerUserId||null,b.consentConfirmed]);return reply.code(201).send(r.rows[0]);});
-app.get('/api/telemedicine/sessions',async(req:any)=>{if(!pool)return {data:store.telemedicine,count:store.telemedicine.length};const r=await pool.query(`SELECT * FROM telemedicine_sessions WHERE organization_id=$1 ORDER BY scheduled_at DESC LIMIT 500`,[dbOrganizationId(req)]);return {data:r.rows,count:r.rowCount};});
+app.post('/api/telemedicine/sessions',async(req:any,reply)=>{const b=z.object({patientId:z.string().uuid(),appointmentId:z.string().uuid().optional(),encounterId:z.string().uuid().optional(),scheduledAt:z.string(),meetingUrl:z.string().url().optional(),providerUserId:z.string().uuid().optional(),consentConfirmed:z.boolean().default(false)}).parse(req.body||{});if(!pool)return reply.code(201).send(fallbackAdvanced('telemedicine',b,req));if(!b.consentConfirmed)return reply.code(409).send({error:'Telemedicine consent must be confirmed'});await requirePatient(pool,req,b.patientId,b.encounterId);const r=await pool.query(`INSERT INTO telemedicine_sessions(organization_id,patient_id,appointment_id,encounter_id,scheduled_at,meeting_url,provider_user_id,consent_confirmed) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,[dbOrganizationId(req),b.patientId,b.appointmentId||null,b.encounterId||null,b.scheduledAt,b.meetingUrl||null,b.providerUserId||null,b.consentConfirmed]);return reply.code(201).send(r.rows[0]);});
+app.get('/api/telemedicine/sessions',async(req:any)=>{if(!pool){const rows=tenantRows('telemedicine',req);return {data:rows,count:rows.length};}const r=await pool.query(`SELECT * FROM telemedicine_sessions WHERE organization_id=$1 ORDER BY scheduled_at DESC LIMIT 500`,[dbOrganizationId(req)]);return {data:r.rows,count:r.rowCount};});
 app.post('/api/telemedicine/sessions/:id/start',async(req:any,reply)=>{if(!pool){const x=patch('telemedicine',req.params.id,{status:'in-progress',startedAt:now(),identityVerified:true},req);if(!x)return reply.code(404).send({error:'Session not found'});return x}const r=await pool.query(`UPDATE telemedicine_sessions SET status='in-progress',started_at=now(),identity_verified=true WHERE id=$1 AND organization_id=$2 RETURNING *`,[req.params.id,dbOrganizationId(req)]);if(!r.rowCount)return reply.code(404).send({error:'Session not found'});return r.rows[0]});
 app.post('/api/telemedicine/sessions/:id/end',async(req:any,reply)=>{if(!pool){const x=patch('telemedicine',req.params.id,{status:'completed',endedAt:now()},req);if(!x)return reply.code(404).send({error:'Session not found'});return x}const r=await pool.query(`UPDATE telemedicine_sessions SET status='completed',ended_at=now() WHERE id=$1 AND organization_id=$2 RETURNING *`,[req.params.id,dbOrganizationId(req)]);if(!r.rowCount)return reply.code(404).send({error:'Session not found'});return r.rows[0]});
 
-app.post('/api/remote-monitoring/readings',async(req:any,reply)=>{const b=z.object({patientId:z.string().uuid(),deviceId:z.string().optional(),metric:z.string(),valueNumeric:z.number().optional(),unit:z.string().optional(),measuredAt:z.string(),source:z.string().default('patient'),metadata:z.record(z.any()).default({})}).parse(req.body||{});if(!pool)return reply.code(201).send(fallbackAdvanced('remote-monitoring',b,req));let alert='none';if(b.valueNumeric!==undefined){if(b.metric==='spo2'&&b.valueNumeric<90)alert='critical';if(b.metric==='systolic'&&b.valueNumeric>=180)alert='critical';}const r=await pool.query(`INSERT INTO remote_monitoring_readings(organization_id,patient_id,device_id,metric,value_numeric,unit,measured_at,source,validation_status,alert_status,metadata) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'unvalidated',$9,$10) RETURNING *`,[dbOrganizationId(req),b.patientId,b.deviceId||null,b.metric,b.valueNumeric??null,b.unit||null,b.measuredAt,b.source,alert,JSON.stringify(b.metadata)]);if(alert==='critical')await moduleCreate(req,'clinical-alerts',{patientId:b.patientId,type:'remote-monitoring',severity:'CRITICAL',title:`Critical remote ${b.metric} reading`,message:`A remote monitoring reading requires clinician review.`,source:'remote-monitoring'},'critical');return reply.code(201).send(r.rows[0]);});
-app.get('/api/remote-monitoring/readings',async(req:any)=>{if(!pool)return {data:store['remote-monitoring'],count:store['remote-monitoring'].length};const params:any[]=[dbOrganizationId(req)];let where='organization_id=$1';if(req.query?.patientId){params.push(String(req.query.patientId));where+=' AND patient_id=$2';}const r=await pool.query(`SELECT * FROM remote_monitoring_readings WHERE ${where} ORDER BY measured_at DESC LIMIT 500`,params);return {data:r.rows,count:r.rowCount};});
+app.post('/api/remote-monitoring/readings',async(req:any,reply)=>{const b=z.object({patientId:z.string().uuid(),deviceId:z.string().optional(),metric:z.string(),valueNumeric:z.number().optional(),unit:z.string().optional(),measuredAt:z.string(),source:z.string().default('patient'),metadata:z.record(z.any()).default({})}).parse(req.body||{});if(!pool)return reply.code(201).send(fallbackAdvanced('remote-monitoring',b,req));await requirePatient(pool,req,b.patientId);let alert='none';if(b.valueNumeric!==undefined){if(b.metric==='spo2'&&b.valueNumeric<90)alert='critical';if(b.metric==='systolic'&&b.valueNumeric>=180)alert='critical';}const r=await pool.query(`INSERT INTO remote_monitoring_readings(organization_id,patient_id,device_id,metric,value_numeric,unit,measured_at,source,validation_status,alert_status,metadata) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'unvalidated',$9,$10) RETURNING *`,[dbOrganizationId(req),b.patientId,b.deviceId||null,b.metric,b.valueNumeric??null,b.unit||null,b.measuredAt,b.source,alert,JSON.stringify(b.metadata)]);if(alert==='critical')await moduleCreate(req,'clinical-alerts',{patientId:b.patientId,type:'remote-monitoring',severity:'CRITICAL',title:`Critical remote ${b.metric} reading`,message:`A remote monitoring reading requires clinician review.`,source:'remote-monitoring'},'critical');return reply.code(201).send(r.rows[0]);});
+app.get('/api/remote-monitoring/readings',async(req:any)=>{if(!pool){const rows=tenantRows('remote-monitoring',req);return {data:rows,count:rows.length};}const params:any[]=[dbOrganizationId(req)];let where='organization_id=$1';if(req.query?.patientId){params.push(String(req.query.patientId));where+=' AND patient_id=$2';}const r=await pool.query(`SELECT * FROM remote_monitoring_readings WHERE ${where} ORDER BY measured_at DESC LIMIT 500`,params);return {data:r.rows,count:r.rowCount};});
 
 // --- Database-backed clinical results, inventory and audit/search ---
 app.get('/api/laboratory/samples',async(req:any)=>{
-  if(!pool)return {data:store.laboratory.filter(x=>x.sampleId||x.orderId),count:store.laboratory.length};
+  if(!pool){const rows=tenantRows('laboratory',req).filter(x=>x.sampleId||x.orderId);return {data:rows,count:rows.length};}
   const params:any[]=[dbOrganizationId(req)]; let where='p.organization_id=$1'; if(req.query?.orderId){params.push(String(req.query.orderId));where+=' AND ls.order_id=$2';}
   const r=await pool.query(`SELECT ls.id,ls.order_id AS "orderId",co.patient_id AS "patientId",ls.barcode,ls.specimen_type AS "specimenType",ls.status,ls.collected_at AS "collectedAt",ls.received_at AS "receivedAt",ls.processed_at AS "processedAt" FROM lab_samples ls JOIN clinical_orders co ON co.id=ls.order_id JOIN patients p ON p.id=co.patient_id WHERE ${where} ORDER BY ls.id DESC LIMIT 500`,params); return {data:r.rows,count:r.rowCount};
 });
 
 app.get('/api/laboratory/results',async(req:any)=>{
-  if(!pool) return {data:store.laboratory.filter(x=>x.organizationId===org(req)),count:store.laboratory.length};
+  if(!pool) {const rows=tenantRows('laboratory',req);return {data:rows,count:rows.length};}
   const r=await pool.query(`SELECT lr.id,co.patient_id AS "patientId",ls.barcode,lt.code,lt.name,lr.value_numeric AS "valueNumeric",lr.value_text AS "valueText",lr.unit,lr.abnormal_flag AS "abnormalFlag",lr.critical,lr.status,lr.verified_at AS "verifiedAt" FROM lab_results lr JOIN lab_samples ls ON ls.id=lr.sample_id JOIN clinical_orders co ON co.id=ls.order_id JOIN lab_tests lt ON lt.id=lr.test_id JOIN patients p ON p.id=co.patient_id WHERE p.organization_id=$1 ORDER BY lr.id DESC LIMIT 500`,[dbOrganizationId(req)]); return {data:r.rows,count:r.rowCount};
 });
-app.get('/api/medication-administrations',async(req:any)=>{ if(!pool)return {data:store.nursing.filter(x=>x.medicationOrderId),count:store.nursing.length}; const r=await pool.query(`SELECT ma.id,ma.medication_order_id AS "medicationOrderId",mo.patient_id AS "patientId",ma.dose,ma.route,ma.scheduled_at AS "scheduledAt",ma.administered_at AS "administeredAt",ma.status,ma.reason,ma.administered_by AS "administeredBy" FROM medication_administrations ma JOIN medication_orders mo ON mo.id=ma.medication_order_id JOIN patients p ON p.id=mo.patient_id WHERE p.organization_id=$1 ORDER BY ma.administered_at DESC NULLS LAST LIMIT 500`,[dbOrganizationId(req)]); return {data:r.rows,count:r.rowCount}; });
+app.get('/api/medication-administrations',async(req:any)=>{ if(!pool){const rows=tenantRows('nursing',req).filter(x=>x.medicationOrderId);return {data:rows,count:rows.length};} const r=await pool.query(`SELECT ma.id,ma.medication_order_id AS "medicationOrderId",mo.patient_id AS "patientId",ma.dose,ma.route,ma.scheduled_at AS "scheduledAt",ma.administered_at AS "administeredAt",ma.status,ma.reason,ma.administered_by AS "administeredBy" FROM medication_administrations ma JOIN medication_orders mo ON mo.id=ma.medication_order_id JOIN patients p ON p.id=mo.patient_id WHERE p.organization_id=$1 ORDER BY ma.administered_at DESC NULLS LAST LIMIT 500`,[dbOrganizationId(req)]); return {data:r.rows,count:r.rowCount}; });
 
 app.get('/api/audit',async(req:any)=>{
-  if(!pool) return audit.slice(-500).reverse();
+  if(!pool) return audit.filter((entry:Row)=>entry.organizationId===org(req)).slice(-500).reverse();
   const r=await pool.query(`SELECT id,actor_user_id AS "actorUserId",action,entity_type AS "entityType",entity_id AS "entityId",metadata,created_at AS "createdAt" FROM audit_logs WHERE organization_id=$1 ORDER BY created_at DESC LIMIT 500`,[dbOrganizationId(req)]); return r.rows;
 });
 app.get('/api/search',async(req:any)=>{
   const q=String(req.query?.q||'').trim(); if(!q)return {patients:[],encounters:[],appointments:[],orders:[]};
-  if(!pool){const needle=q.toLowerCase();const match=(r:Row)=>Object.values(r).some(v=>typeof v==='string'&&v.toLowerCase().includes(needle));return {patients:store.patients.filter(match).slice(0,20),encounters:store.encounters.filter(match).slice(0,20),appointments:store.appointments.filter(match).slice(0,20),orders:store.orders.filter(match).slice(0,20)};}
+  if(!pool){const needle=q.toLowerCase();const match=(r:Row)=>Object.values(r).some(v=>typeof v==='string'&&v.toLowerCase().includes(needle));return {patients:tenantRows('patients',req).filter(match).slice(0,20),encounters:tenantRows('encounters',req).filter(match).slice(0,20),appointments:tenantRows('appointments',req).filter(match).slice(0,20),orders:tenantRows('orders',req).filter(match).slice(0,20)};}
   const like=`%${q}%`; const oid=dbOrganizationId(req);
   const [p,e,a,o]=await Promise.all([
     pool.query(`SELECT id,patient_number AS "patientNumber",first_name AS "firstName",last_name AS "lastName",phone FROM patients WHERE organization_id=$1 AND (patient_number ILIKE $2 OR first_name ILIKE $2 OR last_name ILIKE $2 OR COALESCE(phone,'') ILIKE $2) ORDER BY created_at DESC LIMIT 20`,[oid,like]),
@@ -1681,7 +1810,7 @@ app.get('/api/fhir/Patient',async(req:any)=>{
 
 app.post('/api/clinical/observations',async(req:any,reply)=>{
   const body=z.object({patientId:z.string().uuid(),encounterId:z.string().uuid().optional(),code:z.string(),display:z.string().optional(),valueNumeric:z.number().optional(),valueText:z.string().optional(),unit:z.string().optional()}).parse(req.body);
-  if(!pool)return reply.code(201).send(add('clinical-notes',{kind:'observation',...body,recordedAt:now()},req));
+  if(!pool){if(!tenantFind('patients',body.patientId,req))return reply.code(404).send({error:'Patient not found'});if(body.encounterId){const encounter=tenantFind('encounters',body.encounterId,req);if(!encounter)return reply.code(404).send({error:'Encounter not found'});if(String(encounter.patientId)!==body.patientId)return reply.code(409).send({error:'Patient and encounter do not belong to the same care record.'});}return reply.code(201).send(add('clinical-notes',{kind:'observation',...body,recordedAt:now()},req));}
   const r=await pool.query(`INSERT INTO observations(patient_id,encounter_id,code,display,value_numeric,value_text,unit,performer_user_id) SELECT $1,$2,$3,$4,$5,$6,$7,$8 WHERE EXISTS(SELECT 1 FROM patients WHERE id=$1 AND organization_id=$9) RETURNING id,patient_id AS "patientId",encounter_id AS "encounterId",code,display,value_numeric AS "valueNumeric",value_text AS "valueText",unit,observed_at AS "observedAt"`,[body.patientId,body.encounterId||null,body.code,body.display||null,body.valueNumeric??null,body.valueText??null,body.unit||null,dbUserId(req),dbOrganizationId(req)]);
   if(!r.rowCount)return reply.code(404).send({error:'Patient not found'});return reply.code(201).send(r.rows[0]);
 });
@@ -1739,7 +1868,7 @@ app.post('/api/laboratory/:sampleId/result',async(req:any,reply)=>{
 });
 
 app.get('/api/patients/:id/care-summary',async(req:any,reply)=>{
-  const id=req.params.id; if(!pool){const p=store.patients.find(x=>x.id===id&&x.organizationId===org(req));if(!p)return reply.code(404).send({error:'Patient not found'});return {patient:p,activeProblems:store.diagnoses.filter(x=>x.patientId===id),medications:store.pharmacy.filter(x=>x.patientId===id&&x.status!=='discontinued'),openTasks:store.tasks.filter(x=>x.patientId===id&&x.status!=='completed')};}
+  const id=req.params.id; if(!pool){const p=tenantFind('patients',id,req);if(!p)return reply.code(404).send({error:'Patient not found'});return {patient:p,activeProblems:tenantPatientRows('diagnoses',id,req),medications:tenantPatientRows('pharmacy',id,req).filter(x=>x.status!=='discontinued'),openTasks:tenantPatientRows('tasks',id,req).filter(x=>x.status!=='completed')};}
   const p=await pool.query(`SELECT id,patient_number AS "patientNumber",first_name AS "firstName",last_name AS "lastName",date_of_birth AS "dateOfBirth",sex,phone,email,status FROM patients WHERE id=$1 AND organization_id=$2`,[id,dbOrganizationId(req)]);if(!p.rowCount)return reply.code(404).send({error:'Patient not found'});
   const [dx,med,tasks,alerts]=await Promise.all([
     pool.query(`SELECT id,code,display,diagnosis_type AS "diagnosisType",status FROM diagnoses WHERE patient_id=$1 AND status <> 'resolved' ORDER BY id DESC LIMIT 50`,[id]),
@@ -1770,17 +1899,17 @@ app.post('/api/governance/:kind',async(req:any,reply)=>{
 });
 app.get('/api/governance/:kind',async(req:any,reply)=>{
   const allowed=['forms','order-sets','protocols','workflow-rules','terminology']; if(!allowed.includes(req.params.kind)) return reply.code(404).send({error:'Governance resource not supported'});
-  const module=`governance-${req.params.kind}`; if(!pool)return {data:store[module]||[],count:(store[module]||[]).length};
+  const module=`governance-${req.params.kind}`; if(!pool){const rows=tenantRows(module,req);return {data:rows,count:rows.length};}
   const r=await pool.query(`SELECT id,status,payload,created_at AS "createdAt",updated_at AS "updatedAt" FROM module_records WHERE organization_id=$1 AND module=$2 AND COALESCE(payload->>'coverageVersion','') <> '025' AND COALESCE(payload->>'recordPurpose','') <> 'connected synthetic testing' ORDER BY created_at DESC LIMIT 500`,[dbOrganizationId(req),module]); return {data:r.rows.map((x:any)=>({id:x.id,...x.payload,status:x.status,createdAt:x.createdAt,updatedAt:x.updatedAt})),count:r.rowCount};
 });
 app.post('/api/care-gaps',async(req:any,reply)=>{const b=gapRecord.parse(req.body||{}); return reply.code(201).send(await moduleCreate(req,'care-gaps',b,b.status));});
-app.get('/api/care-gaps',async(req:any)=>{if(!pool)return {data:store['care-gaps']||[],count:(store['care-gaps']||[]).length};const r=await pool.query(`SELECT id,status,payload,created_at AS "createdAt",updated_at AS "updatedAt" FROM module_records WHERE organization_id=$1 AND module='care-gaps' AND COALESCE(payload->>'coverageVersion','') <> '025' AND COALESCE(payload->>'recordPurpose','') <> 'connected synthetic testing' ORDER BY created_at DESC LIMIT 500`,[dbOrganizationId(req)]);return {data:r.rows.map((x:any)=>({id:x.id,...x.payload,status:x.status,createdAt:x.createdAt,updatedAt:x.updatedAt})),count:r.rowCount};});
+app.get('/api/care-gaps',async(req:any)=>{if(!pool){const rows=tenantRows('care-gaps',req);return {data:rows,count:rows.length};}const r=await pool.query(`SELECT id,status,payload,created_at AS "createdAt",updated_at AS "updatedAt" FROM module_records WHERE organization_id=$1 AND module='care-gaps' AND COALESCE(payload->>'coverageVersion','') <> '025' AND COALESCE(payload->>'recordPurpose','') <> 'connected synthetic testing' ORDER BY created_at DESC LIMIT 500`,[dbOrganizationId(req)]);return {data:r.rows.map((x:any)=>({id:x.id,...x.payload,status:x.status,createdAt:x.createdAt,updatedAt:x.updatedAt})),count:r.rowCount};});
 app.post('/api/alerts',async(req:any,reply)=>{const b=alertRecord.parse(req.body||{}); const x=await moduleCreate(req,'clinical-alerts',b,b.severity==='CRITICAL'?'critical':'open'); if(pool) await pool.query(`INSERT INTO notifications(organization_id,patient_id,channel,template,status,payload) VALUES($1,$2,'in-app','clinical-alert','queued',$3)`,[dbOrganizationId(req),b.patientId,JSON.stringify({alertId:x.id,severity:b.severity,title:b.title})]); return reply.code(201).send(x);});
-app.get('/api/alerts',async(req:any)=>{if(!pool)return {data:store['clinical-alerts']||[],count:(store['clinical-alerts']||[]).length};const r=await pool.query(`SELECT id,status,payload,created_at AS "createdAt" FROM module_records WHERE organization_id=$1 AND module='clinical-alerts' AND COALESCE(payload->>'coverageVersion','') <> '025' AND COALESCE(payload->>'recordPurpose','') <> 'connected synthetic testing' ORDER BY created_at DESC LIMIT 500`,[dbOrganizationId(req)]);return {data:r.rows.map((x:any)=>({id:x.id,...x.payload,status:x.status,createdAt:x.createdAt})),count:r.rowCount};});
+app.get('/api/alerts',async(req:any)=>{if(!pool){const rows=tenantRows('clinical-alerts',req);return {data:rows,count:rows.length};}const r=await pool.query(`SELECT id,status,payload,created_at AS "createdAt" FROM module_records WHERE organization_id=$1 AND module='clinical-alerts' AND COALESCE(payload->>'coverageVersion','') <> '025' AND COALESCE(payload->>'recordPurpose','') <> 'connected synthetic testing' ORDER BY created_at DESC LIMIT 500`,[dbOrganizationId(req)]);return {data:r.rows.map((x:any)=>({id:x.id,...x.payload,status:x.status,createdAt:x.createdAt})),count:r.rowCount};});
 app.post('/api/messages',async(req:any,reply)=>{const b=messageRecord.parse(req.body||{});if(b.patientId&&!b.consentConfirmed&&['sms','email','whatsapp','push'].includes(b.channel))return reply.code(409).send({error:'Patient communication consent must be confirmed before external delivery'});return reply.code(201).send(await moduleCreate(req,'messages',b,'queued'));});
-app.get('/api/messages',async(req:any)=>{if(!pool)return {data:store.messages||[],count:(store.messages||[]).length};const r=await pool.query(`SELECT id,status,payload,created_at AS "createdAt" FROM module_records WHERE organization_id=$1 AND module='messages' AND COALESCE(payload->>'coverageVersion','') <> '025' AND COALESCE(payload->>'recordPurpose','') <> 'connected synthetic testing' ORDER BY created_at DESC LIMIT 500`,[dbOrganizationId(req)]);return {data:r.rows.map((x:any)=>({id:x.id,...x.payload,status:x.status,createdAt:x.createdAt})),count:r.rowCount};});
+app.get('/api/messages',async(req:any)=>{if(!pool){const rows=tenantRows('messages',req);return {data:rows,count:rows.length};}const r=await pool.query(`SELECT id,status,payload,created_at AS "createdAt" FROM module_records WHERE organization_id=$1 AND module='messages' AND COALESCE(payload->>'coverageVersion','') <> '025' AND COALESCE(payload->>'recordPurpose','') <> 'connected synthetic testing' ORDER BY created_at DESC LIMIT 500`,[dbOrganizationId(req)]);return {data:r.rows.map((x:any)=>({id:x.id,...x.payload,status:x.status,createdAt:x.createdAt})),count:r.rowCount};});
 app.get('/api/analytics/operations',async(req:any,reply)=>{
-  if(!pool) return {patients:store.patients.length,appointments:store.appointments.length,openTasks:(store.tasks||[]).filter((x:any)=>x.status!=='completed').length,careGaps:(store['care-gaps']||[]).filter((x:any)=>x.status!=='resolved').length};
+  if(!pool) return {patients:tenantRows('patients',req).length,appointments:tenantRows('appointments',req).length,openTasks:tenantRows('tasks',req).filter((x:any)=>x.status!=='completed').length,careGaps:tenantRows('care-gaps',req).filter((x:any)=>x.status!=='resolved').length};
   const oid=dbOrganizationId(req);
   const [patients,appointments,waiting,encounters,labs,openTasks,gaps,beds,unpaid]=await Promise.all([
     pool.query('SELECT count(*)::int n FROM patients WHERE organization_id=$1',[oid]),
@@ -2198,9 +2327,11 @@ async function ensureAIInteractionSchema(){
 registerPublicAI({ app, pool, dbOrganizationId, dbUserId });
 registerAI({ app, pool, dbOrganizationId, dbUserId });
 
-await ensureV15Schema();
-await ensureV14Schema();
-await ensureAIInteractionSchema();
+if (RUNTIME_SCHEMA_DDL_ENABLED) {
+  await ensureV15Schema();
+  await ensureV14Schema();
+  await ensureAIInteractionSchema();
+}
 
 if (pool) startClinicalEventWorker(pool);
 
@@ -2551,7 +2682,7 @@ app.post('/api/smart/apps', async (req:any, reply:any) => {
   return reply.code(201).send({data:r.rows[0]});
 });
 
-app.get('/.well-known/smart-configuration', async (req:any) => { const base=`${String(process.env.PUBLIC_BASE_URL||'').replace(/\/$/,'')||'https://clinai-api.onrender.com'}`; return {issuer:base,authorization_endpoint:`${base}/api/smart/authorize`,token_endpoint:`${base}/api/smart/token`,capabilities:['launch-ehr','client-public','client-confidential-symmetric','permission-v2','context-ehr-patient','context-ehr-encounter','sso-openid-connect'],scopes_supported:['openid','fhirUser','launch','launch/patient','patient/*.read','user/*.read','offline_access'],response_types_supported:['code'],grant_types_supported:['authorization_code','refresh_token'],code_challenge_methods_supported:['S256']}; });
+app.get('/.well-known/smart-configuration', async (req:any) => { const base=runtimeConfig.publicBaseUrl; return {issuer:base,authorization_endpoint:`${base}/api/smart/authorize`,token_endpoint:`${base}/api/smart/token`,capabilities:['launch-ehr','client-public','client-confidential-symmetric','permission-v2','context-ehr-patient','context-ehr-encounter','sso-openid-connect'],scopes_supported:['openid','fhirUser','launch','launch/patient','patient/*.read','user/*.read','offline_access'],response_types_supported:['code'],grant_types_supported:['authorization_code','refresh_token'],code_challenge_methods_supported:['S256']}; });
 app.get('/api/smart/authorize', async (req:any, reply:any) => { const q=req.query||{}; if(!q.client_id||!q.redirect_uri||!q.response_type) return reply.code(400).send({error:'SMART authorization parameters are incomplete.'}); if(String(q.response_type)!=='code')return reply.code(400).send({error:'Only authorization code flow is supported.'}); if(!pool)return reply.code(503).send({error:'SMART authorization is temporarily unavailable.'}); const r=await pool.query(`SELECT id,organization_id FROM smart_app_registrations WHERE client_id=$1 AND status='active' AND redirect_uris @> $2::jsonb LIMIT 1`,[String(q.client_id),JSON.stringify([String(q.redirect_uri)])]); if(!r.rowCount)return reply.code(400).send({error:'SMART client is not registered for this redirect URI.'}); const code=randomUUID(); const orgId=String(r.rows[0].organization_id||dbOrganizationId(req)||''); if(!orgId)return reply.code(400).send({error:'SMART organization context is required.'}); if(dbOrganizationId(req)!==orgId)return reply.code(403).send({error:'SMART client belongs to a different organization.'}); const requestedScope=String(q.scope||'openid fhirUser launch'); const challenge=String(q.code_challenge||''); if(!challenge)return reply.code(400).send({error:'PKCE code_challenge is required.'}); await pool.query(`INSERT INTO smart_authorization_codes(organization_id,user_id,user_role,client_id,redirect_uri,code_hash,scope,patient_id,code_challenge,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,now()+interval '5 minutes')`,[orgId,dbUserId(req),String(req.user?.role||'doctor'),String(q.client_id),String(q.redirect_uri),createHash('sha256').update(code).digest('hex'),requestedScope,q.patient_id||null,challenge]); const u=new URL(String(q.redirect_uri)); u.searchParams.set('code',code); if(q.state)u.searchParams.set('state',String(q.state)); return reply.redirect(u.toString()); });
 app.post('/api/smart/token', async (req:any, reply:any) => { if(!pool)return reply.code(503).send({error:'SMART token service is temporarily unavailable.'}); const b=z.object({grant_type:z.enum(['authorization_code','refresh_token']),code:z.string().optional(),client_id:z.string().min(2),redirect_uri:z.string().optional(),refresh_token:z.string().optional(),code_verifier:z.string().optional()}).parse(req.body||{}); if(b.grant_type!=='authorization_code'||!b.code)return reply.code(400).send({error:'Authorization code is required.'}); if(!b.code_verifier)return reply.code(400).send({error:'PKCE code_verifier is required.'}); const hash=createHash('sha256').update(b.code).digest('hex'); const r=await pool.query(`UPDATE smart_authorization_codes SET used_at=now() WHERE code_hash=$1 AND client_id=$2 AND redirect_uri=COALESCE($3,redirect_uri) AND used_at IS NULL AND expires_at>now() RETURNING organization_id,user_id,user_role,scope,patient_id,code_challenge`,[hash,b.client_id,b.redirect_uri||null]); if(!r.rowCount)return reply.code(400).send({error:'Authorization code is invalid, expired or already used.'}); const expected=createHash('sha256').update(b.code_verifier).digest('base64url'); if(expected!==r.rows[0].code_challenge)return reply.code(400).send({error:'PKCE verification failed.'}); const accessToken=await app.jwt.sign({sub:r.rows[0].user_id||`smart:${b.client_id}`,organizationId:r.rows[0].organization_id,role:r.rows[0].user_role||'doctor',scope:r.rows[0].scope||'',smartClientId:b.client_id}, {expiresIn:'15m'}); return {access_token:accessToken,token_type:'Bearer',expires_in:900,scope:r.rows[0].scope||'',patient:r.rows[0].patient_id||undefined}; });
 
@@ -2563,5 +2694,5 @@ registerPhase67FinancePublicHealthRoutes(app,pool,{dbOrganizationId,dbUserId,req
 registerPhase89FacilityPlatformRoutes(app,pool,{dbOrganizationId,dbUserId,requireAuthorizedWrite,dbAudit});
 registerPhase1011Routes(app,pool,{dbOrganizationId,dbUserId,requireAuthorizedWrite,dbAudit});
 
-app.listen({port:Number(process.env.PORT||4000),host:'0.0.0.0'});
+await app.listen({port:runtimeConfig.port,host:'0.0.0.0'});
 

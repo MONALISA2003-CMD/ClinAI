@@ -1,5 +1,52 @@
-const CACHE='clinai-shell-v27';
-const OLD_CACHES=['clinai-shell-v15','clinai-shell-v16','clinai-shell-v17','clinai-shell-v18','clinai-shell-v19','clinai-shell-v20','clinai-shell-v21','clinai-shell-v22','clinai-shell-v23','clinai-shell-v24','clinai-shell-v25'];
-self.addEventListener('install',event=>{event.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/','/manifest.json']).catch(()=>{})));self.skipWaiting()});
-self.addEventListener('activate',event=>{event.waitUntil(Promise.all([self.clients.claim(),caches.keys().then(keys=>Promise.all(keys.filter(k=>OLD_CACHES.includes(k)&&k!==CACHE).map(k=>caches.delete(k))))]))});
-self.addEventListener('fetch',event=>{const u=new URL(event.request.url);if(event.request.method!=='GET'||u.origin!==self.location.origin)return;event.respondWith(fetch(event.request).then(r=>{const copy=r.clone();caches.open(CACHE).then(c=>c.put(event.request,copy));return r}).catch(()=>caches.match(event.request).then(r=>r||caches.match('/'))))});
+/* P1 privacy boundary: cache only immutable same-origin static assets. Never
+ * cache HTML, API responses, authenticated pages, patient data or POST bodies. */
+const CACHE = 'clinai-static-p1';
+const STATIC_ASSETS = [
+  '/manifest.json',
+  '/clinai-icon.png',
+  '/clinai-icon-192.png',
+  '/clinai-logo.png',
+  '/favicon-16.png',
+  '/favicon-32.png',
+  '/favicon-64.png',
+  '/favicon.ico',
+  '/apple-touch-icon.png',
+  '/icon-512.png',
+];
+
+self.addEventListener('install', (event) => {
+  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(STATIC_ASSETS).catch(() => {})));
+  self.skipWaiting();
+});
+
+self.addEventListener('activate', (event) => {
+  event.waitUntil(Promise.all([
+    self.clients.claim(),
+    caches.keys().then((keys) => Promise.all(
+      keys.filter((key) => /^(clinai-shell-|clinai-static-)/.test(key) && key !== CACHE)
+        .map((key) => caches.delete(key)),
+    )),
+  ]));
+});
+
+self.addEventListener('fetch', (event) => {
+  const request = event.request;
+  if (request.method !== 'GET') return;
+  const url = new URL(request.url);
+  if (url.origin !== self.location.origin) return;
+
+  const isStaticAsset = STATIC_ASSETS.includes(url.pathname) || url.pathname.startsWith('/_next/static/');
+  if (!isStaticAsset) return;
+
+  event.respondWith((async () => {
+    const cached = await caches.match(request);
+    if (cached) return cached;
+    const response = await fetch(request);
+    if (!response.ok || response.type !== 'basic') return response;
+    const cacheControl = response.headers.get('cache-control') || '';
+    if (/\b(no-store|private)\b/i.test(cacheControl) || response.headers.has('set-cookie')) return response;
+    const cache = await caches.open(CACHE);
+    await cache.put(request, response.clone());
+    return response;
+  })());
+});

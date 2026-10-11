@@ -1,0 +1,535 @@
+{
+  "modified_summary": {
+    "total": 65,
+    "passed": 57
+  },
+  "baseline_summary": {
+    "total": 64,
+    "passed": 56
+  },
+  "common_tests": 64,
+  "new_failures": [],
+  "fixed_vs_baseline": [],
+  "results": {
+    "modified": {
+      "tests/ai-intelligence-core-audit.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI Intelligence Core audit passed: orchestration, tools, deterministic Python computation, proactive intelligence, research, structured reasoning, safety, audit persistence and responsive UI are implemented.\n"
+      },
+      "tests/ai-language-policy-audit.mjs": {
+        "exit_code": 0,
+        "tail": "PASS AI language policy architecture audit\n"
+      },
+      "tests/ai-security-scope-audit.mjs": {
+        "exit_code": 1,
+        "tail": "node:internal/modules/run_main:123\n    triggerUncaughtException(\n    ^\n\nAssertionError [ERR_ASSERTION]: bounded provider timeout missing\n    at file://<repo>/tests/ai-security-scope-audit.mjs:13:8\n    at ModuleJob.run (node:internal/modules/esm/module_job:274:25)\n    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:644:26)\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5) {\n  generatedMessage: false,\n  code: 'ERR_ASSERTION',\n  actual: false,\n  expected: true,\n  operator: '=='\n}\n\nNode.js v22.16.0\n"
+      },
+      "tests/ai-v4-response-speed-audit.mjs": {
+        "exit_code": 1,
+        "tail": "file://<repo>/tests/ai-v4-response-speed-audit.mjs:15\nfor (const [name,re] of checks) if(!re.test(api+web)) throw new Error(`Missing ${name}`);\n                                                            ^\n\nError: Missing provider timeout tightened\n    at file://<repo>/tests/ai-v4-response-speed-audit.mjs:15:61\n    at ModuleJob.run (node:internal/modules/esm/module_job:274:25)\n    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:644:26)\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)\n\nNode.js v22.16.0\n"
+      },
+      "tests/ai-v5-response-boundary-audit.mjs": {
+        "exit_code": 0,
+        "tail": "AI V5 response-boundary audit: PASS\n"
+      },
+      "tests/api-contract.mjs": {
+        "exit_code": 1,
+        "tail": "node:internal/deps/undici/undici:13510\n      Error.captureStackTrace(err);\n            ^\n\nTypeError: fetch failed\n    at node:internal/deps/undici/undici:13510:13\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at async file://<repo>/tests/api-contract.mjs:2:12 {\n  [cause]: AggregateError [ECONNREFUSED]: \n      at internalConnectMultiple (node:net:1139:18)\n      at afterConnectMultiple (node:net:1714:7) {\n    code: 'ECONNREFUSED',\n    [errors]: [\n      Error: connect ECONNREFUSED ::1:4000\n          at createConnectionError (node:net:1677:14)\n          at afterConnectMultiple (node:net:1707:16) {\n        errno: -111,\n        code: 'ECONNREFUSED',\n        syscall: 'connect',\n        address: '::1',\n        port: 4000\n      },\n      Error: connect ECONNREFUSED 127.0.0.1:4000\n          at createConnectionError (node:net:1677:14)\n          at afterConnectMultiple (node:net:1707:16) {\n        errno: -111,\n        code: 'ECONNREFUSED',\n        syscall: 'connect',\n        address: '127.0.0.1',\n        port: 4000\n      }\n    ]\n  }\n}\n\nNode.js v22.16.0\n"
+      },
+      "tests/clinical-reasoning-python-audit.mjs": {
+        "exit_code": 0,
+        "tail": "PYTHON_CLINICAL_REASONING_PASS\n"
+      },
+      "tests/domain-restoration-audit.mjs": {
+        "exit_code": 0,
+        "tail": "PASS domain restoration audit: authoritative adapters, public synthetic writes, placeholder isolation, clinical read surfaces, and writable field coverage verified.\n"
+      },
+      "tests/free-only-runtime-audit.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI free-only runtime audit passed: 12 checks; models=16; openrouter=14.\n"
+      },
+      "tests/free-tier-quota-audit.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI unified free-tier quota audit passed: 10 checks.\n"
+      },
+      "tests/frontend-backend-route-audit.mjs": {
+        "exit_code": 0,
+        "tail": "{\n  \"ok\": true,\n  \"frontendApiPaths\": 65,\n  \"backendRoutes\": 324,\n  \"missing\": [],\n  \"publicBoundary\": \"verified\",\n  \"defaultApiBase\": \"https://clinai-api.onrender.com\"\n}\n"
+      },
+      "tests/full-module-domain-audit.mjs": {
+        "exit_code": 0,
+        "tail": "PASS full module contract audit: 80 modules; 74 data modules have fields; 6 derived workspaces are dashboard/intelligence surfaces.\n"
+      },
+      "tests/multi-model-ai-audit.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI multi-model AI audit passed.\nClinAI performance/free-tier safeguards passed.\n"
+      },
+      "tests/multilingual-python-safety-audit.mjs": {
+        "exit_code": 1,
+        "tail": "node:internal/modules/run_main:123\n    triggerUncaughtException(\n    ^\n\nAssertionError [ERR_ASSERTION]: Python intelligence engine did not start\n\nfalse !== true\n\n    at file://<repo>/tests/multilingual-python-safety-audit.mjs:12:10 {\n  generatedMessage: false,\n  code: 'ERR_ASSERTION',\n  actual: false,\n  expected: true,\n  operator: 'strictEqual'\n}\n\nNode.js v22.16.0\n"
+      },
+      "tests/p1-tenant-isolation-audit.mjs": {
+        "exit_code": 0,
+        "tail": "ms: 0.311189\n  type: 'test'\n  ...\n# Subtest: patient-to-encounter links are valid only for the same tenant and patient\nok 4 - patient-to-encounter links are valid only for the same tenant and patient\n  ---\n  duration_ms: 0.188176\n  type: 'test'\n  ...\n# Subtest: API in-memory helper and write paths make organization context authoritative\nok 5 - API in-memory helper and write paths make organization context authoritative\n  ---\n  duration_ms: 0.41696\n  type: 'test'\n  ...\n# Subtest: DB-backed write boundary verifies tenant-owned patients, facilities, districts, invoices, and related care records\nok 6 - DB-backed write boundary verifies tenant-owned patients, facilities, districts, invoices, and related care records\n  ---\n  duration_ms: 0.880134\n  type: 'test'\n  ...\n# Subtest: high-risk clinical create routes use explicit patient and encounter ownership checks\nok 7 - high-risk clinical create routes use explicit patient and encounter ownership checks\n  ---\n  duration_ms: 5.169647\n  type: 'test'\n  ...\n# Subtest: payment and pharmacy fallback mutations cannot operate on another tenant record\nok 8 - payment and pharmacy fallback mutations cannot operate on another tenant record\n  ---\n  duration_ms: 0.514398\n  type: 'test'\n  ...\n# Subtest: critical collection fallbacks are organization-scoped and report scoped counts\nok 9 - critical collection fallbacks are organization-scoped and report scoped counts\n  ---\n  duration_ms: 8.931489\n  type: 'test'\n  ...\n# Subtest: nested patient summaries only return records from the authorized organization\nok 10 - nested patient summaries only return records from the authorized organization\n  ---\n  duration_ms: 0.805052\n  type: 'test'\n  ...\n1..10\n# tests 10\n# suites 0\n# pass 10\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 120.392641\n"
+      },
+      "tests/phase1-7-full-integrity-audit.mjs": {
+        "exit_code": 1,
+        "tail": "file://<repo>/tests/phase1-7-full-integrity-audit.mjs:8\nconst ok=(cond,msg)=>{if(!cond) throw new Error(msg);};\n                                      ^\n\nError: AI/intelligence file changed: services/api/src/ai/ai-orchestrator.ts\n    at ok (file://<repo>/tests/phase1-7-full-integrity-audit.mjs:8:39)\n    at file://<repo>/tests/phase1-7-full-integrity-audit.mjs:55:48\n    at ModuleJob.run (node:internal/modules/esm/module_job:274:25)\n    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:644:26)\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)\n\nNode.js v22.16.0\n"
+      },
+      "tests/phase1-backend-correctness-audit.mjs": {
+        "exit_code": 0,
+        "tail": "Phase 1 backend correctness audit passed\n"
+      },
+      "tests/phase1-security-boundary-audit.mjs": {
+        "exit_code": 0,
+        "tail": "Phase 1 security boundary audit passed.\n"
+      },
+      "tests/phase10-11-integrity-audit.mjs": {
+        "exit_code": 1,
+        "tail": " true,\n      \"detail\": \"\"\n    },\n    {\n      \"name\": \"All Phase10 workspaces mapped\",\n      \"pass\": true,\n      \"detail\": \"\"\n    },\n    {\n      \"name\": \"Phase10 frontend component wired\",\n      \"pass\": false,\n      \"detail\": \"\"\n    },\n    {\n      \"name\": \"Home uses Phase11 Command Center\",\n      \"pass\": false,\n      \"detail\": \"\"\n    },\n    {\n      \"name\": \"Patient 360 evidence sources\",\n      \"pass\": true,\n      \"detail\": \"\"\n    },\n    {\n      \"name\": \"Clinical velocity timestamps\",\n      \"pass\": true,\n      \"detail\": \"\"\n    },\n    {\n      \"name\": \"AI Frontline source is clinical_signals\",\n      \"pass\": true,\n      \"detail\": \"\"\n    },\n    {\n      \"name\": \"Home operational flow connected\",\n      \"pass\": true,\n      \"detail\": \"\"\n    },\n    {\n      \"name\": \"Care gap workflow actions\",\n      \"pass\": true,\n      \"detail\": \"\"\n    },\n    {\n      \"name\": \"Clinical signal human review action\",\n      \"pass\": true,\n      \"detail\": \"\"\n    },\n    {\n      \"name\": \"AI evaluation authoritative table\",\n      \"pass\": true,\n      \"detail\": \"\"\n    },\n    {\n      \"name\": \"District intelligence authoritative sources\",\n      \"pass\": true,\n      \"detail\": \"\"\n    },\n    {\n      \"name\": \"Reusable visualization system\",\n      \"pass\": true,\n      \"detail\": \"\"\n    },\n    {\n      \"name\": \"AI response/orchestration files preserved byte-for-byte\",\n      \"pass\": false,\n      \"detail\": \"3e8d2aee6652c0b7cac8b82297537b8dcd53be0a6377a6f80d15f45e7226a664,9ec25960b2bb7844c9725be9ce1d5da2abd3ec1f59688cb974444d4a5c435b82,71cb4f55bf33bfa3888ac31aad3019499af2d96a32d0ade1ee74a69b7b19577b\"\n    },\n    {\n      \"name\": \"No destructive Phase10/11 migrations\",\n      \"pass\": true,\n      \"detail\": \"\"\n    },\n    {\n      \"name\": \"Responsive Phase10/11 CSS\",\n      \"pass\": true,\n      \"detail\": \"\"\n    }\n  ],\n  \"failed\": 3\n}\n"
+      },
+      "tests/phase2-core-clinical-depth-audit.mjs": {
+        "exit_code": 0,
+        "tail": "PASS | authoritative triage table\nPASS | deeper Phase 2 schema\nPASS | migration is additive\nPASS | Phase 2 route registered\nPASS | Phase 2 route modules\nPASS | Phase 2 CRUD/action endpoints\nPASS | dashboard endpoint\nPASS | workflow activity endpoint\nPASS | triage queues and observations\nPASS | workflow events emitted\nPASS | legacy triage compatibility writes authoritative table\nPASS | legacy triage schema covers persistence fields\nPASS | frontend Phase 2 workspace\nPASS | frontend Phase 2 API\nPASS | responsive Phase 2 CSS\nPASS | AI response code untouched\nPASS | contract scope limited\nPASS | all Phase 2 contracts upgraded\nPASS | TSX semantic harness\nPASS | Phase 2 API route semantic harness\n\nPhase 2 audit passed: 20 checks.\n"
+      },
+      "tests/phase2-module-contract-audit.mjs": {
+        "exit_code": 0,
+        "tail": "Phase 2 module contract audit passed: 80 contracts; 79 advertised modules covered.\n"
+      },
+      "tests/phase3-diagnostics-medication-depth-audit.mjs": {
+        "exit_code": 0,
+        "tail": "PASS | Phase 3 migration exists\nPASS | migration is additive\nPASS | laboratory schema depth\nPASS | imaging authoritative table depth\nPASS | pharmacy depth\nPASS | medication reconciliation child model\nPASS | synthetic-only imaging seed\nPASS | synthetic reconciliation seed\nPASS | Phase 3 runtime schema\nPASS | Phase 3 route registered\nPASS | laboratory endpoints\nPASS | imaging endpoints\nPASS | pharmacy endpoints\nPASS | med rec endpoints\nPASS | tenant boundaries\nPASS | workflow/event integration\nPASS | transactional writes\nPASS | inventory-linked dispensing\nPASS | diagnostic actions guard results\nPASS | contracts promoted\nPASS | contracts use authoritative Phase 3 endpoints\nPASS | specialized frontend workspace\nPASS | specialized responsive CSS\nPASS | existing AI response presentation preserved structurally\nPASS | no destructive Phase 3 SQL\nPASS | API route semantic harness\nPASS | web TSX semantic harness clean\n\nPhase 3 diagnostic/medication audit passed: 27 checks.\n"
+      },
+      "tests/phase3-end-to-end-audit.mjs": {
+        "exit_code": 0,
+        "tail": "Phase 3 end-to-end audit passed: public intelligence, Patient 360 AI boundary, bold AI headings, synthetic coverage and additive migration checks are present.\n"
+      },
+      "tests/phase3-global-validation-audit.mjs": {
+        "exit_code": 0,
+        "tail": "Phase 3 global validation audit passed: 74 create-capable contracts; 647 user-entered fields governed.\n"
+      },
+      "tests/phase4-5-clinical-intelligence-audit.mjs": {
+        "exit_code": 0,
+        "tail": "Phase 4/5 clinical intelligence audit passed: six journey chains, event projection/idempotency, unfinished-journey detection, and public structured AI response normalization verified.\n"
+      },
+      "tests/phase45-5-completion-audit.mjs": {
+        "exit_code": 1,
+        "tail": "file://<repo>/tests/phase45-5-completion-audit.mjs:15\nif(!main.includes(\"phase45AcuteContinuity.js\")) throw new Error('Phase 4/5 import missing');\n                                                      ^\n\nError: Phase 4/5 import missing\n    at file://<repo>/tests/phase45-5-completion-audit.mjs:15:55\n    at ModuleJob.run (node:internal/modules/esm/module_job:274:25)\n    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:644:26)\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)\n\nNode.js v22.16.0\n"
+      },
+      "tests/phase6-7-patient360-workspaces-audit.mjs": {
+        "exit_code": 0,
+        "tail": "Phase 6/7 Patient 360 and six intelligence workspace audit passed.\n"
+      },
+      "tests/phase8-9-integrity-audit.mjs": {
+        "exit_code": 0,
+        "tail": "{\n  \"ok\": true,\n  \"phase8to9\": true,\n  \"modules\": 16,\n  \"contracts\": 80,\n  \"typescript\": [\n    \"web\",\n    \"api-route\",\n    \"main-api\"\n  ]\n}\n"
+      },
+      "tests/production-integrity-ai-audit.mjs": {
+        "exit_code": 0,
+        "tail": "{\n  \"ok\": true,\n  \"checks\": 6,\n  \"failed\": []\n}\n"
+      },
+      "tests/public-ai-development-audit.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI public AI development audit passed.\n"
+      },
+      "tests/public-release-audit.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI public release audit passed: 26 checks\n"
+      },
+      "tests/public-test-data-audit.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI public synthetic test data audit passed.\n"
+      },
+      "tests/public-writable-domain-audit.mjs": {
+        "exit_code": 0,
+        "tail": "Public writable domain audit passed\n"
+      },
+      "tests/python-clinical-intelligence-audit.mjs": {
+        "exit_code": 0,
+        "tail": "Python deterministic intelligence audit passed\n"
+      },
+      "tests/runtime-integration-polish-audit.mjs": {
+        "exit_code": 0,
+        "tail": "PASS no unsafe SQL alias replacement\nPASS date series aliases use safe day_date\nPASS command center isolates widget failures\nPASS semantic clinical form system present\nPASS technical implementation labels removed from frontend\nPASS no JSON labels exposed in data-entry fields\nPASS diagnostic and medication forms are grouped into clear clinical sections\nPASS partial intelligence warning presentation present\nPASS phase 10/11 hardening remains in source\n"
+      },
+      "tests/schema-contract-audit.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI schema contract audit passed\n"
+      },
+      "tests/synthetic-module-coverage-audit.mjs": {
+        "exit_code": 0,
+        "tail": "Synthetic module coverage audit passed: 79 workspaces × TEST-001..TEST-030.\n"
+      },
+      "tests/ui-responsive-structural-check.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI responsive design system structural check passed\n"
+      },
+      "tests/v10-structural-check.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI V10 structural check passed\n"
+      },
+      "tests/v11-structural-check.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI V11 structural check passed\n"
+      },
+      "tests/v12-structural-check.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI V12 structural check passed\n"
+      },
+      "tests/v13-structural-check.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI V13 structural check passed\n"
+      },
+      "tests/v14-integration-audit.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI V14 integration audit passed\nAPI routes checked: 20\nFrontend size: 228660 bytes\n"
+      },
+      "tests/v15-full-system-audit.mjs": {
+        "exit_code": 1,
+        "tail": "FAIL research record\n"
+      },
+      "tests/v16-ai-intelligence-audit.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI V16 AI intelligence audit passed: all core AI gateway, safety, context, audit, UI and migration checks passed.\n"
+      },
+      "tests/v17-mobile-ai-polish-audit.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI V17 mobile and AI presentation audit passed.\n"
+      },
+      "tests/v18-ai-intelligence-expansion-audit.mjs": {
+        "exit_code": 0,
+        "tail": "V18 AI intelligence expansion audit: PASS\n"
+      },
+      "tests/v25-ai-free-model-routing-audit.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI V25 free-model routing audit passed\n"
+      },
+      "tests/v25-cerebras-gpt-oss-regression-audit.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI retired-trial-provider audit passed\nCerebras trial runtime path is removed; free Groq/OpenRouter/Gemini paths remain governed.\n"
+      },
+      "tests/v25-free-model-routing-deep-audit.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI V25 deep free-model routing audit passed\nModels: 16; OpenRouter: 14\nStrict capability routing: enforced\nPublic/free patient clinical context: blocked\n"
+      },
+      "tests/v25-gate1-event-coverage-audit.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI V25 Gate 1 event coverage audit passed\n"
+      },
+      "tests/v25-gate2-clinical-context-audit.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI V25 Gate 2 Clinical Context audit passed\n"
+      },
+      "tests/v25-gate3-cdss-gateway-audit.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI V25 Gate 3 CDSS gateway audit passed\n"
+      },
+      "tests/v26-ai-reliability-audit.mjs": {
+        "exit_code": 0,
+        "tail": "V26 AI reliability audit passed.\n"
+      },
+      "tests/v26-module-contract-audit.mjs": {
+        "exit_code": 0,
+        "tail": "Phase 2 module contract audit passed: 80 contracts; 79 advertised modules covered.\nV26 module contract compatibility audit passed via the canonical contract registry.\n"
+      },
+      "tests/v27-full-page-audit.mjs": {
+        "exit_code": 0,
+        "tail": "{\n  \"ok\": true,\n  \"audit\": {\n    \"modules\": 79,\n    \"readContracts\": 80,\n    \"createContracts\": 74,\n    \"readOnly\": 13,\n    \"journeyStages\": 30,\n    \"intelligenceModules\": 6,\n    \"backendIntelligenceRoutes\": 10,\n    \"additiveMigration\": true\n  }\n}\n"
+      },
+      "tests/v28-completion-audit.mjs": {
+        "exit_code": 0,
+        "tail": "{\n  \"ok\": true,\n  \"checks\": 13,\n  \"aiCapabilities\": 9,\n  \"cdsHooks\": 5\n}\n"
+      },
+      "tests/v6-structural-check.mjs": {
+        "exit_code": 0,
+        "tail": "V6 structural checks passed: 11 routes, 12 tables\n"
+      },
+      "tests/v8-structural-check.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI V8 structural check passed\n"
+      },
+      "tests/v9-structural-check.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI V9 structural check passed\n"
+      },
+      "tests/workstream2-domain-integrity.mjs": {
+        "exit_code": 0,
+        "tail": "Workstream 2 domain integrity audit passed\n"
+      },
+      "tests/workstream2-render-build-regression-audit.mjs": {
+        "exit_code": 0,
+        "tail": "Workstream 2 Render build regression audit passed\n"
+      },
+      "tests/workstream6-domain-workspace-audit.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI Workstream 6 domain workspace audit passed\n"
+      },
+      "tests/workstream6-module-workspace-vercel-regression-audit.mjs": {
+        "exit_code": 0,
+        "tail": "Workstream 6 ModuleWorkspace Vercel regression audit passed\n"
+      },
+      "tests/workstream7-8-behavioral-audit.mjs": {
+        "exit_code": 0,
+        "tail": "PASS Workstream 7/8 behavioral architecture and response-boundary audit\n"
+      }
+    },
+    "baseline": {
+      "tests/ai-intelligence-core-audit.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI Intelligence Core audit passed: orchestration, tools, deterministic Python computation, proactive intelligence, research, structured reasoning, safety, audit persistence and responsive UI are implemented.\n"
+      },
+      "tests/ai-language-policy-audit.mjs": {
+        "exit_code": 0,
+        "tail": "PASS AI language policy architecture audit\n"
+      },
+      "tests/ai-security-scope-audit.mjs": {
+        "exit_code": 1,
+        "tail": "node:internal/modules/run_main:123\n    triggerUncaughtException(\n    ^\n\nAssertionError [ERR_ASSERTION]: bounded provider timeout missing\n    at file://<baseline>/tests/ai-security-scope-audit.mjs:13:8\n    at ModuleJob.run (node:internal/modules/esm/module_job:274:25)\n    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:644:26)\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5) {\n  generatedMessage: false,\n  code: 'ERR_ASSERTION',\n  actual: false,\n  expected: true,\n  operator: '=='\n}\n\nNode.js v22.16.0\n"
+      },
+      "tests/ai-v4-response-speed-audit.mjs": {
+        "exit_code": 1,
+        "tail": "file://<baseline>/tests/ai-v4-response-speed-audit.mjs:15\nfor (const [name,re] of checks) if(!re.test(api+web)) throw new Error(`Missing ${name}`);\n                                                            ^\n\nError: Missing provider timeout tightened\n    at file://<baseline>/tests/ai-v4-response-speed-audit.mjs:15:61\n    at ModuleJob.run (node:internal/modules/esm/module_job:274:25)\n    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:644:26)\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)\n\nNode.js v22.16.0\n"
+      },
+      "tests/ai-v5-response-boundary-audit.mjs": {
+        "exit_code": 0,
+        "tail": "AI V5 response-boundary audit: PASS\n"
+      },
+      "tests/api-contract.mjs": {
+        "exit_code": 1,
+        "tail": "node:internal/deps/undici/undici:13510\n      Error.captureStackTrace(err);\n            ^\n\nTypeError: fetch failed\n    at node:internal/deps/undici/undici:13510:13\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at async file://<baseline>/tests/api-contract.mjs:2:12 {\n  [cause]: AggregateError [ECONNREFUSED]: \n      at internalConnectMultiple (node:net:1139:18)\n      at afterConnectMultiple (node:net:1714:7) {\n    code: 'ECONNREFUSED',\n    [errors]: [\n      Error: connect ECONNREFUSED ::1:4000\n          at createConnectionError (node:net:1677:14)\n          at afterConnectMultiple (node:net:1707:16) {\n        errno: -111,\n        code: 'ECONNREFUSED',\n        syscall: 'connect',\n        address: '::1',\n        port: 4000\n      },\n      Error: connect ECONNREFUSED 127.0.0.1:4000\n          at createConnectionError (node:net:1677:14)\n          at afterConnectMultiple (node:net:1707:16) {\n        errno: -111,\n        code: 'ECONNREFUSED',\n        syscall: 'connect',\n        address: '127.0.0.1',\n        port: 4000\n      }\n    ]\n  }\n}\n\nNode.js v22.16.0\n"
+      },
+      "tests/clinical-reasoning-python-audit.mjs": {
+        "exit_code": 0,
+        "tail": "PYTHON_CLINICAL_REASONING_PASS\n"
+      },
+      "tests/domain-restoration-audit.mjs": {
+        "exit_code": 0,
+        "tail": "PASS domain restoration audit: authoritative adapters, public synthetic writes, placeholder isolation, clinical read surfaces, and writable field coverage verified.\n"
+      },
+      "tests/free-only-runtime-audit.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI free-only runtime audit passed: 12 checks; models=16; openrouter=14.\n"
+      },
+      "tests/free-tier-quota-audit.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI unified free-tier quota audit passed: 10 checks.\n"
+      },
+      "tests/frontend-backend-route-audit.mjs": {
+        "exit_code": 0,
+        "tail": "{\n  \"ok\": true,\n  \"frontendApiPaths\": 65,\n  \"backendRoutes\": 324,\n  \"missing\": [],\n  \"publicBoundary\": \"verified\",\n  \"defaultApiBase\": \"https://clinai-api.onrender.com\"\n}\n"
+      },
+      "tests/full-module-domain-audit.mjs": {
+        "exit_code": 0,
+        "tail": "PASS full module contract audit: 80 modules; 74 data modules have fields; 6 derived workspaces are dashboard/intelligence surfaces.\n"
+      },
+      "tests/multi-model-ai-audit.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI multi-model AI audit passed.\nClinAI performance/free-tier safeguards passed.\n"
+      },
+      "tests/multilingual-python-safety-audit.mjs": {
+        "exit_code": 1,
+        "tail": "node:internal/modules/run_main:123\n    triggerUncaughtException(\n    ^\n\nAssertionError [ERR_ASSERTION]: Python intelligence engine did not start\n\nfalse !== true\n\n    at file://<baseline>/tests/multilingual-python-safety-audit.mjs:12:10 {\n  generatedMessage: false,\n  code: 'ERR_ASSERTION',\n  actual: false,\n  expected: true,\n  operator: 'strictEqual'\n}\n\nNode.js v22.16.0\n"
+      },
+      "tests/phase1-7-full-integrity-audit.mjs": {
+        "exit_code": 1,
+        "tail": "file://<baseline>/tests/phase1-7-full-integrity-audit.mjs:8\nconst ok=(cond,msg)=>{if(!cond) throw new Error(msg);};\n                                      ^\n\nError: AI/intelligence file changed: services/api/src/ai/ai-orchestrator.ts\n    at ok (file://<baseline>/tests/phase1-7-full-integrity-audit.mjs:8:39)\n    at file://<baseline>/tests/phase1-7-full-integrity-audit.mjs:55:48\n    at ModuleJob.run (node:internal/modules/esm/module_job:274:25)\n    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:644:26)\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)\n\nNode.js v22.16.0\n"
+      },
+      "tests/phase1-backend-correctness-audit.mjs": {
+        "exit_code": 0,
+        "tail": "Phase 1 backend correctness audit passed\n"
+      },
+      "tests/phase1-security-boundary-audit.mjs": {
+        "exit_code": 0,
+        "tail": "Phase 1 security boundary audit passed.\n"
+      },
+      "tests/phase10-11-integrity-audit.mjs": {
+        "exit_code": 1,
+        "tail": " true,\n      \"detail\": \"\"\n    },\n    {\n      \"name\": \"All Phase10 workspaces mapped\",\n      \"pass\": true,\n      \"detail\": \"\"\n    },\n    {\n      \"name\": \"Phase10 frontend component wired\",\n      \"pass\": false,\n      \"detail\": \"\"\n    },\n    {\n      \"name\": \"Home uses Phase11 Command Center\",\n      \"pass\": false,\n      \"detail\": \"\"\n    },\n    {\n      \"name\": \"Patient 360 evidence sources\",\n      \"pass\": true,\n      \"detail\": \"\"\n    },\n    {\n      \"name\": \"Clinical velocity timestamps\",\n      \"pass\": true,\n      \"detail\": \"\"\n    },\n    {\n      \"name\": \"AI Frontline source is clinical_signals\",\n      \"pass\": true,\n      \"detail\": \"\"\n    },\n    {\n      \"name\": \"Home operational flow connected\",\n      \"pass\": true,\n      \"detail\": \"\"\n    },\n    {\n      \"name\": \"Care gap workflow actions\",\n      \"pass\": true,\n      \"detail\": \"\"\n    },\n    {\n      \"name\": \"Clinical signal human review action\",\n      \"pass\": true,\n      \"detail\": \"\"\n    },\n    {\n      \"name\": \"AI evaluation authoritative table\",\n      \"pass\": true,\n      \"detail\": \"\"\n    },\n    {\n      \"name\": \"District intelligence authoritative sources\",\n      \"pass\": true,\n      \"detail\": \"\"\n    },\n    {\n      \"name\": \"Reusable visualization system\",\n      \"pass\": true,\n      \"detail\": \"\"\n    },\n    {\n      \"name\": \"AI response/orchestration files preserved byte-for-byte\",\n      \"pass\": false,\n      \"detail\": \"3e8d2aee6652c0b7cac8b82297537b8dcd53be0a6377a6f80d15f45e7226a664,9ec25960b2bb7844c9725be9ce1d5da2abd3ec1f59688cb974444d4a5c435b82,71cb4f55bf33bfa3888ac31aad3019499af2d96a32d0ade1ee74a69b7b19577b\"\n    },\n    {\n      \"name\": \"No destructive Phase10/11 migrations\",\n      \"pass\": true,\n      \"detail\": \"\"\n    },\n    {\n      \"name\": \"Responsive Phase10/11 CSS\",\n      \"pass\": true,\n      \"detail\": \"\"\n    }\n  ],\n  \"failed\": 3\n}\n"
+      },
+      "tests/phase2-core-clinical-depth-audit.mjs": {
+        "exit_code": 0,
+        "tail": "PASS | authoritative triage table\nPASS | deeper Phase 2 schema\nPASS | migration is additive\nPASS | Phase 2 route registered\nPASS | Phase 2 route modules\nPASS | Phase 2 CRUD/action endpoints\nPASS | dashboard endpoint\nPASS | workflow activity endpoint\nPASS | triage queues and observations\nPASS | workflow events emitted\nPASS | legacy triage compatibility writes authoritative table\nPASS | legacy triage schema covers persistence fields\nPASS | frontend Phase 2 workspace\nPASS | frontend Phase 2 API\nPASS | responsive Phase 2 CSS\nPASS | AI response code untouched\nPASS | contract scope limited\nPASS | all Phase 2 contracts upgraded\nPASS | TSX semantic harness\nPASS | Phase 2 API route semantic harness\n\nPhase 2 audit passed: 20 checks.\n"
+      },
+      "tests/phase2-module-contract-audit.mjs": {
+        "exit_code": 0,
+        "tail": "Phase 2 module contract audit passed: 80 contracts; 79 advertised modules covered.\n"
+      },
+      "tests/phase3-diagnostics-medication-depth-audit.mjs": {
+        "exit_code": 0,
+        "tail": "PASS | Phase 3 migration exists\nPASS | migration is additive\nPASS | laboratory schema depth\nPASS | imaging authoritative table depth\nPASS | pharmacy depth\nPASS | medication reconciliation child model\nPASS | synthetic-only imaging seed\nPASS | synthetic reconciliation seed\nPASS | Phase 3 runtime schema\nPASS | Phase 3 route registered\nPASS | laboratory endpoints\nPASS | imaging endpoints\nPASS | pharmacy endpoints\nPASS | med rec endpoints\nPASS | tenant boundaries\nPASS | workflow/event integration\nPASS | transactional writes\nPASS | inventory-linked dispensing\nPASS | diagnostic actions guard results\nPASS | contracts promoted\nPASS | contracts use authoritative Phase 3 endpoints\nPASS | specialized frontend workspace\nPASS | specialized responsive CSS\nPASS | existing AI response presentation preserved structurally\nPASS | no destructive Phase 3 SQL\nPASS | API route semantic harness\nPASS | web TSX semantic harness clean\n\nPhase 3 diagnostic/medication audit passed: 27 checks.\n"
+      },
+      "tests/phase3-end-to-end-audit.mjs": {
+        "exit_code": 0,
+        "tail": "Phase 3 end-to-end audit passed: public intelligence, Patient 360 AI boundary, bold AI headings, synthetic coverage and additive migration checks are present.\n"
+      },
+      "tests/phase3-global-validation-audit.mjs": {
+        "exit_code": 0,
+        "tail": "Phase 3 global validation audit passed: 74 create-capable contracts; 647 user-entered fields governed.\n"
+      },
+      "tests/phase4-5-clinical-intelligence-audit.mjs": {
+        "exit_code": 0,
+        "tail": "Phase 4/5 clinical intelligence audit passed: six journey chains, event projection/idempotency, unfinished-journey detection, and public structured AI response normalization verified.\n"
+      },
+      "tests/phase45-5-completion-audit.mjs": {
+        "exit_code": 1,
+        "tail": "file://<baseline>/tests/phase45-5-completion-audit.mjs:15\nif(!main.includes(\"phase45AcuteContinuity.js\")) throw new Error('Phase 4/5 import missing');\n                                                      ^\n\nError: Phase 4/5 import missing\n    at file://<baseline>/tests/phase45-5-completion-audit.mjs:15:55\n    at ModuleJob.run (node:internal/modules/esm/module_job:274:25)\n    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:644:26)\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)\n\nNode.js v22.16.0\n"
+      },
+      "tests/phase6-7-patient360-workspaces-audit.mjs": {
+        "exit_code": 0,
+        "tail": "Phase 6/7 Patient 360 and six intelligence workspace audit passed.\n"
+      },
+      "tests/phase8-9-integrity-audit.mjs": {
+        "exit_code": 0,
+        "tail": "{\n  \"ok\": true,\n  \"phase8to9\": true,\n  \"modules\": 16,\n  \"contracts\": 80,\n  \"typescript\": [\n    \"web\",\n    \"api-route\",\n    \"main-api\"\n  ]\n}\n"
+      },
+      "tests/production-integrity-ai-audit.mjs": {
+        "exit_code": 0,
+        "tail": "{\n  \"ok\": true,\n  \"checks\": 6,\n  \"failed\": []\n}\n"
+      },
+      "tests/public-ai-development-audit.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI public AI development audit passed.\n"
+      },
+      "tests/public-release-audit.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI public release audit passed: 26 checks\n"
+      },
+      "tests/public-test-data-audit.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI public synthetic test data audit passed.\n"
+      },
+      "tests/public-writable-domain-audit.mjs": {
+        "exit_code": 0,
+        "tail": "Public writable domain audit passed\n"
+      },
+      "tests/python-clinical-intelligence-audit.mjs": {
+        "exit_code": 0,
+        "tail": "Python deterministic intelligence audit passed\n"
+      },
+      "tests/runtime-integration-polish-audit.mjs": {
+        "exit_code": 0,
+        "tail": "PASS no unsafe SQL alias replacement\nPASS date series aliases use safe day_date\nPASS command center isolates widget failures\nPASS semantic clinical form system present\nPASS technical implementation labels removed from frontend\nPASS no JSON labels exposed in data-entry fields\nPASS diagnostic and medication forms are grouped into clear clinical sections\nPASS partial intelligence warning presentation present\nPASS phase 10/11 hardening remains in source\n"
+      },
+      "tests/schema-contract-audit.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI schema contract audit passed\n"
+      },
+      "tests/synthetic-module-coverage-audit.mjs": {
+        "exit_code": 0,
+        "tail": "Synthetic module coverage audit passed: 79 workspaces × TEST-001..TEST-030.\n"
+      },
+      "tests/ui-responsive-structural-check.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI responsive design system structural check passed\n"
+      },
+      "tests/v10-structural-check.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI V10 structural check passed\n"
+      },
+      "tests/v11-structural-check.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI V11 structural check passed\n"
+      },
+      "tests/v12-structural-check.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI V12 structural check passed\n"
+      },
+      "tests/v13-structural-check.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI V13 structural check passed\n"
+      },
+      "tests/v14-integration-audit.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI V14 integration audit passed\nAPI routes checked: 20\nFrontend size: 228112 bytes\n"
+      },
+      "tests/v15-full-system-audit.mjs": {
+        "exit_code": 1,
+        "tail": "FAIL research record\n"
+      },
+      "tests/v16-ai-intelligence-audit.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI V16 AI intelligence audit passed: all core AI gateway, safety, context, audit, UI and migration checks passed.\n"
+      },
+      "tests/v17-mobile-ai-polish-audit.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI V17 mobile and AI presentation audit passed.\n"
+      },
+      "tests/v18-ai-intelligence-expansion-audit.mjs": {
+        "exit_code": 0,
+        "tail": "V18 AI intelligence expansion audit: PASS\n"
+      },
+      "tests/v25-ai-free-model-routing-audit.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI V25 free-model routing audit passed\n"
+      },
+      "tests/v25-cerebras-gpt-oss-regression-audit.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI retired-trial-provider audit passed\nCerebras trial runtime path is removed; free Groq/OpenRouter/Gemini paths remain governed.\n"
+      },
+      "tests/v25-free-model-routing-deep-audit.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI V25 deep free-model routing audit passed\nModels: 16; OpenRouter: 14\nStrict capability routing: enforced\nPublic/free patient clinical context: blocked\n"
+      },
+      "tests/v25-gate1-event-coverage-audit.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI V25 Gate 1 event coverage audit passed\n"
+      },
+      "tests/v25-gate2-clinical-context-audit.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI V25 Gate 2 Clinical Context audit passed\n"
+      },
+      "tests/v25-gate3-cdss-gateway-audit.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI V25 Gate 3 CDSS gateway audit passed\n"
+      },
+      "tests/v26-ai-reliability-audit.mjs": {
+        "exit_code": 0,
+        "tail": "V26 AI reliability audit passed.\n"
+      },
+      "tests/v26-module-contract-audit.mjs": {
+        "exit_code": 0,
+        "tail": "Phase 2 module contract audit passed: 80 contracts; 79 advertised modules covered.\nV26 module contract compatibility audit passed via the canonical contract registry.\n"
+      },
+      "tests/v27-full-page-audit.mjs": {
+        "exit_code": 0,
+        "tail": "{\n  \"ok\": true,\n  \"audit\": {\n    \"modules\": 79,\n    \"readContracts\": 80,\n    \"createContracts\": 74,\n    \"readOnly\": 13,\n    \"journeyStages\": 30,\n    \"intelligenceModules\": 6,\n    \"backendIntelligenceRoutes\": 10,\n    \"additiveMigration\": true\n  }\n}\n"
+      },
+      "tests/v28-completion-audit.mjs": {
+        "exit_code": 0,
+        "tail": "{\n  \"ok\": true,\n  \"checks\": 13,\n  \"aiCapabilities\": 9,\n  \"cdsHooks\": 5\n}\n"
+      },
+      "tests/v6-structural-check.mjs": {
+        "exit_code": 0,
+        "tail": "V6 structural checks passed: 11 routes, 12 tables\n"
+      },
+      "tests/v8-structural-check.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI V8 structural check passed\n"
+      },
+      "tests/v9-structural-check.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI V9 structural check passed\n"
+      },
+      "tests/workstream2-domain-integrity.mjs": {
+        "exit_code": 0,
+        "tail": "Workstream 2 domain integrity audit passed\n"
+      },
+      "tests/workstream2-render-build-regression-audit.mjs": {
+        "exit_code": 0,
+        "tail": "Workstream 2 Render build regression audit passed\n"
+      },
+      "tests/workstream6-domain-workspace-audit.mjs": {
+        "exit_code": 0,
+        "tail": "ClinAI Workstream 6 domain workspace audit passed\n"
+      },
+      "tests/workstream6-module-workspace-vercel-regression-audit.mjs": {
+        "exit_code": 0,
+        "tail": "Workstream 6 ModuleWorkspace Vercel regression audit passed\n"
+      },
+      "tests/workstream7-8-behavioral-audit.mjs": {
+        "exit_code": 0,
+        "tail": "PASS Workstream 7/8 behavioral architecture and response-boundary audit\n"
+      }
+    }
+  }
+}
